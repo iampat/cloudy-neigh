@@ -17,14 +17,18 @@ import (
 	"github.com/fatih/color"
 )
 
-var yellow = color.New(color.FgYellow).SprintFunc()
-var red = color.New(color.FgRed).SprintFunc()
-var green = color.New(color.FgGreen).SprintFunc()
-var magenta = color.New(color.FgMagenta).SprintFunc()
+var (
+	yellow  = color.New(color.FgYellow).SprintFunc()
+	red     = color.New(color.FgRed).SprintFunc()
+	green   = color.New(color.FgGreen).SprintFunc()
+	magenta = color.New(color.FgMagenta).SprintFunc()
+)
 
-var indexDir = flag.String("index", "", "where to load the data from")
-var lshSize = flag.Int("lsh_size", 10, "number of hash functions in LSH.")
-var maxNumberOfItems = flag.Int("max_number_of_items", 10, "number of hash functions in LSH.")
+var (
+	indexDir         = flag.String("index", "", "where to load the data from")
+	lshSize          = flag.Int("lsh_size", 10, "number of hash functions in LSH.")
+	maxNumberOfItems = flag.Int("max_number_of_items", 10, "number of hash functions in LSH.")
+)
 
 func runQuery(q bluge.Query, indexReader *bluge.Reader) string {
 	req := bluge.NewTopNSearch(*maxNumberOfItems, q)
@@ -53,6 +57,7 @@ func runQuery(q bluge.Query, indexReader *bluge.Reader) string {
 	}
 	return strings.Join(results, "\n")
 }
+
 func RunFullTextSearchTitle(query string, indexReader *bluge.Reader) {
 	defer func(tStart time.Time) {
 		fmt.Println("Elapsed Time:", yellow(time.Since(tStart)))
@@ -85,8 +90,9 @@ func RunFullTextSearchTitleAndContent(query string, indexReader *bluge.Reader) {
 
 	fmt.Println(runQuery(q, indexReader))
 }
+
 func RunVectorSearch(query string, indexReader *bluge.Reader) {
-	var tStart = time.Now()
+	tStart := time.Now()
 	var tEmbeddingDone time.Time
 	defer func(tStart, tEmbeddingDone *time.Time) {
 		fmt.Printf("Elapsed Time: %s (OpenAI latency: %s)\n", yellow(time.Since(*tStart)), yellow(tEmbeddingDone.Sub(*tStart)))
@@ -111,7 +117,8 @@ func RunVectorSearch(query string, indexReader *bluge.Reader) {
 		AddShould(
 			bluge.NewMatchQuery(hash).
 				SetField("text_lsh_hash").SetFuzziness(1).
-				SetField("title_lsh_hash").SetFuzziness(1)).
+				SetField("title_lsh_hash").SetFuzziness(1),
+		).
 		AddShould(bluge.NewMatchQuery(query).
 			SetField("title").SetFuzziness(fuzziness).
 			SetField("text").SetFuzziness(fuzziness))

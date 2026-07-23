@@ -29,8 +29,8 @@ func (c *client) Embeddings(input []string) ([]*vector.Vector32, error) {
 	embd, _, err := c.EmbeddingsWithCost(input)
 	return embd, err
 }
-func (c *client) EmbeddingsWithCost(input []string) ([]*vector.Vector32, int, error) {
 
+func (c *client) EmbeddingsWithCost(input []string) ([]*vector.Vector32, int, error) {
 	// Set the request body parameters
 	reqBody := struct {
 		Input []string `json:"input"`

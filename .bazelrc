@@ -1,0 +1,13 @@
+# Show what actually failed instead of just the target name.
+test --test_output=errors
+
+# Randomize test execution order to surface order-dependent tests.
+test --test_arg=-test.shuffle=on
+
+# `--config=race` turns on the Go race detector (the big win for concurrency
+# bugs). Combined with the default shuffle above: `bazel test --config=race //...`.
+build:race --@io_bazel_rules_go//go/config:race
+
+# `bazel coverage //...` emits a single lcov report at
+# bazel-out/_coverage/_coverage_report.dat, ready to hand to Codecov.
+coverage --combined_report=lcov

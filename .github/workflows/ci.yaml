@@ -5,25 +5,87 @@ on:
   pull_request:
     branches: [ "main" ]
 
+env:
+  # Tools we invoke through the hermetic Bazel-managed Go SDK, pinned.
+  GOLANGCI_LINT_VERSION: v2.12.2
+  GOVULNCHECK_VERSION: v1.1.4
+
 jobs:
-  bazel:
+  build-test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-
-    - name: Set up Bazel
-      uses: bazel-contrib/setup-bazel@0.19.0
+    - uses: bazel-contrib/setup-bazel@0.19.0
       with:
         bazelisk-cache: true
         disk-cache: ${{ github.workflow }}
         repository-cache: true
 
-    # `bazel build` also runs nogo static analysis on every Go compile.
+    # `bazel build` also runs nogo (go vet analyzers) on every Go compile.
     - name: Build
       run: bazel build //...
 
-    - name: Test
-      run: bazel test --test_output=errors //...
+    # --config=race enables the Go race detector; tests also run shuffled.
+    - name: Test (race)
+      run: bazel test --config=race //...
 
     - name: Benchmark
       run: bazel test --test_output=all --test_arg=-test.v --test_arg=-test.bench=. --test_arg=-test.cpu=1 //...
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: bazel-contrib/setup-bazel@0.19.0
+      with:
+        bazelisk-cache: true
+        disk-cache: ${{ github.workflow }}
+        repository-cache: true
+
+    # Blocking: fail if any file is not gofumpt-formatted.
+    - name: Format check
+      run: bazel run //tools/format:format.check
+
+    # Blocking: reproducible module graph.
+    - name: go mod verify
+      run: bazel run @io_bazel_rules_go//go -- mod verify
+
+    # Blocking: no reachable vulnerabilities in first-party code.
+    - name: govulncheck
+      run: bazel run @io_bazel_rules_go//go -- run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
+
+    # Advisory for now: legacy backlog. Remove continue-on-error once cleared,
+    # or add `--new-from-merge-base=origin/main` to gate only new code.
+    - name: golangci-lint
+      continue-on-error: true
+      run: bazel run @io_bazel_rules_go//go -- run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }} run ./...
+
+    # Advisory until go.mod is cleaned up (see the deps-update PR).
+    - name: go mod tidy check
+      continue-on-error: true
+      run: bazel run @io_bazel_rules_go//go -- mod tidy -diff
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: bazel-contrib/setup-bazel@0.19.0
+      with:
+        bazelisk-cache: true
+        disk-cache: ${{ github.workflow }}
+        repository-cache: true
+
+    # Bazel writes a combined lcov report (see .bazelrc) and a JUnit test.xml
+    # per target under bazel-testlogs/ — no gotestsum needed.
+    - name: Coverage
+      run: bazel coverage //...
+
+    - name: Upload to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        files: bazel-out/_coverage/_coverage_report.dat
+        fail_ci_if_error: false
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

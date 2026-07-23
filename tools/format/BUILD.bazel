@@ -1,0 +1,9 @@
+load("@aspect_rules_lint//format:defs.bzl", "format_multirun")
+
+# `bazel run //tools/format`        formats the tree in place (gofumpt).
+# `bazel run //tools/format:format.check`  fails if anything is unformatted (CI gate).
+format_multirun(
+    name = "format",
+    go = "@aspect_rules_lint//format:gofumpt",
+    visibility = ["//visibility:public"],
+)
