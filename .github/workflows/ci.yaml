@@ -1,0 +1,47 @@
+name: CI
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  go-toolchain:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    - name: Build
+      run: go build -v ./...
+
+    - name: Test
+      run: go test -v ./...
+
+    - name: Benchmark
+      run: go test --bench=. --benchtime=10s -cpu 1 ./...
+
+  bazel-toolchain:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Bazel
+      uses: bazel-contrib/setup-bazel@0.15.0
+      with:
+        bazelisk-cache: true
+        disk-cache: ${{ github.workflow }}
+        repository-cache: true
+
+    - name: Build
+      run: bazel build //...
+
+    - name: Test
+      run: bazel test --test_output=all //...
+
+    - name: Benchmark
+      run: bazel test --test_output=all --test_arg=-test.v --test_arg=-test.bench=. --test_arg=-test.cpu=1 //...
