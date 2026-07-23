@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
-    name = "bleve-search_lib",
-    srcs = ["bleve-search.go"],
-    importpath = "github.com/iampat/cloudy-neigh/experimental/cmd/bleve-search",
+    name = "search_lib",
+    srcs = ["search.go"],
+    importpath = "github.com/iampat/cloudy-neigh/experimentals/bleve/search",
     visibility = ["//visibility:private"],
     deps = [
         "//lsh",
@@ -15,7 +15,7 @@ go_library(
 )
 
 go_binary(
-    name = "bleve-search",
-    embed = [":bleve-search_lib"],
+    name = "search",
+    embed = [":search_lib"],
     visibility = ["//visibility:public"],
 )
