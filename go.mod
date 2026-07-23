@@ -1,6 +1,6 @@
 module github.com/iampat/cloudy-neigh
 
-go 1.19
+go 1.24
 
 require (
 	github.com/blugelabs/bluge v0.2.2
