@@ -10,6 +10,7 @@ func NewLSH42(size int, dim int) *Lsh {
 	rnd := rand.New(rand.NewSource(42))
 	return NewLSH(size, dim, rnd)
 }
+
 func NewLSH(size int, dim int, rnd *rand.Rand) *Lsh {
 	lsh := Lsh{}
 	for idx := 0; idx < size; idx++ {

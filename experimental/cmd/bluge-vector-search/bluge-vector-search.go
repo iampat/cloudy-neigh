@@ -54,6 +54,7 @@ func search(hashQuery string, indexReader *bluge.Reader, fuzziness int) map[int]
 	}
 	return freq
 }
+
 func hashIndex(num int) string {
 	return fmt.Sprintf("%020b", num)
 }
