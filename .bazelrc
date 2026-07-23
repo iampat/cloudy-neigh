@@ -1,0 +1,4 @@
+test --test_output=errors
+test --test_arg=-test.shuffle=on
+
+build:race --@io_bazel_rules_go//go/config:race

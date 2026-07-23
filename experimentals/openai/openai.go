@@ -12,11 +12,15 @@ import (
 	"github.com/iampat/cloudy-neigh/openai"
 )
 
-const maxLineSize int = 1000 * 1000 // Reserve 1MB
-const batchSize = 200
+const (
+	maxLineSize int = 1000 * 1000 // Reserve 1MB
+	batchSize       = 200
+)
 
-const costDollarPerTocken = float64(0.0004 / 1000.0)
-const maxOpenAiTextLength = 10 * 1000
+const (
+	costDollarPerTocken = float64(0.0004 / 1000.0)
+	maxOpenAiTextLength = 10 * 1000
+)
 
 func writeDocsToJson(batch []*document.Document, encoder *json.Encoder) {
 	for _, d := range batch {
@@ -25,6 +29,7 @@ func writeDocsToJson(batch []*document.Document, encoder *json.Encoder) {
 		}
 	}
 }
+
 func hydraiteBatch(batch []*document.Document, client openai.Embedder, lsh *lsh.Lsh) int {
 	titles := []string{}
 	contents := []string{}
@@ -55,13 +60,12 @@ func hydraiteBatch(batch []*document.Document, client openai.Embedder, lsh *lsh.
 		doc.TitleLshHash = lsh.Hash(doc.TitleEmbedding)
 	}
 	return cost1 + cost2
-
 }
 
 func main() {
-	var inputJson = flag.String("input_json", "", "where to load the data")
-	var outputJson = flag.String("output_json", "", "where to write the data after adding the index")
-	var lshSize = flag.Int("lsh_size", 10, "Size of the LSH")
+	inputJson := flag.String("input_json", "", "where to load the data")
+	outputJson := flag.String("output_json", "", "where to write the data after adding the index")
+	lshSize := flag.Int("lsh_size", 10, "Size of the LSH")
 	flag.Parse()
 	client := openai.NewClient(os.Getenv("OPENAI_API_KEY"))
 	lsh := lsh.NewLSH42(*lshSize, client.EmbeddingDim())
