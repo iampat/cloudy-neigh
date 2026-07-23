@@ -1,9 +1,14 @@
 ---
 name: babysit-prs
-description: Babysit all open PRs in this repo — poll for the author's review comments, address and reply to them, keep CI green, and merge only on the exact APPROVED-MERGE-IT token. Ask any clarifications as PR comments, not in the session. Use on a recurring loop (e.g. /loop 5m /babysit-prs).
+description: Babysit all open PRs in this repo — poll for the author's review comments, address and reply to them, keep CI green, and merge only on the exact APPROVED-MERGE-IT token. Ask any clarifications as PR comments, not in the session. Runs in the background on a recurring loop (e.g. /loop 5m /babysit-prs).
 ---
 
 # Babysit open PRs
+
+**Run in the background.** Each iteration must run as a background job so it never
+blocks interactive work — dispatch the polling/fix commands with background
+execution (`run_in_background`), or launch the whole loop as a background agent.
+Only surface a short status when something actually changes.
 
 Run these steps each iteration for the current repo:
 

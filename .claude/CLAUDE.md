@@ -3,9 +3,9 @@
 ## Pull request workflow
 
 Babysit every open PR until it's merged or closed. Run it as a recurring,
-session-local loop: `/loop 5m /babysit-prs`. The `babysit-prs` skill defines
-the steps (poll comments, address + reply, keep CI green, ask clarifications as
-PR comments).
+session-local loop **in the background** so it never blocks interactive work:
+`/loop 5m /babysit-prs`. The `babysit-prs` skill defines the steps (poll
+comments, address + reply, keep CI green, ask clarifications as PR comments).
 
 ### Merge authorization
 
