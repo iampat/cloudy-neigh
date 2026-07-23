@@ -1,9 +1,20 @@
 load("@bazel_gazelle//:def.bzl", "gazelle")
 load("@buildifier_prebuilt//:rules.bzl", "buildifier")
+load("@io_bazel_rules_go//go:def.bzl", "TOOLS_NOGO", "nogo")
 
 # gazelle:prefix github.com/iampat/cloudy-neigh
 gazelle(name = "gazelle")
 
 buildifier(
     name = "buildifier",
+)
+
+# Static analysis run as part of every `bazel build`. TOOLS_NOGO is the
+# curated set of `go vet` analyzers shipped with rules_go. Third-party
+# code is excluded via nogo_config.json.
+nogo(
+    name = "nogo",
+    config = "nogo_config.json",
+    visibility = ["//visibility:public"],
+    deps = TOOLS_NOGO,
 )
