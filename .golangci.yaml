@@ -1,17 +1,12 @@
-# golangci-lint v2 configuration.
-# Run via the Bazel-managed Go SDK:
-#   bazel run @io_bazel_rules_go//go -- run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
 version: "2"
 
 linters:
-  # Start from the curated standard set (errcheck, govet, ineffassign,
-  # staticcheck, unused) and layer on a few high-signal extras.
   default: standard
   enable:
-    - revive # golint's modern successor: style/consistency
-    - gosec # security-focused checks
-    - misspell # catches typos in comments/strings
-    - bodyclose # unclosed HTTP response bodies
+    - revive
+    - gosec
+    - misspell
+    - bodyclose
 
 formatters:
   enable:

@@ -9,9 +9,6 @@ buildifier(
     name = "buildifier",
 )
 
-# Static analysis run as part of every `bazel build`. TOOLS_NOGO is the
-# curated set of `go vet` analyzers shipped with rules_go. Third-party
-# code is excluded via nogo_config.json.
 nogo(
     name = "nogo",
     config = "nogo_config.json",
