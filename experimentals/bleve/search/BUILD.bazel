@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "search_lib",
+    srcs = ["search.go"],
+    importpath = "github.com/iampat/cloudy-neigh/experimentals/bleve/search",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//lsh",
+        "//openai",
+        "@com_github_blevesearch_bleve_v2//:bleve",
+        "@com_github_blevesearch_bleve_v2//search/query",
+        "@com_github_fatih_color//:color",
+    ],
+)
+
+go_binary(
+    name = "search",
+    embed = [":search_lib"],
+    visibility = ["//visibility:public"],
+)

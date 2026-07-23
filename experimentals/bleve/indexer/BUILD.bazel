@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "indexer_lib",
+    srcs = ["indexer.go"],
+    importpath = "github.com/iampat/cloudy-neigh/experimentals/bleve/indexer",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//document",
+        "@com_github_blevesearch_bleve_v2//:bleve",
+    ],
+)
+
+go_binary(
+    name = "indexer",
+    embed = [":indexer_lib"],
+    visibility = ["//visibility:public"],
+)

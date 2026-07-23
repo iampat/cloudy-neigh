@@ -5,6 +5,7 @@ go_library(
     srcs = ["main.go"],
     importpath = "github.com/iampat/cloudy-neigh/cmd/pebble",
     visibility = ["//visibility:private"],
+    deps = ["@com_github_cockroachdb_pebble_v2//:pebble"],
 )
 
 go_binary(

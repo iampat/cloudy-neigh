@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -13,13 +12,13 @@ import (
 	"github.com/iampat/cloudy-neigh/lsh"
 	"github.com/iampat/cloudy-neigh/openai"
 
-	"github.com/blugelabs/bluge"
+	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/fatih/color"
 )
 
 var (
 	yellow  = color.New(color.FgYellow).SprintFunc()
-	red     = color.New(color.FgRed).SprintFunc()
 	green   = color.New(color.FgGreen).SprintFunc()
 	magenta = color.New(color.FgMagenta).SprintFunc()
 )
@@ -30,35 +29,30 @@ var (
 	maxNumberOfItems = flag.Int("max_number_of_items", 10, "number of hash functions in LSH.")
 )
 
-func runQuery(q bluge.Query, indexReader *bluge.Reader) string {
-	req := bluge.NewTopNSearch(*maxNumberOfItems, q)
-	// req.SortByCustom()
+// matchField builds a match query scoped to a single field.
+func matchField(text, field string, fuzziness int) query.Query {
+	q := bleve.NewMatchQuery(text)
+	q.SetField(field)
+	q.SetFuzziness(fuzziness)
+	return q
+}
 
-	dmi, err := indexReader.Search(context.Background(), req)
+func runQuery(q query.Query, index bleve.Index) string {
+	req := bleve.NewSearchRequestOptions(q, *maxNumberOfItems, 0, false)
+	req.Fields = []string{"title", "url"}
+
+	res, err := index.Search(req)
 	if err != nil {
 		log.Fatalf("error executing search: %v", err)
 	}
-	next, err := dmi.Next()
-	results := []string{}
-	for err == nil && next != nil {
-		values := map[string]string{}
-		err = next.VisitStoredFields(func(field string, value []byte) bool {
-			values[field] = string(value)
-			return true
-		})
-		if err != nil {
-			log.Fatalf("error accessing stored fields: %v", err)
-		}
-		results = append(results, fmt.Sprintf("Title: %s\turl: %s", values["title"], values["url"]))
-		next, err = dmi.Next()
-	}
-	if err != nil {
-		log.Fatalf("error iterating results: %v", err)
+	results := make([]string, 0, len(res.Hits))
+	for _, hit := range res.Hits {
+		results = append(results, fmt.Sprintf("Title: %s\turl: %s", hit.Fields["title"], hit.Fields["url"]))
 	}
 	return strings.Join(results, "\n")
 }
 
-func RunFullTextSearchTitle(query string, indexReader *bluge.Reader) {
+func RunFullTextSearchTitle(query string, index bleve.Index) {
 	defer func(tStart time.Time) {
 		fmt.Println("Elapsed Time:", yellow(time.Since(tStart)))
 		fmt.Println(magenta("-------------------------------- Finished ---------------------------------"))
@@ -66,14 +60,11 @@ func RunFullTextSearchTitle(query string, indexReader *bluge.Reader) {
 	}(time.Now())
 	fmt.Println(green("------------------------ Full Text Search (Title) Started -------------------------"))
 	fuzziness := 0
-	// if len(query) > 10 {
-	// 	fuzziness = 1
-	// }
-	q := bluge.NewMatchQuery(query).SetField("title").SetFuzziness(fuzziness)
-	fmt.Println(runQuery(q, indexReader))
+	q := matchField(query, "title", fuzziness)
+	fmt.Println(runQuery(q, index))
 }
 
-func RunFullTextSearchTitleAndContent(query string, indexReader *bluge.Reader) {
+func RunFullTextSearchTitleAndContent(query string, index bleve.Index) {
 	defer func(tStart time.Time) {
 		fmt.Println("Elapsed Time:", yellow(time.Since(tStart)))
 		fmt.Println(magenta("-------------------------------- Finished ---------------------------------"))
@@ -81,17 +72,14 @@ func RunFullTextSearchTitleAndContent(query string, indexReader *bluge.Reader) {
 	}(time.Now())
 	fmt.Println(green("--------------- Full Text Search (Title & Content) Started ----------------"))
 	fuzziness := 0
-	// if len(query) > 10 {
-	// 	fuzziness = 1
-	// }
-	q := bluge.NewMatchQuery(query).
-		SetField("title").SetFuzziness(fuzziness).
-		SetField("text").SetFuzziness(fuzziness)
-
-	fmt.Println(runQuery(q, indexReader))
+	q := bleve.NewDisjunctionQuery(
+		matchField(query, "title", fuzziness),
+		matchField(query, "text", fuzziness),
+	)
+	fmt.Println(runQuery(q, index))
 }
 
-func RunVectorSearch(query string, indexReader *bluge.Reader) {
+func RunVectorSearch(query string, index bleve.Index) {
 	tStart := time.Now()
 	var tEmbeddingDone time.Time
 	defer func(tStart, tEmbeddingDone *time.Time) {
@@ -110,44 +98,39 @@ func RunVectorSearch(query string, indexReader *bluge.Reader) {
 
 	hash := lsh.Hash(embd[0])
 	fuzziness := 0
-	// if len(query) > 10 {
-	// 	fuzziness = 1
-	// }
-	q := bluge.NewBooleanQuery().
-		AddShould(
-			bluge.NewMatchQuery(hash).
-				SetField("text_lsh_hash").SetFuzziness(1).
-				SetField("title_lsh_hash").SetFuzziness(1),
-		).
-		AddShould(bluge.NewMatchQuery(query).
-			SetField("title").SetFuzziness(fuzziness).
-			SetField("text").SetFuzziness(fuzziness))
-	fmt.Println(runQuery(q, indexReader))
+	q := bleve.NewBooleanQuery()
+	q.AddShould(bleve.NewDisjunctionQuery(
+		matchField(hash, "text_lsh_hash", 1),
+		matchField(hash, "title_lsh_hash", 1),
+	))
+	q.AddShould(bleve.NewDisjunctionQuery(
+		matchField(query, "title", fuzziness),
+		matchField(query, "text", fuzziness),
+	))
+	fmt.Println(runQuery(q, index))
 }
 
 func main() {
 	flag.Parse()
-	cfg := bluge.DefaultConfig(*indexDir)
-	indexReader, err := bluge.OpenReader(cfg)
+	index, err := bleve.Open(*indexDir)
 	if err != nil {
 		log.Fatalf("unable to open reader: %v", err)
 	}
 	defer func() {
-		err = indexReader.Close()
-		if err != nil {
+		if err := index.Close(); err != nil {
 			log.Fatalf("error closing reader: %v", err)
 		}
 	}()
 	fmt.Println("Warmup")
-	runQuery(bluge.NewMatchQuery("WARMUP").SetField("title"), indexReader)
+	runQuery(matchField("WARMUP", "title", 0), index)
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("Press Ctrl-D to exit.")
 	fmt.Printf("query: ")
 	for scanner.Scan() {
 		query := scanner.Text()
-		RunFullTextSearchTitle(query, indexReader)
-		RunFullTextSearchTitleAndContent(query, indexReader)
-		RunVectorSearch(query, indexReader)
+		RunFullTextSearchTitle(query, index)
+		RunFullTextSearchTitleAndContent(query, index)
+		RunVectorSearch(query, index)
 		fmt.Printf("query: ")
 	}
 	if err := scanner.Err(); err != nil {
