@@ -41,7 +41,6 @@
   code{font-family:var(--mono); font-size:.86em; background:var(--hair-2);
     padding:.1em .38em; border-radius:4px; color:#0d2233}
 
-  /* ---------- header ---------- */
   header.hero{
     padding:64px 0 30px; border-bottom:1px solid var(--hair);
     background:linear-gradient(180deg,#fff, #fff 60%, transparent);
@@ -57,7 +56,6 @@
   }
   .toc a:hover{border-color:var(--teal); color:var(--teal-ink)}
 
-  /* ---------- sections ---------- */
   section{padding:44px 0; border-bottom:1px solid var(--hair)}
   section > .eyebrow{display:block; margin-bottom:6px}
   h2{font-size:1.55rem; letter-spacing:-.01em; margin:.1rem 0 .6rem; font-weight:750}
@@ -65,10 +63,7 @@
   p{margin:0 0 1rem}
   .prose p:last-child{margin-bottom:0}
 
-  /* callout: the reduction */
-  .reduce{
-    display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:22px 0 4px;
-  }
+  .reduce{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:22px 0 4px}
   .reduce .cap{
     background:var(--panel); border:1px solid var(--hair); border-radius:12px;
     padding:18px 18px 16px; position:relative; overflow:hidden;
@@ -82,44 +77,11 @@
   .reduce .cap.a .tag{color:var(--green)}
   .reduce .cap.b .tag{color:var(--amber)}
 
-  /* legend */
-  .legend{display:flex; flex-wrap:wrap; gap:14px 22px; margin:8px 0 0;
-    font-family:var(--mono); font-size:.78rem; color:var(--muted)}
-  .legend span{display:inline-flex; align-items:center; gap:8px}
-  .swatch{width:26px; height:16px; border-radius:4px; display:inline-block; flex:none}
-  .sw-imm{background:var(--green-soft); border:1.5px solid var(--green)}
-  .sw-root{background:var(--amber-soft); border:1.5px solid var(--amber)}
-  .sw-man{background:#fff; border:1.5px solid var(--teal)}
-  .sw-gc{background:#fff; border:1.5px dashed var(--faint)}
-  .sw-ref{background:transparent; border:none; width:26px; height:0; border-top:2px solid var(--teal); border-radius:0}
-
-  /* diagram panel */
-  .diagram{
-    background:var(--panel); border:1px solid var(--hair); border-radius:14px;
-    padding:20px 18px 14px; margin:18px 0; overflow-x:auto;
-    box-shadow:0 1px 0 rgba(22,32,43,.02), 0 10px 24px -18px rgba(22,32,43,.4);
-  }
-  .diagram svg{display:block; width:100%; height:auto; min-width:520px}
-  .diagram .cap{font-family:var(--mono); font-size:.76rem; color:var(--faint);
-    margin-top:8px; padding-top:10px; border-top:1px dashed var(--hair)}
-  .diagram .cap b{color:var(--muted); font-weight:600}
-
-  /* svg text roles */
-  svg text{font-family:var(--mono)}
-  .t-node{font-size:12.5px; fill:var(--ink); font-weight:600}
-  .t-sub{font-size:10.5px; fill:var(--faint)}
-  .t-lab{font-size:11px; fill:var(--muted)}
-  .t-title{font-size:12px; fill:var(--teal-ink); font-weight:700; letter-spacing:.04em}
-  .t-badge{font-size:10.5px; fill:#fff; font-weight:700; letter-spacing:.04em}
-  .t-strike{fill:var(--faint)}
-
-  /* operation cards */
   .op{background:var(--panel); border:1px solid var(--hair); border-radius:16px;
     padding:22px 22px 18px; margin:22px 0}
   .op-head{display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap}
   .op .sig{font-family:var(--mono); font-size:.82rem; color:var(--teal-ink);
     background:var(--teal-soft); padding:4px 9px; border-radius:6px; white-space:nowrap}
-  .op .diagram{background:var(--panel-2)}
   .how{margin:12px 0 0; padding:0; list-style:none; counter-reset:s}
   .how li{position:relative; padding:5px 0 5px 30px; font-size:.95rem; color:var(--muted)}
   .how li::before{
@@ -138,7 +100,6 @@
     padding:3px 8px; border-radius:999px; border:1px solid currentColor}
   .pill.green{color:var(--green)} .pill.amber{color:var(--amber)}
 
-  /* table */
   .tablewrap{overflow-x:auto; border:1px solid var(--hair); border-radius:12px; margin:16px 0}
   table{border-collapse:collapse; width:100%; min-width:640px; font-size:.9rem}
   th,td{text-align:left; padding:11px 14px; border-bottom:1px solid var(--hair-2); vertical-align:top}
@@ -149,12 +110,13 @@
   td code{font-size:.8em}
   .ok{color:var(--green); font-weight:700}
   .warn{color:var(--amber); font-weight:700}
+  .bad{color:var(--red); font-weight:700}
 
-  /* caveats */
   .cav{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:12px}
   .cav .c{background:var(--panel); border:1px solid var(--hair); border-radius:12px; padding:16px}
   .cav .c h4{margin:0 0 .3rem; font-size:.98rem}
   .cav .c .k{font-family:var(--mono); font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; color:var(--amber); display:block; margin-bottom:4px}
+  .cav .c .k.rule{color:var(--teal-ink)}
   .cav .c p{margin:0; font-size:.9rem; color:var(--muted)}
 
   footer{padding:34px 0 60px; color:var(--faint); font-family:var(--mono); font-size:.78rem}
@@ -164,488 +126,245 @@
     .reduce,.cav{grid-template-columns:1fr}
     .op .sig{white-space:normal}
   }
-  @media (prefers-reduced-motion:no-preference){
-    .toc a,.op,.reduce .cap{transition:border-color .15s ease, color .15s ease}
-  }
 </style>
-
-<!-- shared arrow markers -->
-<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
-  <marker id="aT" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0E7C86"/></marker>
-  <marker id="aG" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8595A4"/></marker>
-  <marker id="aA" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B4560F"/></marker>
-  <marker id="aGr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2E7D57"/></marker>
-</defs></svg>
 
 <header class="hero">
   <div class="wrap">
-    <span class="eyebrow">Storage abstraction · design note</span>
-    <h1>Atomic writes, CAS, and atomic rename over one blob interface</h1>
-    <p class="lede">Local POSIX, GCS, and S3 — behind a single interface that guarantees the four semantics <code>gocloud.dev/blob</code> won't give you portably. The trick: never map your layout onto storage keys. Own the layout, and every operation collapses to two things all three backends can do.</p>
+    <span class="eyebrow">Storage abstraction · design note · v2 of this note</span>
+    <h1>A portable atomic blob store, designed read-latency-first</h1>
+    <p class="lede">Local POSIX, GCS, and S3 behind one interface. V0/V1 keeps logical paths as storage keys and gets atomic write, write-if-not-exist, and CAS from each backend's <em>native</em> preconditions — every read is one roundtrip. Atomic rename is deliberately deferred: it is the only requirement that forces indirection, and its machinery (a CAS'd manifest) is specified here as V2 future work.</p>
     <nav class="toc" aria-label="Contents">
-      <a href="#reduce">The reduction</a>
-      <a href="#arch">Architecture</a>
-      <a href="#model">Data model</a>
-      <a href="#single">Single-object ops</a>
-      <a href="#struct">Structural ops</a>
-      <a href="#backends">Per-backend CAS</a>
-      <a href="#scale">Scaling</a>
-      <a href="#caveats">Caveats</a>
+      <a href="#scope">Scope &amp; non-goals</a>
+      <a href="#store">The V0/V1 store</a>
+      <a href="#ops">Operation semantics</a>
+      <a href="#ontop">What it can build</a>
+      <a href="#latency">Latency budget</a>
+      <a href="#compat">Forward-compat rules</a>
+      <a href="#v2">V2: the manifest</a>
+      <a href="#caveats">Honest costs</a>
     </nav>
   </div>
 </header>
 
 <main class="wrap">
 
-  <!-- ============ REDUCTION ============ -->
-  <section id="reduce">
-    <span class="eyebrow">The one idea</span>
-    <h2>Five requirements reduce to two primitives</h2>
+  <!-- ============ SCOPE ============ -->
+  <section id="scope">
+    <span class="eyebrow">Scope</span>
+    <h2>V0/V1 guarantees three write semantics; rename is V2</h2>
     <div class="prose">
-      <p>Store two kinds of thing differently. <b>Data</b> is written once and never changed. <b>One small pointer</b> — the <i>root</i> — says which data is current, and it's the only thing ever mutated, always by compare-and-swap.</p>
-      <p>With that split, atomic write, write-if-not-exist, CAS, multi-object rename, and prefix rename all become logic over exactly two storage capabilities:</p>
+      <p>The store must provide, portably across local POSIX, GCS, and S3: <b>atomic write</b>, <b>write-if-not-exist</b>, and <b>compare-and-swap</b>, plus plain read, delete, and list. The design rubric's primary criterion is <b>read latency</b>.</p>
+      <p><b>Deferred to V2:</b> atomic single rename, atomic multi-object rename (<code>RenameMany</code>), atomic prefix rename, and snapshot-consistent list. These are the only requirements that cannot be met with per-object primitives — each needs a single CAS-able commit point plus read-side indirection, i.e. a manifest. Keeping them out of V0/V1 removes the manifest, its garbage collection, and its write contention entirely, and keeps every read at one roundtrip.</p>
+      <p><b>Dependency note:</b> this proposal introduces <a href="https://gocloud.dev/howto/blob/"><code>gocloud.dev/blob</code></a> as a <em>new</em> dependency of this repo (today's direct deps are bleve, pebble, and fatih/color). It supplies the portable data path (<code>gcsblob</code>, <code>s3blob</code>, <code>fileblob</code>, <code>memblob</code>); the native preconditions below are reached through its <code>As</code>/<code>BeforeWrite</code> escape hatches or the underlying SDKs.</p>
     </div>
     <div class="reduce">
       <div class="cap a">
-        <span class="tag">Capability 1</span>
-        <h4>Put(key, data)</h4>
-        <p>Atomically write a new, uniquely-named, immutable object. Native on all three backends — nothing to build.</p>
+        <span class="tag">V0/V1 — build now</span>
+        <h4>Direct-keyed store</h4>
+        <p>Logical path = storage key. All atomicity comes from native single-object preconditions. Reads are 1 RTT, always. No manifest, no GC, no cross-writer contention.</p>
       </div>
       <div class="cap b">
-        <span class="tag">Capability 2</span>
-        <h4>CAS(root, expect, data)</h4>
-        <p>Swap <em>one</em> object only if its version still matches. GCS generation · S3 If-Match · local flock. The entire non-portable surface.</p>
+        <span class="tag">V2 — build when rename is real</span>
+        <h4>Manifest namespaces</h4>
+        <p>Per-namespace opt-in: immutable uuid-named blobs + one CAS'd root manifest. Buys RenameMany, cross-key transactions, and snapshot list — at the costs in <a href="#v2">§V2</a>.</p>
       </div>
-    </div>
-    <div class="legend" aria-label="Diagram legend">
-      <span><i class="swatch sw-imm"></i> immutable data</span>
-      <span><i class="swatch sw-root"></i> CAS'd root</span>
-      <span><i class="swatch sw-man"></i> manifest entry</span>
-      <span><i class="swatch sw-ref"></i> reference</span>
-      <span><i class="swatch sw-gc"></i> garbage (old version)</span>
     </div>
   </section>
 
-  <!-- ============ ARCHITECTURE ============ -->
-  <section id="arch">
+  <!-- ============ STORE ============ -->
+  <section id="store">
     <span class="eyebrow">Architecture</span>
-    <h2>Two layers — only the bottom one knows the backend</h2>
-    <p class="prose">The logical layer is written once and is fully portable. Underneath it, a small <code>Store</code> gives three implementations of the same five methods; the only genuinely backend-specific method is <code>CAS</code>.</p>
-
-    <div class="diagram">
-      <svg viewBox="0 0 760 340" role="img" aria-label="Layered architecture: your code calls the Blobs logical layer, which calls the Store primitive, which is implemented over gocloud.dev/blob for GCS, S3 and local.">
-        <!-- your code -->
-        <rect x="270" y="14" width="220" height="38" rx="9" fill="#fff" stroke="#DCE3EA" stroke-width="1.5"/>
-        <text x="380" y="38" text-anchor="middle" class="t-node">your application code</text>
-        <line x1="380" y1="52" x2="380" y2="72" stroke="#0E7C86" stroke-width="1.5" marker-end="url(#aT)"/>
-
-        <!-- Layer 2 -->
-        <rect x="70" y="74" width="620" height="74" rx="12" fill="#E1F0F1" stroke="#0E7C86" stroke-width="1.5"/>
-        <text x="86" y="95" class="t-title">LAYER 2 · Blobs  (logical namespace — portable, written once)</text>
-        <g class="t-lab" fill="#0A5A62">
-          <text x="90" y="120">Read</text><text x="150" y="120">Write</text><text x="222" y="120">WriteIfNotExist</text>
-          <text x="360" y="120">CompareAndSwap</text><text x="486" y="120">Delete</text><text x="548" y="120">List</text>
-        </g>
-        <g class="t-lab" fill="#0A5A62" font-weight="700">
-          <text x="90" y="139">Rename (prefix)</text><text x="220" y="139">RenameMany (multi-object)</text>
-        </g>
-
-        <text x="700" y="168" text-anchor="end" class="t-sub">— everything above this line is 100% portable —</text>
-        <line x1="70" y1="171" x2="690" y2="171" stroke="#8595A4" stroke-width="1" stroke-dasharray="4 4"/>
-        <line x1="380" y1="148" x2="380" y2="190" stroke="#0E7C86" stroke-width="1.5" marker-end="url(#aT)"/>
-
-        <!-- Layer 1 -->
-        <rect x="70" y="192" width="620" height="60" rx="12" fill="#fff" stroke="#B4560F" stroke-width="1.5"/>
-        <text x="86" y="213" class="t-title" fill="#B4560F">LAYER 1 · Store  (only backend-specific code)</text>
-        <g class="t-lab">
-          <text x="90" y="237">Get</text><text x="140" y="237">Put</text>
-          <text x="190" y="237" fill="#B4560F" font-weight="700">CAS</text>
-          <text x="248" y="237">Delete</text><text x="312" y="237">List</text>
-        </g>
-        <text x="420" y="237" class="t-sub">↑ CAS is the single method whose body differs per backend</text>
-
-        <!-- backends -->
-        <line x1="180" y1="252" x2="180" y2="286" stroke="#8595A4" stroke-width="1.5" marker-end="url(#aG)"/>
-        <line x1="380" y1="252" x2="380" y2="286" stroke="#8595A4" stroke-width="1.5" marker-end="url(#aG)"/>
-        <line x1="580" y1="252" x2="580" y2="286" stroke="#8595A4" stroke-width="1.5" marker-end="url(#aG)"/>
-
-        <rect x="96" y="288" width="168" height="42" rx="9" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.5"/>
-        <text x="180" y="305" text-anchor="middle" class="t-node">GCS · gcsblob</text>
-        <text x="180" y="321" text-anchor="middle" class="t-sub">generation</text>
-
-        <rect x="296" y="288" width="168" height="42" rx="9" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.5"/>
-        <text x="380" y="305" text-anchor="middle" class="t-node">S3 · s3blob</text>
-        <text x="380" y="321" text-anchor="middle" class="t-sub">ETag / If-Match</text>
-
-        <rect x="496" y="288" width="168" height="42" rx="9" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.5"/>
-        <text x="580" y="305" text-anchor="middle" class="t-node">Local · fileblob</text>
-        <text x="580" y="321" text-anchor="middle" class="t-sub">flock + rename</text>
-      </svg>
-      <div class="cap"><b>Read as:</b> app → portable logic → one tiny per-backend primitive → <code>gocloud.dev/blob</code>. Swapping backends touches only the three green boxes.</div>
-    </div>
-  </section>
-
-  <!-- ============ DATA MODEL ============ -->
-  <section id="model">
-    <span class="eyebrow">Data model</span>
-    <h2>What actually sits in the bucket</h2>
-    <p class="prose">Your logical paths never become storage keys. Data objects get opaque, unique names and are written exactly once. The <b>root</b> is a single object holding the manifest: logical path → data object. Because the root carries a version, it is the one point where concurrency is resolved.</p>
-
-    <div class="diagram">
-      <svg viewBox="0 0 760 268" role="img" aria-label="A bucket containing one mutable root object holding a manifest of logical paths, each pointing to an immutable data object.">
-        <text x="20" y="24" class="t-title">bucket (GCS / S3 / local dir)</text>
-        <rect x="14" y="34" width="732" height="216" rx="12" fill="none" stroke="#DCE3EA" stroke-width="1.5" stroke-dasharray="2 4"/>
-
-        <!-- root -->
-        <rect x="36" y="66" width="250" height="150" rx="11" fill="#FBEADD" stroke="#B4560F" stroke-width="1.75"/>
-        <text x="52" y="88" class="t-title" fill="#B4560F">root  ·  version = 7</text>
-        <text x="52" y="104" class="t-sub">the only mutable object · CAS-only</text>
-
-        <g class="t-node" font-size="11.5">
-          <text x="52" y="132">"users/a.json"</text>
-          <text x="52" y="160">"users/b.json"</text>
-          <text x="52" y="188">"index/main"</text>
-        </g>
-        <!-- arrows out -->
-        <line x1="200" y1="128" x2="486" y2="104" stroke="#0E7C86" stroke-width="1.5" marker-end="url(#aT)"/>
-        <line x1="200" y1="156" x2="486" y2="150" stroke="#0E7C86" stroke-width="1.5" marker-end="url(#aT)"/>
-        <line x1="200" y1="184" x2="486" y2="196" stroke="#0E7C86" stroke-width="1.5" marker-end="url(#aT)"/>
-
-        <!-- data objects -->
-        <g>
-          <rect x="488" y="82" width="230" height="40" rx="9" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.5"/>
-          <text x="504" y="99" class="t-node" font-size="11.5">blobs/9f3c…e1</text>
-          <text x="504" y="114" class="t-sub">immutable · write-once</text>
-
-          <rect x="488" y="130" width="230" height="40" rx="9" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.5"/>
-          <text x="504" y="147" class="t-node" font-size="11.5">blobs/2a71…b8</text>
-          <text x="504" y="162" class="t-sub">immutable · write-once</text>
-
-          <rect x="488" y="178" width="230" height="40" rx="9" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.5"/>
-          <text x="504" y="195" class="t-node" font-size="11.5">blobs/c40d…7a</text>
-          <text x="504" y="210" class="t-sub">immutable · write-once</text>
-        </g>
-      </svg>
-      <div class="cap"><b>Invariant:</b> data objects are content-addressed / uuid-named and never rewritten — so CAS is needed on the root <em>only</em>. Everything else is a plain atomic <code>Put</code>.</div>
-    </div>
-  </section>
-
-  <!-- ============ SINGLE-OBJECT OPS ============ -->
-  <section id="single">
-    <div class="group-title"><span class="pill green">group A</span><h2>Single-object operations</h2></div>
-    <p class="prose">Each is: write the new data as a fresh immutable object, then move the pointer with one CAS. The CAS is the atomic instant — readers see the old object or the new one, never a torn state, never nothing.</p>
-
-    <!-- OP: atomic write -->
-    <article class="op">
-      <div class="op-head"><h3>Atomic write</h3><span class="sig">Write(path, data) → Handle</span></div>
-      <div class="diagram">
-        <svg viewBox="0 0 760 210" role="img" aria-label="Atomic write: a new immutable blob B2 is written, then the root is CAS'd from version 7 to 8 to point at B2; the old blob B1 becomes garbage.">
-          <text x="20" y="22" class="t-title">before  (root v7)</text>
-          <text x="430" y="22" class="t-title">after  (root v8)</text>
-
-          <!-- before -->
-          <rect x="20" y="36" width="150" height="46" rx="10" fill="#FBEADD" stroke="#B4560F" stroke-width="1.5"/>
-          <text x="95" y="58" text-anchor="middle" class="t-node">root v7</text>
-          <text x="95" y="73" text-anchor="middle" class="t-sub">path → B1</text>
-          <rect x="220" y="36" width="150" height="46" rx="10" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.5"/>
-          <text x="295" y="58" text-anchor="middle" class="t-node">B1</text>
-          <text x="295" y="73" text-anchor="middle" class="t-sub">old data</text>
-          <line x1="170" y1="59" x2="216" y2="59" stroke="#0E7C86" stroke-width="1.5" marker-end="url(#aT)"/>
-
-          <!-- transition badge -->
-          <rect x="150" y="128" width="120" height="26" rx="13" fill="#B4560F"/>
-          <text x="210" y="145" text-anchor="middle" class="t-badge">① Put B2</text>
-          <rect x="300" y="128" width="188" height="26" rx="13" fill="#16202B"/>
-          <text x="394" y="145" text-anchor="middle" class="t-badge">② CAS root  v7 → v8</text>
-
-          <!-- after -->
-          <rect x="430" y="36" width="150" height="46" rx="10" fill="#FBEADD" stroke="#B4560F" stroke-width="1.5"/>
-          <text x="505" y="58" text-anchor="middle" class="t-node">root v8</text>
-          <text x="505" y="73" text-anchor="middle" class="t-sub">path → B2</text>
-          <rect x="620" y="36" width="120" height="46" rx="10" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.5"/>
-          <text x="680" y="58" text-anchor="middle" class="t-node">B2</text>
-          <text x="680" y="73" text-anchor="middle" class="t-sub">new data</text>
-          <line x1="580" y1="59" x2="616" y2="59" stroke="#0E7C86" stroke-width="1.5" marker-end="url(#aT)"/>
-          <!-- B1 now garbage -->
-          <rect x="430" y="92" width="120" height="30" rx="8" fill="#fff" stroke="#8595A4" stroke-width="1.3" stroke-dasharray="4 4"/>
-          <text x="490" y="111" text-anchor="middle" class="t-strike" font-size="11">B1 → garbage</text>
-        </svg>
-      </div>
-      <ol class="how">
-        <li><code>Put("blobs/&lt;new&gt;", data)</code> — a brand-new immutable object; can't clash with anything.</li>
-        <li>Read <code>root</code> (version <b>v7</b>); build the manifest with <code>path → B2</code>.</li>
-        <li class="win"><code>CAS(root, v7, manifest')</code> succeeds → <b>v8</b>. On <code>ErrConflict</code>, someone else moved first: re-read and retry.</li>
-      </ol>
-    </article>
-
-    <!-- OP: write if not exist -->
-    <article class="op">
-      <div class="op-head"><h3>Write-if-not-exist</h3><span class="sig">WriteIfNotExist(path, data)</span></div>
-      <div class="diagram">
-        <svg viewBox="0 0 760 190" role="img" aria-label="Write-if-not-exist: if the path is absent the root CAS inserts it and wins; a concurrent writer's CAS fails and, on retry, sees the path present and returns ErrExists.">
-          <rect x="20" y="30" width="200" height="56" rx="10" fill="#FBEADD" stroke="#B4560F" stroke-width="1.5"/>
-          <text x="120" y="54" text-anchor="middle" class="t-node">root v7</text>
-          <text x="120" y="72" text-anchor="middle" class="t-sub">path absent</text>
-
-          <!-- two racers -->
-          <line x1="220" y1="46" x2="300" y2="46" stroke="#2E7D57" stroke-width="1.5" marker-end="url(#aGr)"/>
-          <line x1="220" y1="70" x2="300" y2="70" stroke="#B23B3B" stroke-width="1.5" marker-end="url(#aG)"/>
-          <rect x="304" y="30" width="196" height="26" rx="13" fill="#2E7D57"/>
-          <text x="402" y="47" text-anchor="middle" class="t-badge">writer X · CAS(v7) ✓</text>
-          <rect x="304" y="60" width="196" height="26" rx="13" fill="#B23B3B"/>
-          <text x="402" y="77" text-anchor="middle" class="t-badge">writer Y · CAS(v7) ✗</text>
-
-          <rect x="540" y="30" width="200" height="56" rx="10" fill="#FBEADD" stroke="#B4560F" stroke-width="1.5"/>
-          <text x="640" y="54" text-anchor="middle" class="t-node">root v8</text>
-          <text x="640" y="72" text-anchor="middle" class="t-sub">path → Bx (X won)</text>
-          <line x1="500" y1="43" x2="536" y2="52" stroke="#0E7C86" stroke-width="1.5" marker-end="url(#aT)"/>
-
-          <!-- Y retry -->
-          <text x="304" y="118" class="t-lab" fill="#B23B3B">writer Y retries → re-reads v8 → path now present →</text>
-          <rect x="540" y="104" width="160" height="26" rx="13" fill="#16202B"/>
-          <text x="620" y="121" text-anchor="middle" class="t-badge">return ErrExists</text>
-
-          <text x="20" y="118" class="t-sub">the loser never overwrites —</text>
-          <text x="20" y="134" class="t-sub">the CAS decides the single winner</text>
-        </svg>
-      </div>
-      <ol class="how">
-        <li>Read <code>root</code>; if <code>path</code> already present → return <b>ErrExists</b> immediately.</li>
-        <li>Else build manifest with the new entry and <code>CAS(root, v, …)</code>.</li>
-        <li class="fail">If the CAS loses the race, retry: the re-read now shows the path present → <b>ErrExists</b>. Exactly one writer creates it. <span class="t-sub"></span></li>
-      </ol>
-      <p class="prose" style="margin-top:12px; font-size:.9rem; color:var(--faint)">At the primitive level this <em>is</em> <code>Store.CAS(key, expect=∅, data)</code> — GCS <code>DoesNotExist</code>, S3 <code>If-None-Match:*</code>, local <code>O_EXCL</code>. The library's portable <code>IfNotExist</code> works for the two clouds but is racy on local, so the local <code>Store</code> uses <code>O_EXCL</code>/flock instead.</p>
-    </article>
-
-    <!-- OP: CAS -->
-    <article class="op">
-      <div class="op-head"><h3>Compare-and-swap</h3><span class="sig">CompareAndSwap(path, expect Handle, data) → Handle</span></div>
-      <div class="diagram">
-        <svg viewBox="0 0 760 196" role="img" aria-label="CAS on a logical key: the caller's expected handle is compared to the current entry; on match a new blob is written and the root is CAS'd, otherwise ErrConflict.">
-          <!-- caller handle -->
-          <rect x="20" y="40" width="150" height="44" rx="10" fill="#fff" stroke="#DCE3EA" stroke-width="1.5"/>
-          <text x="95" y="60" text-anchor="middle" class="t-node">caller holds</text>
-          <text x="95" y="76" text-anchor="middle" class="t-sub">Handle = B1</text>
-
-          <!-- compare gate (diamond) -->
-          <polygon points="300,62 350,32 400,62 350,92" fill="#fff" stroke="#16202B" stroke-width="1.5"/>
-          <text x="350" y="58" text-anchor="middle" class="t-lab">current</text>
-          <text x="350" y="72" text-anchor="middle" class="t-lab">== B1 ?</text>
-          <line x1="170" y1="62" x2="296" y2="62" stroke="#0E7C86" stroke-width="1.5" marker-end="url(#aT)"/>
-
-          <!-- yes path -->
-          <line x1="400" y1="62" x2="470" y2="62" stroke="#2E7D57" stroke-width="1.5" marker-end="url(#aGr)"/>
-          <text x="435" y="52" text-anchor="middle" class="t-lab" fill="#2E7D57">yes</text>
-          <rect x="474" y="40" width="266" height="44" rx="10" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.5"/>
-          <text x="607" y="60" text-anchor="middle" class="t-node">Put B2 · CAS root → new</text>
-          <text x="607" y="76" text-anchor="middle" class="t-sub">return Handle = B2</text>
-
-          <!-- no path -->
-          <line x1="350" y1="92" x2="350" y2="140" stroke="#B23B3B" stroke-width="1.5" marker-end="url(#aG)"/>
-          <text x="366" y="120" class="t-lab" fill="#B23B3B">no</text>
-          <rect x="250" y="142" width="200" height="34" rx="10" fill="#F7E7E7" stroke="#B23B3B" stroke-width="1.5"/>
-          <text x="350" y="164" text-anchor="middle" class="t-node" fill="#B23B3B">return ErrConflict</text>
-        </svg>
-      </div>
-      <ol class="how">
-        <li>Read <code>root</code>; look up the current handle for <code>path</code>.</li>
-        <li>If it differs from the caller's <code>expect</code> → <b>ErrConflict</b> (someone changed it since the caller last read).</li>
-        <li class="win">Else <code>Put</code> the new blob and <code>CAS(root)</code>. The root's own version also guards against a concurrent structural edit slipping in between.</li>
-      </ol>
-    </article>
-  </section>
-
-  <!-- ============ STRUCTURAL OPS ============ -->
-  <section id="struct">
-    <div class="group-title"><span class="pill amber">group B</span><h2>Structural operations</h2></div>
-    <p class="prose">This is the payoff. Because logical layout lives inside the manifest, moving objects is <b>editing the manifest</b> — the data never moves. Any number of moves land together under a single root CAS, so they're atomic by construction.</p>
-
-    <!-- OP: multi rename -->
-    <article class="op">
-      <div class="op-head"><h3>Atomic multi-object rename</h3><span class="sig">RenameMany([a→x, b→y]) </span></div>
-      <div class="diagram">
-        <svg viewBox="0 0 760 214" role="img" aria-label="Multi-object rename: the manifest relabels a to x and b to y in one new root committed by a single CAS; the data objects B1, B2, B3 are untouched.">
-          <text x="20" y="22" class="t-title">manifest before  (v7)</text>
-          <text x="430" y="22" class="t-title">manifest after  (v8)</text>
-
-          <!-- before entries -->
-          <g class="t-node" font-size="11.5">
-            <rect x="20" y="34" width="160" height="30" rx="7" fill="#FBEADD" stroke="#B4560F" stroke-width="1.3"/><text x="30" y="54">a → B1</text>
-            <rect x="20" y="70" width="160" height="30" rx="7" fill="#FBEADD" stroke="#B4560F" stroke-width="1.3"/><text x="30" y="90">b → B2</text>
-            <rect x="20" y="106" width="160" height="30" rx="7" fill="#FBEADD" stroke="#B4560F" stroke-width="1.3"/><text x="30" y="126">c → B3</text>
-          </g>
-          <!-- data (shared, unchanged) -->
-          <g class="t-node" font-size="11.5">
-            <rect x="330" y="52" width="100" height="28" rx="7" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.3"/><text x="345" y="71">B1</text>
-            <rect x="330" y="88" width="100" height="28" rx="7" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.3"/><text x="345" y="107">B2</text>
-            <rect x="330" y="124" width="100" height="28" rx="7" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.3"/><text x="345" y="143">B3</text>
-          </g>
-          <text x="380" y="176" text-anchor="middle" class="t-sub">same bytes · never copied</text>
-          <!-- after entries -->
-          <g class="t-node" font-size="11.5">
-            <rect x="580" y="34" width="160" height="30" rx="7" fill="#FBEADD" stroke="#B4560F" stroke-width="1.3"/><text x="590" y="54">x → B1</text>
-            <rect x="580" y="70" width="160" height="30" rx="7" fill="#FBEADD" stroke="#B4560F" stroke-width="1.3"/><text x="590" y="90">y → B2</text>
-            <rect x="580" y="106" width="160" height="30" rx="7" fill="#FBEADD" stroke="#B4560F" stroke-width="1.3"/><text x="590" y="126">c → B3</text>
-          </g>
-          <!-- arrows before->data and data->after -->
-          <line x1="180" y1="49" x2="326" y2="66" stroke="#0E7C86" stroke-width="1.3" marker-end="url(#aT)"/>
-          <line x1="180" y1="85" x2="326" y2="102" stroke="#0E7C86" stroke-width="1.3" marker-end="url(#aT)"/>
-          <line x1="180" y1="121" x2="326" y2="138" stroke="#0E7C86" stroke-width="1.3" marker-end="url(#aT)"/>
-          <line x1="430" y1="66" x2="576" y2="49" stroke="#0E7C86" stroke-width="1.3" marker-end="url(#aT)"/>
-          <line x1="430" y1="102" x2="576" y2="85" stroke="#0E7C86" stroke-width="1.3" marker-end="url(#aT)"/>
-          <line x1="430" y1="138" x2="576" y2="121" stroke="#0E7C86" stroke-width="1.3" marker-end="url(#aT)"/>
-
-          <rect x="300" y="186" width="160" height="22" rx="11" fill="#16202B"/>
-          <text x="380" y="201" text-anchor="middle" class="t-badge">1 × CAS root v7 → v8</text>
-        </svg>
-      </div>
-      <ol class="how">
-        <li>Read <code>root</code>; build a new manifest with <code>a→x</code> and <code>b→y</code> relabelled (entries still point at the same <b>B1/B2</b>).</li>
-        <li class="win">A single <code>CAS(root, v7, manifest')</code> commits all moves at once. <b>N moves · 0 bytes copied · 1 CAS.</b></li>
-      </ol>
-    </article>
-
-    <!-- OP: prefix rename -->
-    <article class="op">
-      <div class="op-head"><h3>Atomic prefix / folder rename</h3><span class="sig">Rename("dir/", "arch/")</span></div>
-      <div class="diagram">
-        <svg viewBox="0 0 760 200" role="img" aria-label="Prefix rename: every entry under dir/ is re-pointed under arch/ by rewriting one subtree node and committing with a single root CAS.">
-          <text x="20" y="22" class="t-title">before</text>
-          <text x="430" y="22" class="t-title">after — one CAS</text>
-
-          <!-- before subtree -->
-          <rect x="20" y="34" width="150" height="30" rx="7" fill="#fff" stroke="#0E7C86" stroke-width="1.4"/>
-          <text x="30" y="54" class="t-node" font-size="11.5">node "dir/"</text>
-          <g class="t-node" font-size="11">
-            <rect x="60" y="76" width="130" height="26" rx="6" fill="#FBEADD" stroke="#B4560F" stroke-width="1.2"/><text x="70" y="93">dir/a → B1</text>
-            <rect x="60" y="108" width="130" height="26" rx="6" fill="#FBEADD" stroke="#B4560F" stroke-width="1.2"/><text x="70" y="125">dir/b → B2</text>
-          </g>
-          <line x1="60" y1="60" x2="40" y2="74" stroke="#8595A4" stroke-width="1.2"/>
-          <line x1="90" y1="64" x2="90" y2="74" stroke="#8595A4" stroke-width="1.2"/>
-
-          <!-- transform arrow -->
-          <line x1="210" y1="96" x2="410" y2="96" stroke="#B4560F" stroke-width="1.6" marker-end="url(#aA)"/>
-          <text x="310" y="86" text-anchor="middle" class="t-lab" fill="#B4560F">relabel node key only</text>
-          <text x="310" y="120" text-anchor="middle" class="t-sub">B1, B2 untouched</text>
-
-          <!-- after subtree -->
-          <rect x="430" y="34" width="160" height="30" rx="7" fill="#fff" stroke="#0E7C86" stroke-width="1.4"/>
-          <text x="440" y="54" class="t-node" font-size="11.5">node "arch/"</text>
-          <g class="t-node" font-size="11">
-            <rect x="470" y="76" width="140" height="26" rx="6" fill="#FBEADD" stroke="#B4560F" stroke-width="1.2"/><text x="480" y="93">arch/a → B1</text>
-            <rect x="470" y="108" width="140" height="26" rx="6" fill="#FBEADD" stroke="#B4560F" stroke-width="1.2"/><text x="480" y="125">arch/b → B2</text>
-          </g>
-          <line x1="470" y1="60" x2="450" y2="74" stroke="#8595A4" stroke-width="1.2"/>
-          <line x1="500" y1="64" x2="500" y2="74" stroke="#8595A4" stroke-width="1.2"/>
-
-          <rect x="300" y="160" width="160" height="24" rx="12" fill="#16202B"/>
-          <text x="380" y="176" text-anchor="middle" class="t-badge">CAS root · atomic flip</text>
-        </svg>
-      </div>
-      <ol class="how">
-        <li>In the manifest, re-point the whole <code>dir/</code> subtree to sit under <code>arch/</code> — a key change on one node, not a per-file copy.</li>
-        <li class="win">Commit with a single <code>CAS(root)</code>. The prefix appears entirely renamed or not at all; no reader ever sees a half-renamed folder.</li>
-      </ol>
-      <p class="prose" style="margin-top:12px; font-size:.9rem; color:var(--faint)">Object stores have no folders to rename — but the manifest does, and swapping it is one atomic op. This is why the requirement is satisfiable even though S3 has no native rename at all.</p>
-    </article>
-  </section>
-
-  <!-- ============ BACKENDS ============ -->
-  <section id="backends">
-    <span class="eyebrow">The only backend-specific code</span>
-    <h2>How <code>Store.CAS</code> maps to each backend</h2>
-    <p class="prose">Three small implementations. Data <code>Put</code> uses the portable <code>gocloud.dev/blob</code> writer everywhere; only <code>CAS</code> reaches for a native precondition via the <code>BeforeWrite</code> escape hatch (or a lock, locally).</p>
+    <h2>One thin layer: five methods, three shims</h2>
+    <p class="prose">There is no logical/physical split in V0/V1 — the <code>Store</code> interface is the whole system. Each backend implements the same five methods; only the precondition plumbing differs. Every write returns an opaque <code>Handle</code> (the backend's version token) that <code>CompareAndSwap</code> later takes as its expectation.</p>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>Backend</th><th>Version token</th><th>Write-if-not-exist</th><th>Compare-and-swap</th><th>Note</th></tr></thead>
+        <thead><tr><th>Operation</th><th>GCS</th><th>S3</th><th>Local (single host)</th></tr></thead>
         <tbody>
           <tr>
-            <td><span class="be">GCS</span><br><span class="t-sub">gcsblob</span></td>
-            <td>object <code>generation</code></td>
-            <td><code>Conditions{DoesNotExist:true}</code></td>
-            <td><code>Conditions{GenerationMatch:g}</code></td>
-            <td class="ok">Native, strongly consistent.</td>
+            <td><span class="be">Write</span> (atomic)</td>
+            <td>PUT — natively atomic</td>
+            <td>PUT — natively atomic</td>
+            <td>temp file + <code>rename(2)</code></td>
           </tr>
           <tr>
-            <td><span class="be">S3</span><br><span class="t-sub">s3blob</span></td>
-            <td><code>ETag</code></td>
+            <td><span class="be">WriteIfNotExist</span></td>
+            <td><code>Conditions{DoesNotExist}</code></td>
             <td><code>If-None-Match: *</code></td>
-            <td><code>If-Match: &lt;etag&gt;</code></td>
-            <td class="warn">Real on AWS (cond. writes GA'd 2024); verify on MinIO/others.</td>
+            <td><code>O_CREATE|O_EXCL</code></td>
           </tr>
           <tr>
-            <td><span class="be">Local</span><br><span class="t-sub">fileblob + os</span></td>
-            <td>counter / (mtime,size)</td>
-            <td><code>O_CREATE|O_EXCL</code></td>
-            <td><code>flock</code> → verify → temp+rename</td>
-            <td class="warn">Single host only; not safe over NFS/multi-writer.</td>
+            <td><span class="be">CompareAndSwap</span></td>
+            <td><code>GenerationMatch</code> <span class="ok">monotonic — no ABA</span></td>
+            <td><code>If-Match: &lt;etag&gt;</code> <span class="warn">ABA edge — see §caveats</span></td>
+            <td><code>flock</code> → verify counter → temp+rename</td>
+          </tr>
+          <tr>
+            <td><span class="be">Delete</span></td>
+            <td>native; optional <code>ifGenerationMatch</code></td>
+            <td>native; conditional delete where supported</td>
+            <td><code>unlink</code> under flock</td>
+          </tr>
+          <tr>
+            <td><span class="be">Read / List</span></td>
+            <td>native, strongly consistent</td>
+            <td>native, strongly consistent (since Dec 2020)</td>
+            <td><code>open</code> / <code>readdir</code></td>
           </tr>
         </tbody>
       </table>
     </div>
+    <p class="prose" style="font-size:.9rem; color:var(--faint)">Version tokens per backend: GCS object <code>generation</code> (monotonic, never reused); S3 <code>ETag</code>; local — a <b>monotonic counter persisted in the sidecar attrs file</b>, bumped under the flock. Deliberately <em>not</em> <code>(mtime,size)</code>: blob writes of equal length within one timestamp tick would falsely verify and silently drop a concurrent commit.</p>
   </section>
 
-  <!-- ============ SCALING ============ -->
-  <section id="scale">
-    <span class="eyebrow">Scaling</span>
-    <h2>When one manifest object gets too big</h2>
-    <p class="prose">A single root works to thousands of entries. Beyond that, shard the manifest into a tree of CAS-able nodes and use copy-on-write: a change rewrites only the path from the touched node up to the root, then does <b>one</b> root CAS. Still atomic, still no data movement — now <code>O(depth)</code> small writes instead of one large one.</p>
-    <div class="diagram">
-      <svg viewBox="0 0 760 250" role="img" aria-label="Copy-on-write manifest tree: renaming under node A creates new node A-prime and new root-prime along the path, then a single CAS swaps the root; the old root and node A become garbage.">
-        <!-- old tree -->
-        <rect x="70" y="24" width="120" height="34" rx="9" fill="#fff" stroke="#8595A4" stroke-width="1.4" stroke-dasharray="4 4"/>
-        <text x="130" y="45" text-anchor="middle" class="t-strike" font-size="11.5">root v7 (old)</text>
-        <rect x="20" y="104" width="110" height="32" rx="8" fill="#fff" stroke="#8595A4" stroke-width="1.4" stroke-dasharray="4 4"/>
-        <text x="75" y="124" text-anchor="middle" class="t-strike" font-size="11">node A (old)</text>
-        <rect x="150" y="104" width="110" height="32" rx="8" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.4"/>
-        <text x="205" y="124" text-anchor="middle" class="t-node" font-size="11">node B</text>
-        <line x1="120" y1="58" x2="80" y2="102" stroke="#8595A4" stroke-width="1.3" stroke-dasharray="4 4"/>
-        <line x1="145" y1="58" x2="200" y2="102" stroke="#8595A4" stroke-width="1.3"/>
+  <!-- ============ OPS ============ -->
+  <section id="ops">
+    <div class="group-title"><span class="pill green">semantics</span><h2>What each operation promises</h2></div>
 
-        <!-- leaves under A/B (shared) -->
-        <g class="t-node" font-size="10.5">
-          <rect x="20" y="176" width="90" height="28" rx="7" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.2"/><text x="34" y="194">leaf B1</text>
-          <rect x="150" y="176" width="90" height="28" rx="7" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.2"/><text x="164" y="194">leaf B3</text>
-        </g>
-        <line x1="75" y1="136" x2="70" y2="174" stroke="#8595A4" stroke-width="1.2" stroke-dasharray="4 4"/>
-        <line x1="205" y1="136" x2="200" y2="174" stroke="#8595A4" stroke-width="1.2"/>
+    <article class="op">
+      <div class="op-head"><h3>Write — atomic replace</h3><span class="sig">Write(path, data) → Handle</span></div>
+      <ol class="how">
+        <li>Readers concurrent with a Write observe the old bytes or the new bytes, never a mixture and never absence. This is native object-store behavior; locally it is temp-file + <code>rename(2)</code> on the same filesystem.</li>
+        <li class="win">Returns the new object's version token as an opaque <code>Handle</code>.</li>
+      </ol>
+    </article>
 
-        <!-- new COW path -->
-        <rect x="480" y="24" width="140" height="34" rx="9" fill="#FBEADD" stroke="#B4560F" stroke-width="1.6"/>
-        <text x="550" y="45" text-anchor="middle" class="t-node" font-size="11.5">root v8 (new)</text>
-        <rect x="420" y="104" width="120" height="32" rx="8" fill="#FBEADD" stroke="#B4560F" stroke-width="1.5"/>
-        <text x="480" y="124" text-anchor="middle" class="t-node" font-size="11">node A′ (new)</text>
-        <!-- reuses B -->
-        <line x1="540" y1="58" x2="490" y2="102" stroke="#B4560F" stroke-width="1.4" marker-end="url(#aA)"/>
-        <line x1="565" y1="58" x2="240" y2="120" stroke="#0E7C86" stroke-width="1.3" marker-end="url(#aT)"/>
-        <text x="600" y="96" class="t-sub">reuses node B unchanged</text>
-        <!-- A' reuses a leaf, points new -->
-        <line x1="470" y1="136" x2="230" y2="176" stroke="#0E7C86" stroke-width="1.2" marker-end="url(#aT)"/>
-        <line x1="500" y1="136" x2="640" y2="176" stroke="#B4560F" stroke-width="1.3" marker-end="url(#aA)"/>
-        <rect x="600" y="176" width="120" height="28" rx="7" fill="#E6F2EB" stroke="#2E7D57" stroke-width="1.3"/>
-        <text x="660" y="194" text-anchor="middle" class="t-node" font-size="10.5">new leaf</text>
+    <article class="op">
+      <div class="op-head"><h3>WriteIfNotExist — exactly one creator</h3><span class="sig">WriteIfNotExist(path, data) → Handle | ErrExists</span></div>
+      <ol class="how">
+        <li>The backend precondition (<code>DoesNotExist</code> / <code>If-None-Match:*</code> / <code>O_EXCL</code>) arbitrates racing creators; exactly one wins, losers get <b>ErrExists</b>.</li>
+        <li class="fail">The portable <code>gocloud.dev</code> <code>IfNotExist</code> option is racy on <code>fileblob</code> — the local shim must use <code>O_EXCL</code> directly, not the library option.</li>
+      </ol>
+    </article>
 
-        <rect x="300" y="222" width="180" height="24" rx="12" fill="#16202B"/>
-        <text x="390" y="238" text-anchor="middle" class="t-badge">single CAS: root v7 → v8</text>
-      </svg>
-      <div class="cap"><b>COW:</b> only the ancestors of the change are rewritten (amber). Untouched subtrees (node B, leaf B1) are shared by reference. Old root + node A become garbage after the CAS.</div>
+    <article class="op">
+      <div class="op-head"><h3>CompareAndSwap — optimistic concurrency</h3><span class="sig">CompareAndSwap(path, expect Handle, data) → Handle | ErrConflict</span></div>
+      <ol class="how">
+        <li>Succeeds iff the object's current version token equals <code>expect</code>; otherwise <b>ErrConflict</b>. Read-modify-write loops (read → mutate → CAS → on conflict re-read) give per-key transactions with no further machinery.</li>
+        <li class="win">Local implementation: take flock, compare the sidecar counter to <code>expect</code>, temp-write + rename + bump counter, release.</li>
+      </ol>
+    </article>
+
+    <article class="op">
+      <div class="op-head"><h3>Delete and List — native, specified</h3><span class="sig">Delete(path[, expect]) · List(prefix) → iterator</span></div>
+      <ol class="how">
+        <li><b>Delete</b> removes the object immediately — there is no garbage and no GC in V0/V1. An optional <code>expect Handle</code> makes it conditional where the backend supports it (native on GCS; on S3 use conditional delete where available, else document the small unguarded window).</li>
+        <li><b>List</b> is the backend's native listing: strongly read-after-write consistent on all three backends, but <b>not a point-in-time snapshot</b> — entries created or deleted during pagination may or may not appear. Snapshot listing is a V2 (or application-level, see below) concern.</li>
+      </ol>
+    </article>
+  </section>
+
+  <!-- ============ ON TOP ============ -->
+  <section id="ontop">
+    <span class="eyebrow">Composition</span>
+    <h2>What V0/V1 can already build — and what it can't</h2>
+    <div class="cav">
+      <div class="c"><span class="k rule">Buildable now</span><h4>Distributed lease lock</h4><p><code>WriteIfNotExist(lock, {owner, fence, expiry})</code> to acquire; CAS to renew, steal-after-expiry, and release. Include a fencing token bumped on every acquisition. It is a <em>lease</em> — safety degrades with clock skew — so use it to reduce contention, and keep correctness on CAS of the data itself.</p></div>
+      <div class="c"><span class="k rule">Buildable now</span><h4>Per-key transactions</h4><p>CAS <em>is</em> optimistic read-modify-write; no extra machinery. Also: an application-level <b>pointer file</b> (one small CAS'd object listing a published set, e.g. live index segments) gives consistent publish/subscribe over immutable blobs for one namespace — often all the "snapshot" a system needs.</p></div>
+      <div class="c"><span class="k">Not buildable</span><h4>Cross-key atomicity</h4><p>Atomic visibility across objects requires all of them to flip through one CAS on one object — no protocol over per-object primitives avoids this. Anything needing it (transactions, RenameMany) is V2's manifest by construction.</p></div>
+      <div class="c"><span class="k">Rejected</span><h4>Redirect-based single rename</h4><p>A tombstone/redirect protocol can fake one atomic rename, but it puts a redirect branch in <em>every</em> read (the rubric forbids it), only works for cooperating readers, and does not compose to N renames. Explicitly rejected for V0/V1 — rename waits for V2.</p></div>
     </div>
+  </section>
+
+  <!-- ============ LATENCY ============ -->
+  <section id="latency">
+    <span class="eyebrow">The rubric criterion</span>
+    <h2>Latency budget: V0/V1 vs V2, in observed roundtrips</h2>
+    <p class="prose">Counted as sequential network roundtrips (RTT) observed by the client; parallel calls count once. The V2 column assumes its <b>optimistic parallel read</b>: cache the manifest, then on read issue the blob GET (from the cached mapping) and a conditional GET of the root <em>in parallel</em> — a 304 confirms the blob in hand; only a changed key costs a second hop. Immutable blobs make the stale fetch safe: it can return a superseded version, never torn bytes.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Capability</th><th>V0/V1</th><th>RTT</th><th>V2 manifest</th><th>RTT</th></tr></thead>
+        <tbody>
+          <tr><td>Point read, strict fresh</td><td class="ok">native</td><td><b>1</b></td><td class="ok">yes</td><td><b>1</b> common · 2 if key just changed</td></tr>
+          <tr><td>Point read, pinned snapshot</td><td>n/a</td><td>1</td><td class="ok">yes</td><td>1 (+1 once to pin the root)</td></tr>
+          <tr><td>Distributed lock</td><td class="ok">yes</td><td>acquire 1 · steal 2</td><td class="ok">unchanged</td><td>same</td></tr>
+          <tr><td>Per-key transaction</td><td class="ok">free via CAS</td><td>read 1 + commit 1</td><td class="ok">yes</td><td>read as above + commit 2</td></tr>
+          <tr><td>Atomic single rename</td><td class="bad">no (rejected)</td><td>—</td><td class="ok">manifest edit</td><td>op 1–2 · zero copy</td></tr>
+          <tr><td>Cross-key transaction</td><td class="bad">no</td><td>—</td><td class="ok">yes</td><td>commit 2 (Puts ∥, then 1 CAS)</td></tr>
+          <tr><td>Snapshot List</td><td class="warn">app pointer file</td><td>1</td><td class="ok">root <em>is</em> the list</td><td><b>1</b></td></tr>
+          <tr><td>RenameMany / prefix rename</td><td class="bad">no</td><td>—</td><td class="ok">1 root CAS</td><td>op 1–2 · reads unchanged</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose" style="font-size:.9rem; color:var(--faint)">Reading against a read-latency-first rubric: V2's only regression is the just-changed window on strict-fresh reads of governed keys; pinned-snapshot access (the natural pattern for a search index: pin root at open/refresh, then read segments) pays nothing. Ungoverned namespaces stay at a flat 1 RTT forever.</p>
+  </section>
+
+  <!-- ============ COMPAT ============ -->
+  <section id="compat">
+    <span class="eyebrow">Critical — adopt in V0</span>
+    <h2>Four rules that keep the V2 door open</h2>
+    <p class="prose">Choosing direct keys now costs nothing later <em>only if</em> these contract rules hold from day one. Without rules 1–2, V1 silently forecloses V2.</p>
+    <div class="cav">
+      <div class="c"><span class="k rule">Rule 1</span><h4>Handle is opaque</h4><p>In V1 it is secretly an ETag/generation/counter; in V2 it becomes a manifest entry. Callers must not inspect, persist, or compare handles across processes. Enforce with an unexported representation.</p></div>
+      <div class="c"><span class="k rule">Rule 2</span><h4>No raw bucket keys escape</h4><p>A storage key embedded in another object, an external system, or a long-lived URL bypasses any future manifest and would be broken by governed rename. All references go through logical paths via the library; signed URLs are documented point-in-time snapshots.</p></div>
+      <div class="c"><span class="k rule">Rule 3</span><h4>Namespace-scoped API</h4><p>Constructors and config speak in namespaces (prefixes), not one global bag, so V2 governance can attach per namespace: manifest where rename is needed, direct keys — and 1-RTT reads — everywhere else.</p></div>
+      <div class="c"><span class="k rule">Rule 4</span><h4>Cutover is a coordinated deploy</h4><p>The moment a namespace goes under a manifest its blobs must be immutable; one straggling V1-style writer overwriting a direct key corrupts snapshot semantics. Migration per namespace = all writers upgrade, then flip.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ V2 ============ -->
+  <section id="v2">
+    <div class="group-title"><span class="pill amber">future work</span><h2>V2: manifest namespaces — the commit-pointer machine</h2></div>
+    <p class="prose">When atomic rename, cross-key transactions, or snapshot list become real requirements, build this <b>once</b> — RenameMany, prefix rename, transactions, and snapshot List all fall out of the same mechanism. Per opted-in namespace: data objects become immutable and <b>uuid-named</b>, and one <b>root</b> object holds the manifest (logical path → blob), mutated only by CAS. N renames are then one manifest edit committed by one CAS: N moves · 0 bytes copied · readers see all-or-nothing.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Spec point</th><th>Decision</th><th>Why (defects this closes)</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="be">Blob naming</span></td>
+            <td>uuid-named, <b>never</b> content-addressed</td>
+            <td>Content addressing breaks "a fresh Put can't clash" (equal bytes collide), makes CAS return <code>Handle == expect</code> for identical content, and lets dedup re-reference a blob GC is concurrently deleting.</td>
+          </tr>
+          <tr>
+            <td><span class="be">Root on S3</span></td>
+            <td>manifest embeds a monotonic sequence number</td>
+            <td>Single-PUT ETags are content MD5s, so byte-identical states repeat ETags — an ABA hole in <code>If-Match</code>. An embedded sequence makes identical bytes impossible, restoring CAS soundness. (GCS generations are monotonic; no issue.)</td>
+          </tr>
+          <tr>
+            <td><span class="be">GC</span></td>
+            <td>mark-from-root sweep; delete only unreferenced objects <b>older than an age floor ≫ max write duration</b></td>
+            <td>A grace period for readers is not enough: a writer between <code>Put(B2)</code> and its root CAS looks unreferenced — a sweep without the age floor deletes B2, the CAS still succeeds, and the committed root holds a dangling handle.</td>
+          </tr>
+          <tr>
+            <td><span class="be">Contention</span></td>
+            <td>shard the root per namespace — knowing the <b>atomicity boundary shrinks to one shard</b></td>
+            <td>There is no multi-object CAS on GCS/S3: a rename spanning two roots cannot commit atomically. Cross-shard operations must be forbidden by the API, not left to fail subtly.</td>
+          </tr>
+          <tr>
+            <td><span class="be">Delete / List</span></td>
+            <td>Delete = manifest edit + deferred GC · List = manifest enumeration</td>
+            <td>Governed deletes must not race in-flight readers of the old root; governed List is thereby a true snapshot (and 1 RTT).</td>
+          </tr>
+          <tr>
+            <td><span class="be">Scaling the manifest</span></td>
+            <td>copy-on-write tree: interior nodes are plain immutable Puts; <b>the root is the only CAS'd object</b></td>
+            <td>A change rewrites O(depth) small nodes then lands one root CAS. Nodes need no per-node version machinery.</td>
+          </tr>
+          <tr>
+            <td><span class="be">Migration V1 → V2</span></td>
+            <td>bootstrap manifest entries pointing at existing direct keys; copy-on-first-write thereafter</td>
+            <td>No bulk data movement; per-namespace, incremental. Rollback requires materializing entries back to logical keys — a one-way-ish door, per namespace.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose" style="font-size:.9rem; color:var(--faint)">Cost sheet accepted with V2, per governed namespace: read indirection (mitigated to ~1 RTT as in §latency), writer serialization on the root, staged-object garbage plus the GC above, and the cutover discipline of rule 4.</p>
   </section>
 
   <!-- ============ CAVEATS ============ -->
   <section id="caveats">
     <span class="eyebrow">What you take on</span>
-    <h2>The honest costs</h2>
+    <h2>The honest costs of V0/V1</h2>
     <div class="cav">
-      <div class="c"><span class="k">Garbage collection</span><h4>Superseded objects must be swept</h4><p>Old data + manifest nodes are unreferenced after a CAS. Mark-from-root sweep with a grace period for in-flight readers. Real code you must write.</p></div>
-      <div class="c"><span class="k">Read indirection</span><h4>Reads resolve through the root</h4><p>Cache the manifest and revalidate cheaply via the root's version (generation / HEAD ETag / stat) — otherwise +1 round trip per read.</p></div>
-      <div class="c"><span class="k">Write contention</span><h4>Structural writes serialize on the root</h4><p>High concurrency → CAS retries. Shard the root per top-level namespace to spread the contention across independent roots.</p></div>
-      <div class="c"><span class="k">Backend limits</span><h4>Two edges to verify</h4><p>Local CAS is single-host only (flock ≠ NFS-safe). S3 <code>If-Match</code> is real on AWS but must be confirmed on S3-compatible endpoints.</p></div>
+      <div class="c"><span class="k">Consistency</span><h4>No cross-object atomicity</h4><p>No rename of any kind, no multi-key transactions, no snapshot List. Deliberate: these are V2's manifest. The application-level pointer file covers the common "publish a consistent set" case.</p></div>
+      <div class="c"><span class="k">S3 CAS</span><h4>ETag ABA edge</h4><p>Byte-identical rewrites repeat ETags, so a stale CAS can succeed after A→B→A. Callers needing strict CAS on S3 should make payloads self-versioning (embed a counter/nonce). GCS and local tokens are monotonic and immune.</p></div>
+      <div class="c"><span class="k">Local backend</span><h4>Single host only</h4><p>flock + rename semantics are not NFS-safe and not multi-host. The local backend is for dev and single-node deployments; say so in its package doc.</p></div>
+      <div class="c"><span class="k">S3-compatibles</span><h4>Verify preconditions before trusting</h4><p>Conditional writes are real on AWS S3 (GA 2024). MinIO and other S3-compatible endpoints must be conformance-tested (<code>If-None-Match:*</code>, <code>If-Match</code>) before the CAS shim is enabled on them — a pre-implementation task, not a footnote.</p></div>
     </div>
   </section>
 
   <footer>
-    Design note · atomic blob store over gocloud.dev/blob · ~90% portable logic, one small per-backend CAS shim · next step: scaffold Store (memblob + local) and a single-root Blobs layer.
+    Design note v2 · direct-keyed V0/V1 over gocloud.dev/blob (new dependency) · rename &amp; manifest deferred to V2 · next step: scaffold Store (memblob + fileblob) with the conformance test suite shared across backends.
   </footer>
 </main>
 </body>
