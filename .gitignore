@@ -2,3 +2,4 @@
 data
 *~
 bazel-*
+.playwright-mcp/
