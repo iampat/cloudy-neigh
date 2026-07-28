@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atomic Blob Store — Design</title>
+</head>
+<body>
+<style>
+  :root{
+    --paper:#F4F6F9; --panel:#FFFFFF; --panel-2:#FBFCFD;
+    --ink:#16202B; --muted:#566573; --faint:#8595A4;
+    --hair:#DCE3EA; --hair-2:#EAEFF3;
+    --teal:#0E7C86; --teal-soft:#E1F0F1; --teal-ink:#0A5A62;
+    --green:#2E7D57; --green-soft:#E6F2EB;
+    --amber:#B4560F; --amber-soft:#FBEADD;
+    --red:#B23B3B; --red-soft:#F7E7E7;
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --maxw: 880px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:var(--sans); font-size:17px; line-height:1.65;
+    background-image:radial-gradient(var(--hair) 1px, transparent 1px);
+    background-size:22px 22px; background-position:-1px -1px;
+  }
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 24px}
+  .prose{max-width:66ch}
+
+  a{color:var(--teal-ink); text-decoration:none; border-bottom:1px solid var(--teal-soft)}
+  a:hover{border-bottom-color:var(--teal)}
+  :focus-visible{outline:2px solid var(--teal); outline-offset:2px; border-radius:3px}
+
+  .eyebrow{
+    font-family:var(--mono); font-size:.72rem; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--teal-ink); font-weight:600;
+  }
+  code{font-family:var(--mono); font-size:.86em; background:var(--hair-2);
+    padding:.1em .38em; border-radius:4px; color:#0d2233}
+
+  header.hero{
+    padding:64px 0 30px; border-bottom:1px solid var(--hair);
+    background:linear-gradient(180deg,#fff, #fff 60%, transparent);
+  }
+  h1{font-size:clamp(2rem,4.2vw,2.85rem); line-height:1.08; margin:.5rem 0 .4rem;
+    letter-spacing:-.02em; text-wrap:balance; font-weight:800}
+  .lede{font-size:1.18rem; color:var(--muted); margin:0 0 1.4rem; max-width:60ch; text-wrap:pretty}
+  .toc{display:flex; flex-wrap:wrap; gap:8px; margin-top:6px}
+  .toc a{
+    font-family:var(--mono); font-size:.75rem; letter-spacing:.02em;
+    padding:5px 11px; border:1px solid var(--hair); border-radius:999px;
+    background:var(--panel); color:var(--muted);
+  }
+  .toc a:hover{border-color:var(--teal); color:var(--teal-ink)}
+
+  section{padding:44px 0; border-bottom:1px solid var(--hair)}
+  section > .eyebrow{display:block; margin-bottom:6px}
+  h2{font-size:1.55rem; letter-spacing:-.01em; margin:.1rem 0 .6rem; font-weight:750}
+  h3{font-size:1.12rem; margin:0 0 .2rem; font-weight:700; letter-spacing:-.005em}
+  p{margin:0 0 1rem}
+  .prose p:last-child{margin-bottom:0}
+
+  .reduce{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:22px 0 4px}
+  .reduce .cap{
+    background:var(--panel); border:1px solid var(--hair); border-radius:12px;
+    padding:18px 18px 16px; position:relative; overflow:hidden;
+  }
+  .reduce .cap::before{content:""; position:absolute; left:0; top:0; bottom:0; width:4px}
+  .reduce .cap.a::before{background:var(--green)}
+  .reduce .cap.b::before{background:var(--amber)}
+  .reduce .cap h4{margin:0 0 .25rem; font-size:1rem; font-family:var(--mono); letter-spacing:-.01em}
+  .reduce .cap p{margin:0; font-size:.94rem; color:var(--muted)}
+  .reduce .cap .tag{font-family:var(--mono); font-size:.72rem; letter-spacing:.08em; text-transform:uppercase}
+  .reduce .cap.a .tag{color:var(--green)}
+  .reduce .cap.b .tag{color:var(--amber)}
+
+  .op{background:var(--panel); border:1px solid var(--hair); border-radius:16px;
+    padding:22px 22px 18px; margin:22px 0}
+  .op-head{display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap}
+  .op .sig{font-family:var(--mono); font-size:.82rem; color:var(--teal-ink);
+    background:var(--teal-soft); padding:4px 9px; border-radius:6px; white-space:nowrap}
+  .how{margin:12px 0 0; padding:0; list-style:none; counter-reset:s}
+  .how li{position:relative; padding:5px 0 5px 30px; font-size:.95rem; color:var(--muted)}
+  .how li::before{
+    counter-increment:s; content:counter(s); position:absolute; left:0; top:5px;
+    width:20px; height:20px; border-radius:6px; background:var(--ink); color:#fff;
+    font-family:var(--mono); font-size:.7rem; font-weight:700;
+    display:grid; place-items:center;
+  }
+  .how li b{color:var(--ink); font-weight:650}
+  .how li.win::before{background:var(--green)}
+  .how li.fail::before{background:var(--red)}
+
+  .group-title{display:flex; align-items:center; gap:12px; margin:6px 0 2px}
+  .group-title h2{margin:0}
+  .pill{font-family:var(--mono); font-size:.68rem; letter-spacing:.08em; text-transform:uppercase;
+    padding:3px 8px; border-radius:999px; border:1px solid currentColor}
+  .pill.green{color:var(--green)} .pill.amber{color:var(--amber)}
+
+  .tablewrap{overflow-x:auto; border:1px solid var(--hair); border-radius:12px; margin:16px 0}
+  table{border-collapse:collapse; width:100%; min-width:640px; font-size:.9rem}
+  th,td{text-align:left; padding:11px 14px; border-bottom:1px solid var(--hair-2); vertical-align:top}
+  thead th{background:var(--panel-2); font-family:var(--mono); font-size:.72rem;
+    letter-spacing:.06em; text-transform:uppercase; color:var(--muted); font-weight:600}
+  tbody tr:last-child td{border-bottom:none}
+  td .be{font-family:var(--mono); font-weight:700; color:var(--ink)}
+  td code{font-size:.8em}
+  .ok{color:var(--green); font-weight:700}
+  .warn{color:var(--amber); font-weight:700}
+  .bad{color:var(--red); font-weight:700}
+
+  .cav{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:12px}
+  .cav .c{background:var(--panel); border:1px solid var(--hair); border-radius:12px; padding:16px}
+  .cav .c h4{margin:0 0 .3rem; font-size:.98rem}
+  .cav .c .k{font-family:var(--mono); font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; color:var(--amber); display:block; margin-bottom:4px}
+  .cav .c .k.rule{color:var(--teal-ink)}
+  .cav .c p{margin:0; font-size:.9rem; color:var(--muted)}
+
+  footer{padding:34px 0 60px; color:var(--faint); font-family:var(--mono); font-size:.78rem}
+
+  @media (max-width:680px){
+    body{font-size:16px}
+    .reduce,.cav{grid-template-columns:1fr}
+    .op .sig{white-space:normal}
+  }
+</style>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="eyebrow">Storage abstraction · design note · v2 of this note</span>
+    <h1>A portable atomic blob store, designed read-latency-first</h1>
+    <p class="lede">Local POSIX, GCS, and S3 behind one interface. V0/V1 keeps logical paths as storage keys and gets atomic write, write-if-not-exist, and CAS from each backend's <em>native</em> preconditions — every read is one roundtrip. Atomic rename is deliberately deferred: it is the only requirement that forces indirection, and its machinery (a CAS'd manifest) is specified here as V2 future work.</p>
+    <nav class="toc" aria-label="Contents">
+      <a href="#scope">Scope &amp; non-goals</a>
+      <a href="#store">The V0/V1 store</a>
+      <a href="#ops">Operation semantics</a>
+      <a href="#ontop">What it can build</a>
+      <a href="#latency">Latency budget</a>
+      <a href="#compat">Forward-compat rules</a>
+      <a href="#v2">V2: the manifest</a>
+      <a href="#caveats">Honest costs</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ SCOPE ============ -->
+  <section id="scope">
+    <span class="eyebrow">Scope</span>
+    <h2>V0/V1 guarantees three write semantics; rename is V2</h2>
+    <div class="prose">
+      <p>The store must provide, portably across local POSIX, GCS, and S3: <b>atomic write</b>, <b>write-if-not-exist</b>, and <b>compare-and-swap</b>, plus plain read, delete, and list. The design rubric's primary criterion is <b>read latency</b>.</p>
+      <p><b>Deferred to V2:</b> atomic single rename, atomic multi-object rename (<code>RenameMany</code>), atomic prefix rename, and snapshot-consistent list. These are the only requirements that cannot be met with per-object primitives — each needs a single CAS-able commit point plus read-side indirection, i.e. a manifest. Keeping them out of V0/V1 removes the manifest, its garbage collection, and its write contention entirely, and keeps every read at one roundtrip.</p>
+      <p><b>Dependency note:</b> this proposal introduces <a href="https://gocloud.dev/howto/blob/"><code>gocloud.dev/blob</code></a> as a <em>new</em> dependency of this repo (today's direct deps are bleve, pebble, and fatih/color). It supplies the portable data path (<code>gcsblob</code>, <code>s3blob</code>, <code>fileblob</code>, <code>memblob</code>); the native preconditions below are reached through its <code>As</code>/<code>BeforeWrite</code> escape hatches or the underlying SDKs.</p>
+    </div>
+    <div class="reduce">
+      <div class="cap a">
+        <span class="tag">V0/V1 — build now</span>
+        <h4>Direct-keyed store</h4>
+        <p>Logical path = storage key. All atomicity comes from native single-object preconditions. Reads are 1 RTT, always. No manifest, no GC, no cross-writer contention.</p>
+      </div>
+      <div class="cap b">
+        <span class="tag">V2 — build when rename is real</span>
+        <h4>Manifest namespaces</h4>
+        <p>Per-namespace opt-in: immutable uuid-named blobs + one CAS'd root manifest. Buys RenameMany, cross-key transactions, and snapshot list — at the costs in <a href="#v2">§V2</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STORE ============ -->
+  <section id="store">
+    <span class="eyebrow">Architecture</span>
+    <h2>One thin layer: five methods, three shims</h2>
+    <p class="prose">There is no logical/physical split in V0/V1 — the <code>Store</code> interface is the whole system. Each backend implements the same five methods; only the precondition plumbing differs. Every write returns an opaque <code>Handle</code> (the backend's version token) that <code>CompareAndSwap</code> later takes as its expectation.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Operation</th><th>GCS</th><th>S3</th><th>Local (single host)</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="be">Write</span> (atomic)</td>
+            <td>PUT — natively atomic</td>
+            <td>PUT — natively atomic</td>
+            <td>temp file + <code>rename(2)</code></td>
+          </tr>
+          <tr>
+            <td><span class="be">WriteIfNotExist</span></td>
+            <td><code>Conditions{DoesNotExist}</code></td>
+            <td><code>If-None-Match: *</code></td>
+            <td><code>O_CREATE|O_EXCL</code></td>
+          </tr>
+          <tr>
+            <td><span class="be">CompareAndSwap</span></td>
+            <td><code>GenerationMatch</code> <span class="ok">monotonic — no ABA</span></td>
+            <td><code>If-Match: &lt;etag&gt;</code> <span class="warn">ABA edge — see §caveats</span></td>
+            <td><code>flock</code> → verify counter → temp+rename</td>
+          </tr>
+          <tr>
+            <td><span class="be">Delete</span></td>
+            <td>native; optional <code>ifGenerationMatch</code></td>
+            <td>native; conditional delete where supported</td>
+            <td><code>unlink</code> under flock</td>
+          </tr>
+          <tr>
+            <td><span class="be">Read / List</span></td>
+            <td>native, strongly consistent</td>
+            <td>native, strongly consistent (since Dec 2020)</td>
+            <td><code>open</code> / <code>readdir</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose" style="font-size:.9rem; color:var(--faint)">Version tokens per backend: GCS object <code>generation</code> (monotonic, never reused); S3 <code>ETag</code>; local — a <b>monotonic counter persisted in the sidecar attrs file</b>, bumped under the flock. Deliberately <em>not</em> <code>(mtime,size)</code>: blob writes of equal length within one timestamp tick would falsely verify and silently drop a concurrent commit.</p>
+    <p class="prose" style="font-size:.9rem; color:var(--faint)">The local backend's mandate is <b>fidelity, not throughput</b>. It exists for development, debugging, tests, and demos — high concurrency and high traffic are explicit non-goals — so the shim takes <b>one coarse store-wide flock</b> for every mutating op instead of per-key locking. That is the simplest implementation that preserves exact CAS semantics, which is what matters: fileblob is the reference implementation the shared conformance suite runs against before the same suite is pointed at GCS and S3.</p>
+  </section>
+
+  <!-- ============ OPS ============ -->
+  <section id="ops">
+    <div class="group-title"><span class="pill green">semantics</span><h2>What each operation promises</h2></div>
+
+    <article class="op">
+      <div class="op-head"><h3>Write — atomic replace</h3><span class="sig">Write(path, data) → Handle</span></div>
+      <ol class="how">
+        <li>Readers concurrent with a Write observe the old bytes or the new bytes, never a mixture and never absence. This is native object-store behavior; locally it is temp-file + <code>rename(2)</code> on the same filesystem.</li>
+        <li class="win">Returns the new object's version token as an opaque <code>Handle</code>.</li>
+      </ol>
+    </article>
+
+    <article class="op">
+      <div class="op-head"><h3>WriteIfNotExist — exactly one creator</h3><span class="sig">WriteIfNotExist(path, data) → Handle | ErrExists</span></div>
+      <ol class="how">
+        <li>The backend precondition (<code>DoesNotExist</code> / <code>If-None-Match:*</code> / <code>O_EXCL</code>) arbitrates racing creators; exactly one wins, losers get <b>ErrExists</b>.</li>
+        <li class="fail">The portable <code>gocloud.dev</code> <code>IfNotExist</code> option is racy on <code>fileblob</code> — the local shim must use <code>O_EXCL</code> directly, not the library option.</li>
+      </ol>
+    </article>
+
+    <article class="op">
+      <div class="op-head"><h3>CompareAndSwap — optimistic concurrency</h3><span class="sig">CompareAndSwap(path, expect Handle, data) → Handle | ErrConflict</span></div>
+      <ol class="how">
+        <li>Succeeds iff the object's current version token equals <code>expect</code>; otherwise <b>ErrConflict</b>. Read-modify-write loops (read → mutate → CAS → on conflict re-read) give per-key transactions with no further machinery.</li>
+        <li class="win">Local implementation: take flock, compare the sidecar counter to <code>expect</code>, temp-write + rename + bump counter, release.</li>
+      </ol>
+    </article>
+
+    <article class="op">
+      <div class="op-head"><h3>Delete and List — native, specified</h3><span class="sig">Delete(path[, expect]) · List(prefix) → iterator</span></div>
+      <ol class="how">
+        <li><b>Delete</b> removes the object immediately — there is no garbage and no GC in V0/V1. An optional <code>expect Handle</code> makes it conditional where the backend supports it (native on GCS; on S3 use conditional delete where available, else document the small unguarded window).</li>
+        <li><b>List</b> is the backend's native listing: strongly read-after-write consistent on all three backends, but <b>not a point-in-time snapshot</b> — entries created or deleted during pagination may or may not appear. Snapshot listing is a V2 (or application-level, see below) concern.</li>
+      </ol>
+    </article>
+  </section>
+
+  <!-- ============ ON TOP ============ -->
+  <section id="ontop">
+    <span class="eyebrow">Composition</span>
+    <h2>What V0/V1 can already build — and what it can't</h2>
+    <div class="cav">
+      <div class="c"><span class="k rule">Buildable now</span><h4>Distributed lease lock</h4><p><code>WriteIfNotExist(lock, {owner, fence, expiry})</code> to acquire; CAS to renew, steal-after-expiry, and release. Include a fencing token bumped on every acquisition. It is a <em>lease</em> — safety degrades with clock skew — so use it to reduce contention, and keep correctness on CAS of the data itself.</p></div>
+      <div class="c"><span class="k rule">Buildable now</span><h4>Per-key transactions</h4><p>CAS <em>is</em> optimistic read-modify-write; no extra machinery. Also: an application-level <b>pointer file</b> (one small CAS'd object listing a published set, e.g. live index segments) gives consistent publish/subscribe over immutable blobs for one namespace — often all the "snapshot" a system needs.</p></div>
+      <div class="c"><span class="k">Not buildable</span><h4>Cross-key atomicity</h4><p>Atomic visibility across objects requires all of them to flip through one CAS on one object — no protocol over per-object primitives avoids this. Anything needing it (transactions, RenameMany) is V2's manifest by construction.</p></div>
+      <div class="c"><span class="k">Rejected</span><h4>Redirect-based single rename</h4><p>A tombstone/redirect protocol can fake one atomic rename, but it puts a redirect branch in <em>every</em> read (the rubric forbids it), only works for cooperating readers, and does not compose to N renames. Explicitly rejected for V0/V1 — rename waits for V2.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ LATENCY ============ -->
+  <section id="latency">
+    <span class="eyebrow">The rubric criterion</span>
+    <h2>Latency budget: V0/V1 vs V2, in observed roundtrips</h2>
+    <p class="prose">Counted as sequential network roundtrips (RTT) observed by the client; parallel calls count once. The V2 column assumes its <b>optimistic parallel read</b>: cache the manifest, then on read issue the blob GET (from the cached mapping) and a conditional GET of the root <em>in parallel</em> — a 304 confirms the blob in hand; only a changed key costs a second hop. Immutable blobs make the stale fetch safe: it can return a superseded version, never torn bytes.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Capability</th><th>V0/V1</th><th>RTT</th><th>V2 manifest</th><th>RTT</th></tr></thead>
+        <tbody>
+          <tr><td>Point read, strict fresh</td><td class="ok">native</td><td><b>1</b></td><td class="ok">yes</td><td><b>1</b> common · 2 if key just changed</td></tr>
+          <tr><td>Point read, pinned snapshot</td><td>n/a</td><td>1</td><td class="ok">yes</td><td>1 (+1 once to pin the root)</td></tr>
+          <tr><td>Distributed lock</td><td class="ok">yes</td><td>acquire 1 · steal 2</td><td class="ok">unchanged</td><td>same</td></tr>
+          <tr><td>Per-key transaction</td><td class="ok">free via CAS</td><td>read 1 + commit 1</td><td class="ok">yes</td><td>read as above + commit 2</td></tr>
+          <tr><td>Atomic single rename</td><td class="bad">no (rejected)</td><td>—</td><td class="ok">manifest edit</td><td>op 1–2 · zero copy</td></tr>
+          <tr><td>Cross-key transaction</td><td class="bad">no</td><td>—</td><td class="ok">yes</td><td>commit 2 (Puts ∥, then 1 CAS)</td></tr>
+          <tr><td>Snapshot List</td><td class="warn">app pointer file</td><td>1</td><td class="ok">root <em>is</em> the list</td><td><b>1</b></td></tr>
+          <tr><td>RenameMany / prefix rename</td><td class="bad">no</td><td>—</td><td class="ok">1 root CAS</td><td>op 1–2 · reads unchanged</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose" style="font-size:.9rem; color:var(--faint)">Reading against a read-latency-first rubric: V2's only regression is the just-changed window on strict-fresh reads of governed keys; pinned-snapshot access (the natural pattern for a search index: pin root at open/refresh, then read segments) pays nothing. Ungoverned namespaces stay at a flat 1 RTT forever.</p>
+  </section>
+
+  <!-- ============ COMPAT ============ -->
+  <section id="compat">
+    <span class="eyebrow">Critical — adopt in V0</span>
+    <h2>Four rules that keep the V2 door open</h2>
+    <p class="prose">Choosing direct keys now costs nothing later <em>only if</em> these contract rules hold from day one. Without rules 1–2, V1 silently forecloses V2.</p>
+    <div class="cav">
+      <div class="c"><span class="k rule">Rule 1</span><h4>Handle is opaque</h4><p>In V1 it is secretly an ETag/generation/counter; in V2 it becomes a manifest entry. Callers must not inspect, persist, or compare handles across processes. Enforce with an unexported representation.</p></div>
+      <div class="c"><span class="k rule">Rule 2</span><h4>No raw bucket keys escape</h4><p>A storage key embedded in another object, an external system, or a long-lived URL bypasses any future manifest and would be broken by governed rename. All references go through logical paths via the library; signed URLs are documented point-in-time snapshots.</p></div>
+      <div class="c"><span class="k rule">Rule 3</span><h4>Namespace-scoped API</h4><p>Constructors and config speak in namespaces (prefixes), not one global bag, so V2 governance can attach per namespace: manifest where rename is needed, direct keys — and 1-RTT reads — everywhere else.</p></div>
+      <div class="c"><span class="k rule">Rule 4</span><h4>Cutover is a coordinated deploy</h4><p>The moment a namespace goes under a manifest its blobs must be immutable; one straggling V1-style writer overwriting a direct key corrupts snapshot semantics. Migration per namespace = all writers upgrade, then flip.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ V2 ============ -->
+  <section id="v2">
+    <div class="group-title"><span class="pill amber">future work</span><h2>V2: manifest namespaces — the commit-pointer machine</h2></div>
+    <p class="prose">When atomic rename, cross-key transactions, or snapshot list become real requirements, build this <b>once</b> — RenameMany, prefix rename, transactions, and snapshot List all fall out of the same mechanism. Per opted-in namespace: data objects become immutable and <b>uuid-named</b>, and one <b>root</b> object holds the manifest (logical path → blob), mutated only by CAS. N renames are then one manifest edit committed by one CAS: N moves · 0 bytes copied · readers see all-or-nothing.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Spec point</th><th>Decision</th><th>Why (defects this closes)</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="be">Blob naming</span></td>
+            <td>uuid-named, <b>never</b> content-addressed</td>
+            <td>Content addressing breaks "a fresh Put can't clash" (equal bytes collide), makes CAS return <code>Handle == expect</code> for identical content, and lets dedup re-reference a blob GC is concurrently deleting.</td>
+          </tr>
+          <tr>
+            <td><span class="be">Root on S3</span></td>
+            <td>manifest embeds a monotonic sequence number</td>
+            <td>Single-PUT ETags are content MD5s, so byte-identical states repeat ETags — an ABA hole in <code>If-Match</code>. An embedded sequence makes identical bytes impossible, restoring CAS soundness. (GCS generations are monotonic; no issue.)</td>
+          </tr>
+          <tr>
+            <td><span class="be">GC</span></td>
+            <td>mark-from-root sweep written <b>once against the Store primitives</b> (List / attrs / Delete) — the identical code path on all three backends; delete only unreferenced objects <b>older than an age floor ≫ max write duration</b></td>
+            <td>A grace period for readers is not enough: a writer between <code>Put(B2)</code> and its root CAS looks unreferenced — a sweep without the age floor deletes B2, the CAS still succeeds, and the committed root holds a dangling handle. Local inherits the same sweep for free, but with dev-sized datasets it is an on-demand nicety, not an operational concern.</td>
+          </tr>
+          <tr>
+            <td><span class="be">Contention</span></td>
+            <td>shard the root per namespace — knowing the <b>atomicity boundary shrinks to one shard</b></td>
+            <td>There is no multi-object CAS on GCS/S3: a rename spanning two roots cannot commit atomically. Cross-shard operations must be forbidden by the API, not left to fail subtly.</td>
+          </tr>
+          <tr>
+            <td><span class="be">Delete / List</span></td>
+            <td>Delete = manifest edit + deferred GC · List = manifest enumeration</td>
+            <td>Governed deletes must not race in-flight readers of the old root; governed List is thereby a true snapshot (and 1 RTT).</td>
+          </tr>
+          <tr>
+            <td><span class="be">Scaling the manifest</span></td>
+            <td>copy-on-write tree: interior nodes are plain immutable Puts; <b>the root is the only CAS'd object</b></td>
+            <td>A change rewrites O(depth) small nodes then lands one root CAS. Nodes need no per-node version machinery.</td>
+          </tr>
+          <tr>
+            <td><span class="be">Migration V1 → V2</span></td>
+            <td>bootstrap manifest entries pointing at existing direct keys; copy-on-first-write thereafter</td>
+            <td>No bulk data movement; per-namespace, incremental. Rollback requires materializing entries back to logical keys — a one-way-ish door, per namespace.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose" style="font-size:.9rem; color:var(--faint)">Cost sheet accepted with V2, per governed namespace: read indirection (mitigated to ~1 RTT as in §latency), writer serialization on the root, staged-object garbage plus the GC above, and the cutover discipline of rule 4.</p>
+  </section>
+
+  <!-- ============ CAVEATS ============ -->
+  <section id="caveats">
+    <span class="eyebrow">What you take on</span>
+    <h2>The honest costs of V0/V1</h2>
+    <div class="cav">
+      <div class="c"><span class="k">Consistency</span><h4>No cross-object atomicity</h4><p>No rename of any kind, no multi-key transactions, no snapshot List. Deliberate: these are V2's manifest. The application-level pointer file covers the common "publish a consistent set" case.</p></div>
+      <div class="c"><span class="k">S3 CAS</span><h4>ETag ABA edge</h4><p>Byte-identical rewrites repeat ETags, so a stale CAS can succeed after A→B→A. Callers needing strict CAS on S3 should make payloads self-versioning (embed a counter/nonce). GCS and local tokens are monotonic and immune.</p></div>
+      <div class="c"><span class="k">Local backend</span><h4>Dev/test/demo mandate — a simplification, not a limitation</h4><p>Local serves development, debugging, tests, and demos; concurrency and traffic are non-goals there. This licenses the coarse single-flock design (no per-key locking, no NFS/multi-host support — single machine only) whose sole job is matching cloud CAS semantics exactly, so green local tests are meaningful.</p></div>
+      <div class="c"><span class="k">S3-compatibles</span><h4>Verify preconditions before trusting</h4><p>Conditional writes are real on AWS S3 (GA 2024). MinIO and other S3-compatible endpoints must be conformance-tested (<code>If-None-Match:*</code>, <code>If-Match</code>) before the CAS shim is enabled on them — a pre-implementation task, not a footnote.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    Design note v2 · direct-keyed V0/V1 over gocloud.dev/blob (new dependency) · rename &amp; manifest deferred to V2 · next step: scaffold Store (memblob + fileblob) with the conformance test suite shared across backends.
+  </footer>
+</main>
+</body>
+</html>
