@@ -214,6 +214,7 @@
       </table>
     </div>
     <p class="prose" style="font-size:.9rem; color:var(--faint)">Version tokens per backend: GCS object <code>generation</code> (monotonic, never reused); S3 <code>ETag</code>; local — a <b>monotonic counter persisted in the sidecar attrs file</b>, bumped under the flock. Deliberately <em>not</em> <code>(mtime,size)</code>: blob writes of equal length within one timestamp tick would falsely verify and silently drop a concurrent commit.</p>
+    <p class="prose" style="font-size:.9rem; color:var(--faint)">The local backend's mandate is <b>fidelity, not throughput</b>. It exists for development, debugging, tests, and demos — high concurrency and high traffic are explicit non-goals — so the shim takes <b>one coarse store-wide flock</b> for every mutating op instead of per-key locking. That is the simplest implementation that preserves exact CAS semantics, which is what matters: fileblob is the reference implementation the shared conformance suite runs against before the same suite is pointed at GCS and S3.</p>
   </section>
 
   <!-- ============ OPS ============ -->
@@ -322,8 +323,8 @@
           </tr>
           <tr>
             <td><span class="be">GC</span></td>
-            <td>mark-from-root sweep; delete only unreferenced objects <b>older than an age floor ≫ max write duration</b></td>
-            <td>A grace period for readers is not enough: a writer between <code>Put(B2)</code> and its root CAS looks unreferenced — a sweep without the age floor deletes B2, the CAS still succeeds, and the committed root holds a dangling handle.</td>
+            <td>mark-from-root sweep written <b>once against the Store primitives</b> (List / attrs / Delete) — the identical code path on all three backends; delete only unreferenced objects <b>older than an age floor ≫ max write duration</b></td>
+            <td>A grace period for readers is not enough: a writer between <code>Put(B2)</code> and its root CAS looks unreferenced — a sweep without the age floor deletes B2, the CAS still succeeds, and the committed root holds a dangling handle. Local inherits the same sweep for free, but with dev-sized datasets it is an on-demand nicety, not an operational concern.</td>
           </tr>
           <tr>
             <td><span class="be">Contention</span></td>
@@ -358,7 +359,7 @@
     <div class="cav">
       <div class="c"><span class="k">Consistency</span><h4>No cross-object atomicity</h4><p>No rename of any kind, no multi-key transactions, no snapshot List. Deliberate: these are V2's manifest. The application-level pointer file covers the common "publish a consistent set" case.</p></div>
       <div class="c"><span class="k">S3 CAS</span><h4>ETag ABA edge</h4><p>Byte-identical rewrites repeat ETags, so a stale CAS can succeed after A→B→A. Callers needing strict CAS on S3 should make payloads self-versioning (embed a counter/nonce). GCS and local tokens are monotonic and immune.</p></div>
-      <div class="c"><span class="k">Local backend</span><h4>Single host only</h4><p>flock + rename semantics are not NFS-safe and not multi-host. The local backend is for dev and single-node deployments; say so in its package doc.</p></div>
+      <div class="c"><span class="k">Local backend</span><h4>Dev/test/demo mandate — a simplification, not a limitation</h4><p>Local serves development, debugging, tests, and demos; concurrency and traffic are non-goals there. This licenses the coarse single-flock design (no per-key locking, no NFS/multi-host support — single machine only) whose sole job is matching cloud CAS semantics exactly, so green local tests are meaningful.</p></div>
       <div class="c"><span class="k">S3-compatibles</span><h4>Verify preconditions before trusting</h4><p>Conditional writes are real on AWS S3 (GA 2024). MinIO and other S3-compatible endpoints must be conformance-tested (<code>If-None-Match:*</code>, <code>If-Match</code>) before the CAS shim is enabled on them — a pre-implementation task, not a footnote.</p></div>
     </div>
   </section>
