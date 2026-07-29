@@ -10,7 +10,15 @@ go_library(
     ],
     importpath = "github.com/iampat/cloudy-neigh/ingestion",
     visibility = ["//visibility:public"],
-    deps = ["//document"],
+    deps = [
+        "//document",
+        "@dev_gocloud//blob",
+        "@dev_gocloud//blob/fileblob",
+        "@dev_gocloud//blob/gcsblob",
+        "@dev_gocloud//blob/memblob",
+        "@dev_gocloud//blob/s3blob",
+        "@dev_gocloud//gcerrors",
+    ],
 )
 
 go_test(

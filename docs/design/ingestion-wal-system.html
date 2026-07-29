@@ -58,7 +58,18 @@ It batches client write requests (<code>PUT</code>/<code>UPSERT</code> and <code
   <li><code>DELETE</code>: Includes document ID tombstone.</li>
 </ul>
 
-<h3>2.2 Serialization Drivers</h3>
+<h3>2.2 Storage Abstraction (Go Cloud CDK — gocloud.dev/blob)</h3>
+<p>
+Storage is built on top of <code>gocloud.dev/blob</code> (Go Cloud Development Kit), providing portable, out-of-the-box support across multiple storage backends:
+</p>
+<ul>
+  <li><strong>AWS S3:</strong> <code>s3://bucket-name</code></li>
+  <li><strong>Google Cloud Storage (GCS):</strong> <code>gs://bucket-name</code></li>
+  <li><strong>Local Filesystem:</strong> <code>file:///path/to/dir</code> (via <code>fileblob</code>)</li>
+  <li><strong>In-Memory:</strong> <code>mem://</code> (via <code>memblob</code> for fast testing)</li>
+</ul>
+
+<h3>2.3 Serialization Drivers</h3>
 <p>The WAL writer supports pluggable serialization drivers:</p>
 <ul>
   <li><code>pb.jsonl</code>: JSON-Lines formatted Protobuf messages (human-readable, easy debugging &amp; inspection).</li>

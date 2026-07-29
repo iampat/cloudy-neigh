@@ -4,11 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
+
+	"gocloud.dev/blob"
+	_ "gocloud.dev/blob/fileblob"
+	"gocloud.dev/blob/fileblob"
+	_ "gocloud.dev/blob/gcsblob"
+	_ "gocloud.dev/blob/memblob"
+	"gocloud.dev/blob/memblob"
+	_ "gocloud.dev/blob/s3blob"
+	"gocloud.dev/gcerrors"
 )
 
 // ErrExists is returned when WriteIfNotExist fails because the key already exists.
@@ -22,131 +30,107 @@ type Store interface {
 	Read(ctx context.Context, path string) ([]byte, error)
 	// List returns keys under prefix lexicographically sorted, starting strictly after startAfter (if set).
 	List(ctx context.Context, prefix string, startAfter string) ([]string, error)
+	// Close releases bucket resources.
+	Close() error
 }
 
-// MemoryStore is an in-memory implementation of Store suitable for fast unit testing.
-type MemoryStore struct {
-	mu    sync.RWMutex
-	blobs map[string][]byte
+// GoCloudStore implements Store using Go CDK's gocloud.dev/blob.Bucket abstraction.
+// This provides out-of-the-box support for AWS S3, Google Cloud Storage (GCS), Local Filesystem, and In-Memory storage.
+type GoCloudStore struct {
+	bucket *blob.Bucket
+	mu     sync.Mutex
 }
 
-func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{
-		blobs: make(map[string][]byte),
+// NewGoCloudStore wraps any gocloud.dev/blob.Bucket.
+func NewGoCloudStore(b *blob.Bucket) *GoCloudStore {
+	return &GoCloudStore{bucket: b}
+}
+
+// OpenBucket opens a bucket from a URL string (e.g. "mem://", "file:///path/to/dir", "gs://my-bucket", "s3://my-bucket").
+func OpenBucket(ctx context.Context, url string) (*GoCloudStore, error) {
+	b, err := blob.OpenBucket(ctx, url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open blob bucket at %s: %w", url, err)
 	}
+	return NewGoCloudStore(b), nil
 }
 
-func (m *MemoryStore) WriteIfNotExist(ctx context.Context, path string, data []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// NewMemoryStore creates an in-memory Store backed by gocloud.dev/blob/memblob.
+func NewMemoryStore() *GoCloudStore {
+	b := memblob.OpenBucket(nil)
+	return NewGoCloudStore(b)
+}
 
-	if _, exists := m.blobs[path]; exists {
+// NewFileStore creates a local filesystem Store backed by gocloud.dev/blob/fileblob.
+func NewFileStore(dir string) (*GoCloudStore, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+	b, err := fileblob.OpenBucket(dir, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open fileblob bucket at %s: %w", dir, err)
+	}
+	return NewGoCloudStore(b), nil
+}
+
+func (s *GoCloudStore) WriteIfNotExist(ctx context.Context, path string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	exists, err := s.bucket.Exists(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to check existence for %s: %w", path, err)
+	}
+	if exists {
 		return ErrExists
 	}
-	cp := make([]byte, len(data))
-	copy(cp, data)
-	m.blobs[path] = cp
+
+	w, err := s.bucket.NewWriter(ctx, path, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(data); err != nil {
+		_ = w.Close()
+		return err
+	}
+	if err := w.Close(); err != nil {
+		if gcerrors.Code(err) == gcerrors.AlreadyExists {
+			return ErrExists
+		}
+		return err
+	}
 	return nil
 }
 
-func (m *MemoryStore) Read(ctx context.Context, path string) ([]byte, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	data, exists := m.blobs[path]
-	if !exists {
-		return nil, os.ErrNotExist
-	}
-	cp := make([]byte, len(data))
-	copy(cp, data)
-	return cp, nil
+func (s *GoCloudStore) Read(ctx context.Context, path string) ([]byte, error) {
+	return s.bucket.ReadAll(ctx, path)
 }
 
-func (m *MemoryStore) List(ctx context.Context, prefix string, startAfter string) ([]string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+func (s *GoCloudStore) List(ctx context.Context, prefix string, startAfter string) ([]string, error) {
+	iter := s.bucket.List(&blob.ListOptions{
+		Prefix: prefix,
+	})
 
 	var keys []string
-	for k := range m.blobs {
-		if strings.HasPrefix(k, prefix) {
-			if startAfter == "" || k > startAfter {
-				keys = append(keys, k)
-			}
+	for {
+		obj, err := iter.Next(ctx)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if startAfter == "" || obj.Key > startAfter {
+			keys = append(keys, obj.Key)
 		}
 	}
 	sort.Strings(keys)
 	return keys, nil
 }
 
-// FileStore is a POSIX filesystem implementation of Store.
-type FileStore struct {
-	rootDir string
-}
-
-func NewFileStore(rootDir string) (*FileStore, error) {
-	if err := os.MkdirAll(rootDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create root dir: %w", err)
+func (s *GoCloudStore) Close() error {
+	if s.bucket != nil {
+		return s.bucket.Close()
 	}
-	return &FileStore{rootDir: rootDir}, nil
-}
-
-func (f *FileStore) WriteIfNotExist(ctx context.Context, path string, data []byte) error {
-	fullPath := filepath.Join(f.rootDir, path)
-	dir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create dir %s: %w", dir, err)
-	}
-
-	file, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-	if err != nil {
-		if os.IsExist(err) {
-			return ErrExists
-		}
-		return err
-	}
-	defer file.Close()
-
-	if _, err := file.Write(data); err != nil {
-		return err
-	}
-	return file.Sync()
-}
-
-func (f *FileStore) Read(ctx context.Context, path string) ([]byte, error) {
-	fullPath := filepath.Join(f.rootDir, path)
-	return os.ReadFile(fullPath)
-}
-
-func (f *FileStore) List(ctx context.Context, prefix string, startAfter string) ([]string, error) {
-	prefixDir := filepath.Join(f.rootDir, filepath.Dir(prefix))
-	basePrefix := filepath.Base(prefix)
-
-	var result []string
-	err := filepath.WalkDir(prefixDir, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, err := filepath.Rel(f.rootDir, p)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, prefix) || basePrefix == "." || basePrefix == "" {
-			if startAfter == "" || rel > startAfter {
-				result = append(result, rel)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(result)
-	return result, nil
+	return nil
 }
