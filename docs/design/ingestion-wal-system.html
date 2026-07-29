@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ingestion WAL System — Design</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1f2937;
+    --muted: #4b5563;
+    --border: #e5e7eb;
+    --code-bg: #f3f4f6;
+    --accent: #2563eb;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  body {
+    font-family: var(--sans);
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+  }
+  h1 { font-size: 2rem; margin-bottom: 0.5rem; color: #111827; }
+  h2 { font-size: 1.4rem; margin-top: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h3 { font-size: 1.1rem; margin-top: 1.5rem; }
+  p, li { color: var(--muted); font-size: 1rem; }
+  code { font-family: var(--mono); background: var(--code-bg); padding: 0.2em 0.4em; border-radius: 4px; font-size: 0.9em; color: #111827; }
+  pre { background: var(--code-bg); padding: 1rem; border-radius: 6px; overflow-x: auto; font-family: var(--mono); font-size: 0.9em; }
+  ul, ol { padding-left: 1.5rem; }
+  .note { background: #eff6ff; border-left: 4px solid var(--accent); padding: 0.8rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+  .note p { margin: 0; color: #1e40af; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { text-align: left; padding: 0.6rem; border: 1px solid var(--border); font-size: 0.95rem; }
+  th { background: var(--code-bg); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>Ingestion WAL System — Design Document</h1>
+<p><strong>Status:</strong> Prototype Design &amp; Architecture Spec | <strong>Target Engine:</strong> cloudy-neigh</p>
+
+<h2>1. Overview</h2>
+<p>
+The ingestion system provides a high-throughput, simple, and clean document ingestion pipeline. 
+It batches client write requests (<code>PUT</code>/<code>UPSERT</code> and <code>DELETE</code>) and flushes them into sequentially numbered Write-Ahead Log (WAL) bin files (e.g. <code>wal/000000000123.wal</code>) stored on cloud object storage or local disk using <strong>coordinator-free Compare-And-Swap (CAS) / conditional writes</strong>.
+</p>
+
+<h2>2. Core Components</h2>
+
+<h3>2.1 Mutation Protocol</h3>
+<p>Mutations are represented as Protobuf messages containing document updates or deletions:</p>
+<ul>
+  <li><code>PUT</code> / <code>UPSERT</code>: Includes document ID, fields (title, text, embeddings, LSH hashes), and client mutation timestamp.</li>
+  <li><code>DELETE</code>: Includes document ID tombstone.</li>
+</ul>
+
+<h3>2.2 Serialization Drivers</h3>
+<p>The WAL writer supports pluggable serialization drivers:</p>
+<ul>
+  <li><code>pb.jsonl</code>: JSON-Lines formatted Protobuf messages (human-readable, easy debugging &amp; inspection).</li>
+  <li><code>pb.bin</code> / <code>recordio</code>: Length-prefixed binary Protobuf record streams (compact, high-performance binary format).</li>
+</ul>
+
+<h3>2.3 Batcher &amp; Flushing Mechanics</h3>
+<p>The batcher aggregates incoming document mutations in memory and triggers a batch flush when <em>any</em> of the following limits is met:</p>
+<ul>
+  <li><strong>Document Count (<code>N</code>)</strong>: e.g., max 1,000 documents per batch.</li>
+  <li><strong>Time Interval (<code>T</code>)</strong>: e.g., max 500ms since oldest un-flushed document.</li>
+  <li><strong>Payload Byte Size (<code>B</code>)</strong>: e.g., max 4MB per batch payload.</li>
+</ul>
+
+<h3>2.4 Write Acknowledgment Modes</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Mode</th>
+      <th>Behavior</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>1. WAL Durability</strong></td>
+      <td>Write API blocks synchronously until the batch containing the document is flushed &amp; materialized in the WAL storage bin.</td>
+      <td><strong>Implemented in Prototype</strong></td>
+    </tr>
+    <tr>
+      <td><strong>2. State / Index Durability</strong></td>
+      <td>Write API blocks until the WAL batch is applied to the index/store state (e.g., segment build complete).</td>
+      <td><em>Documented for Future Extension</em></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>3. Coordinator-Free CAS WAL Sequence Writer</h2>
+
+<h3>3.1 Claiming Sequence Numbers without a Coordinator</h3>
+<p>
+To write WAL bins without a central lock manager or coordinator service:
+</p>
+<ol>
+  <li>The writer determines the candidate next sequence number $S$.</li>
+  <li>The writer attempts a conditional write: <code>WriteIfNotExist("wal/" + formatSeq(S) + ext, batchBytes)</code>.</li>
+  <li><strong>On Success:</strong> Sequence $S$ is claimed and committed.</li>
+  <li><strong>On Conflict (<code>ErrExists</code>):</strong> Another concurrent writer claimed $S$. The writer increments to $S+1$ and retries immediately.</li>
+</ol>
+
+<h3>3.2 Head Discovery at Scale ($300M+$ Files)</h3>
+<div class="note">
+  <p><strong>Boundary Design:</strong> With 1 WAL flush/sec over 10 years (~315 million files), listing the entire directory would be $O(\text{files})$.</p>
+</div>
+<p>To keep sequence discovery $O(1)$ RTT:</p>
+<ul>
+  <li><strong>Zero-Padded Keys &amp; Lexicographical Range Probing:</strong> Sequence keys are zero-padded to 12 digits (<code>000000000123</code>). Storage listing APIs (GCS, S3, local POSIX) support <code>List(prefix="wal/", startAfter=cachedSeq)</code>.</li>
+  <li><strong>Local Sequence Cache:</strong> Writers cache the highest known sequence $S_{last}$. Discovery probes with <code>startAfter = formatSeq(S_{last})</code>, scanning only the few keys generated since the last write.</li>
+</ul>
+
+<h2>4. Structured Logging &amp; Observability</h2>
+<p>
+The ingestion engine uses Go's standard <code>log/slog</code> for structured operational logging:
+</p>
+<ul>
+  <li><strong>Batch Flushes:</strong> Logs batch size (docs &amp; bytes), duration, WAL sequence assigned, and file path.</li>
+  <li><strong>CAS Contention:</strong> Logs retry count and sequence collisions for debugging concurrency hotspots.</li>
+  <li><strong>Flush Latencies &amp; Performance:</strong> Logs execution duration for WAL storage writes to track I/O bottlenecks.</li>
+</ul>
+
+<h2>5. Future Extensions</h2>
+<ul>
+  <li><strong>Index Catch-Up Worker:</strong> Asynchronous index builder reading sequence bins from WAL and applying them to search segments.</li>
+  <li><strong>WAL Garbage Collection / Archiving:</strong> Archiving processed WAL bins older than retention window into cold storage.</li>
+</ul>
+
+</body>
+</html>

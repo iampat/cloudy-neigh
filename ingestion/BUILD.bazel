@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ingestion",
+    srcs = [
+        "batcher.go",
+        "mutation.go",
+        "store.go",
+        "wal.go",
+    ],
+    importpath = "github.com/iampat/cloudy-neigh/ingestion",
+    visibility = ["//visibility:public"],
+    deps = ["//document"],
+)
+
+go_test(
+    name = "ingestion_test",
+    srcs = ["ingestion_test.go"],
+    embed = [":ingestion"],
+    deps = ["//document"],
+)
