@@ -1,3 +1,4 @@
+load("@aspect_rules_lint//format:defs.bzl", "format_multirun")
 load("@bazel_gazelle//:def.bzl", "gazelle")
 load("@buildifier_prebuilt//:rules.bzl", "buildifier")
 load("@io_bazel_rules_go//go:def.bzl", "TOOLS_NOGO", "nogo")
@@ -7,6 +8,12 @@ gazelle(name = "gazelle")
 
 buildifier(
     name = "buildifier",
+)
+
+format_multirun(
+    name = "format",
+    go = "@aspect_rules_lint//format:gofumpt",
+    visibility = ["//visibility:public"],
 )
 
 nogo(
