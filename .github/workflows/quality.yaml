@@ -23,7 +23,7 @@ jobs:
         repository-cache: true
 
     - name: Format check
-      run: bazel run //tools/format:format.check
+      run: bazel run //:format.check
 
     - name: go mod verify
       run: bazel run @io_bazel_rules_go//go -- mod verify
