@@ -13,6 +13,7 @@ bazel_dep(name = "aspect_rules_lint", version = "2.7.2", dev_dependency = True)
 
 go_sdk = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.download(version = "1.26.5")
+go_sdk.download(version = "1.27rc2")
 go_sdk.nogo(nogo = "//:nogo")
 
 go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")

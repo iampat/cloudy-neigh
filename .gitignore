@@ -1,5 +1,7 @@
 .vscode
 data
 *~
+\#*#
+.\#*
 bazel-*
 .playwright-mcp/
