@@ -12,26 +12,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: [ "1.26.5" ]
+        go: [ go1.26 ]
         experimental: [ false ]
         include:
-          - go: "1.27rc2"
+          - go: go1.27
             experimental: true
-    env:
-      SDK: --@io_bazel_rules_go//go/toolchain:sdk_version=${{ matrix.go }}
     steps:
     - uses: actions/checkout@v7
     - uses: bazel-contrib/setup-bazel@0.19.0
       with:
         bazelisk-cache: true
-        disk-cache: ${{ github.workflow }}-go${{ matrix.go }}
+        disk-cache: ${{ github.workflow }}-${{ matrix.go }}
         repository-cache: true
 
     - name: Build
-      run: bazel build $SDK //...
+      run: bazel build --config=${{ matrix.go }} //...
 
     - name: Test (race)
-      run: bazel test $SDK --config=race //...
+      run: bazel test --config=${{ matrix.go }} --config=race //...
 
     - name: Benchmark
-      run: bazel test $SDK --test_output=all --test_arg=-test.v --test_arg=-test.bench=. --test_arg=-test.cpu=1 //...
+      run: bazel test --config=${{ matrix.go }} --test_output=all --test_arg=-test.v --test_arg=-test.bench=. --test_arg=-test.cpu=1 //...

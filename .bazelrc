@@ -1,6 +1,9 @@
 test --test_output=errors
 test --test_arg=-test.shuffle=on
 
+build:go1.26 --@io_bazel_rules_go//go/toolchain:sdk_version=1.26.5
+build:go1.27 --@io_bazel_rules_go//go/toolchain:sdk_version=1.27rc2
+
 build:race --@io_bazel_rules_go//go/config:race
 
 # rules_go's validate_mode still rejects race+nocgo ("race instrumentation can't
