@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sample",
+    srcs = ["sample.go"],
+    importpath = "github.com/iampat/cloudy-neigh/experimentals/ali/sample",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "sample_test",
+    srcs = ["sample_test.go"],
+    embed = [":sample"],
+)
