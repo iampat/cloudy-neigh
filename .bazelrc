@@ -2,3 +2,11 @@ test --test_output=errors
 test --test_arg=-test.shuffle=on
 
 build:race --@io_bazel_rules_go//go/config:race
+
+# rules_go's validate_mode still rejects race+nocgo ("race instrumentation can't
+# be enabled when cgo is disabled"). That constraint is stale -- modern Go ships a
+# prebuilt race runtime and CGO_ENABLED=0 go test -race works fine -- but as of
+# rules_go 0.62.0 the race flag reaches the exec config used for tool targets like
+# //:gazelle-runner, where cgo is off, and the check is a hard analysis failure.
+# Restrict a race run to the test targets so tool targets are never instrumented.
+test:race --build_tests_only

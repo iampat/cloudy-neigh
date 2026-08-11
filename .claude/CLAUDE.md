@@ -25,7 +25,7 @@ toolchain and dependency graph stay authoritative.
 - Flag open design questions with `CONSIDER(ali):` comments.
 - Design notes: standalone simple HTML in `docs/design/`, no CSS/JS frameworks;
   update them alongside the code they describe.
-- Branch names: `iampat/<topic>` for features; `chore/`, `docs/`, `fix/` otherwise.
+- Branch names: `ali/<topic>` for features; `chore/`, `docs/`, `fix/` otherwise.
 - Before declaring done: `bazel build //...` and `bazel run //:format.check` pass.
 
 For planning a new feature or design, use the `plan-feature` skill.
