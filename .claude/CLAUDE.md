@@ -22,6 +22,8 @@ toolchain and dependency graph stay authoritative.
 - Structured logging via stdlib `log/slog`; prefer returning errors over
   fatal-level logging.
 - Never `time.Sleep` to synchronize a test — poll or use channels.
+- Explicit beats clever. Prefer the obvious solution a reader can follow without
+  reconstructing your reasoning, even when a terser one exists.
 - Comment only what the code cannot say: a non-obvious *why*, a workaround and
   the upstream issue forcing it, an invariant a reader would otherwise violate.
   Do not restate the code, label sections, or narrate a change to the reader —
