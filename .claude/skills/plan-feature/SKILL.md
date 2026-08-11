@@ -1,6 +1,6 @@
 ---
 name: plan-feature
-description: Plan a new feature, subsystem, or design for cloudy-neigh. Use when starting non-trivial work — before writing code — to surface unknowns, failure modes, and trade-offs while they are still cheap to fix.
+description: Plan a new feature, subsystem, or design. Use when starting non-trivial work — before writing code — to surface unknowns, failure modes, and trade-offs while they are still cheap to fix.
 ---
 
 # Planning a feature
