@@ -22,6 +22,11 @@ toolchain and dependency graph stay authoritative.
 - Structured logging via stdlib `log/slog`; prefer returning errors over
   fatal-level logging.
 - Never `time.Sleep` to synchronize a test — poll or use channels.
+- Comment only what the code cannot say: a non-obvious *why*, a workaround and
+  the upstream issue forcing it, an invariant a reader would otherwise violate.
+  Do not restate the code, label sections, or narrate a change to the reader —
+  if deleting the comment loses nothing, delete it. Applies to config and build
+  files (`.bazelrc`, `MODULE.bazel`, `BUILD.bazel`, workflows) as much as to Go.
 - Flag open design questions with `CONSIDER(ali):` comments.
 - Design notes: standalone simple HTML in `docs/design/`, no CSS/JS frameworks;
   update them alongside the code they describe.

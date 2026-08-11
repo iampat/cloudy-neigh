@@ -8,19 +8,30 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        go: [ "1.26.5" ]
+        experimental: [ false ]
+        include:
+          - go: "1.27rc2"
+            experimental: true
+    env:
+      SDK: --@io_bazel_rules_go//go/toolchain:sdk_version=${{ matrix.go }}
     steps:
     - uses: actions/checkout@v7
     - uses: bazel-contrib/setup-bazel@0.19.0
       with:
         bazelisk-cache: true
-        disk-cache: ${{ github.workflow }}
+        disk-cache: ${{ github.workflow }}-go${{ matrix.go }}
         repository-cache: true
 
     - name: Build
-      run: bazel build //...
+      run: bazel build $SDK //...
 
     - name: Test (race)
-      run: bazel test --config=race //...
+      run: bazel test $SDK --config=race //...
 
     - name: Benchmark
-      run: bazel test --test_output=all --test_arg=-test.v --test_arg=-test.bench=. --test_arg=-test.cpu=1 //...
+      run: bazel test $SDK --test_output=all --test_arg=-test.v --test_arg=-test.bench=. --test_arg=-test.cpu=1 //...
