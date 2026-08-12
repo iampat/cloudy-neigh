@@ -69,6 +69,13 @@ A field arrives when its semantics can be defended, not when they can be guessed
 v0 allows a breaking change, but a field that ships wrong already has clients
 depending on it.
 
+v0 states no limits. A limit in a contract is a promise, and every limit we could
+write today is a guess. An operator sets what a deployment carries. A real limit
+arrives with the measurement behind it.
+
+No field name is a keyword in Go, Python, or TypeScript. The Python protobuf
+runtime does not rename a colliding field, so `f.not` does not parse.
+
 ## Model
 
 A namespace is a logical boundary, like a table or a collection. It holds
@@ -125,6 +132,29 @@ through the same quota and the same timeout.
 
 `Plan` takes the same `QueryRequest` as `Query`, so a client plans exactly what it
 would send. The call runs nothing.
+
+A failure returns a gRPC status code. Structured detail travels in the status
+details, and no response message carries a status field. This note names a code
+only where the choice is not obvious.
+
+### Namespaces
+
+Namespace administration has no messages yet. Four operations are required:
+
+- **List.** Enumerate the namespaces an account holds.
+- **Delete.** Drop a namespace and its data.
+- **Branch.** Copy a namespace cheaply, so the copy and the source diverge from a
+  shared starting point. A snapshot is a branch nobody writes to, so branching
+  covers both.
+- **Archive.** Mark a namespace read only.
+
+Create is not one of them. A namespace appears on its first write, so a separate
+call would only duplicate what a write already does.
+
+CONSIDER(ali): what does namespace administration look like? A delete is either
+synchronous or a background reclaim the client polls. A namespace name needs a
+character rule, since it addresses stored data. A branch needs a story for what
+the two namespaces share on disk and what happens when one of them is deleted.
 
 ## Write path
 
@@ -248,17 +278,12 @@ the order for a key shorter than the block size. Hex costs 2x, base32hex 1.6x.
 
 Readability is the reason for choosing a string, and it survives for text and
 unsigned integer keys only. A hex-encoded float or UUID is opaque, so those cases
-pay the expansion and get nothing back. Within the 64-byte limit, hex holds 32 raw
-bytes and base32hex holds 40, which is enough for a UUID either way. If binary
-keys turn out to dominate, `bytes` is the better home, and that change has to land
-before v1.
+pay the expansion and get nothing back. If binary keys turn out to dominate,
+`bytes` is the better home, and that change has to land before v1.
 
-Two limits worth stating. String order is UTF-8 byte order, which equals code
-point order but not linguistic collation, so `"Z"` sorts before `"a"`. A composite
-key needs escaping, because `"ab"` is a prefix of `"abc"`.
-
-An ID is limited to 64 bytes. The limit bounds the ID dictionary, which is a
-memory control rather than a style rule.
+Two consequences worth stating. String order is UTF-8 byte order, which equals
+code point order but not linguistic collation, so `"Z"` sorts before `"a"`. A
+composite key needs escaping, because `"ab"` is a prefix of `"abc"`.
 
 `"id"` is a reserved attribute name, and a client cannot use it for an attribute
 of its own. `Compare` addresses it like any other attribute, so an exact, range,
@@ -357,8 +382,8 @@ ranking and costs one operation per comparison.
 Naming every column keeps one rule for all of them. A column with a special name
 would need its own case in type inference, schema validation, query ranking, and
 patch behavior. The cost is that a client cannot create a vector column by writing
-data alone. An operator quota bounds the column count, since each column carries
-its own index and a filterable attribute is indexed once per index.
+data alone. Each column also carries its own index, so column count drives index
+size.
 
 A per-column metric follows from per-column embeddings. Two columns can hold
 output from two models with different geometry, and a namespace-wide metric would
@@ -598,9 +623,9 @@ message Filter {
 
   oneof kind {
     Compare compare = 1;
-    Group all = 2;
-    Group any = 3;
-    Filter not = 4;
+    Group all_of = 2;
+    Group any_of = 3;
+    Group none_of = 4;
   }
 }
 
@@ -614,7 +639,7 @@ message Compare {
     Value lte = 5;
     Value gt = 6;
     Value gte = 7;
-    ValueList in = 8;
+    ValueList is_in = 8;
     ValueList not_in = 9;
     ValueList contains_any = 10;
     ValueList contains_all = 11;
@@ -634,9 +659,13 @@ message ValueList {
 }
 ```
 
+`none_of` holds a group, so one node negates a set rather than a single filter.
+The three group cases then share one shape, and a client negating one filter
+passes a group of one.
+
 The predicate is a `oneof` of typed fields rather than an operator enum beside a
-value list. An enum would let a client send `eq` with three values, or `in` with
-none, and the server would reject both at run time. This shape cannot express
+value list. An enum would let a client send `eq` with three values, or `is_in`
+with none, and the server would reject both at run time. This shape cannot express
 either. The cost is one field per predicate instead of one shared field.
 
 `Value` is the write-path type, so a filter compares against the same values a
@@ -650,6 +679,10 @@ adopt, because a budget means nothing until the rule that counts edits is fixed.
 A query that uses one against an attribute without it fails rather than falling
 back to a scan. The fallback would read the whole namespace at a cost the request
 does not show.
+
+`prefix` needs no declared index and works on any string attribute, not only on
+the ID. A prefix is a range over a sorted attribute, so the ordinary attribute
+index serves it.
 
 ### Fusion
 
@@ -872,6 +905,175 @@ Strong sees every write that completed before the query started. Eventual trades
 that for throughput and may miss recent writes.
 
 Read-your-writes works by default. A client opts out of it deliberately.
+
+### Examples
+
+Every example below queries one namespace of source files. A document holds
+`path` and `language` as text, `content` as a text attribute with a tokenizer,
+and `embedding` as a vector column. `path` declares `glob: true`, so a glob
+predicate on it is legal.
+
+Fetch one file by ID.
+
+```proto
+namespace: "repo"
+query {
+  name: "by_id"
+  top_k: 1
+  retrieve {
+    filter {
+      compare {
+        attribute: "id"
+        eq { text: "src/index/writer.go" }
+      }
+    }
+  }
+}
+```
+
+Every Go file under one directory.
+
+```proto
+namespace: "repo"
+query {
+  name: "go_files"
+  top_k: 100
+  retrieve {
+    filter {
+      compare {
+        attribute: "path"
+        glob: "src/index/*.go"
+      }
+    }
+  }
+}
+```
+
+The nearest neighbors of a query embedding, restricted to Go files.
+
+```proto
+namespace: "repo"
+query {
+  name: "similar"
+  top_k: 10
+  retrieve {
+    filter {
+      compare {
+        attribute: "language"
+        eq { text: "go" }
+      }
+    }
+    rank_by {
+      vector {
+        attribute: "embedding"
+        vector: [0.12, -0.44, 0.81]
+      }
+    }
+  }
+}
+```
+
+BM25 over file content.
+
+```proto
+namespace: "repo"
+query {
+  name: "keyword"
+  top_k: 10
+  retrieve {
+    rank_by {
+      text {
+        attribute: "content"
+        query: "checksum mismatch"
+      }
+    }
+  }
+}
+```
+
+One term across one subtree, retrieved twice and fused. Both legs filter to the
+same prefix, and `rrf` unset leaves `k` at 60.
+
+```proto
+namespace: "repo"
+query {
+  name: "hybrid"
+  top_k: 10
+  fusion {
+    inputs {
+      name: "semantic"
+      top_k: 100
+      retrieve {
+        filter {
+          compare {
+            attribute: "path"
+            prefix: "src/index/"
+          }
+        }
+        rank_by {
+          vector {
+            attribute: "embedding"
+            vector: [0.12, -0.44, 0.81]
+          }
+        }
+      }
+    }
+    inputs {
+      name: "keyword"
+      top_k: 100
+      retrieve {
+        filter {
+          compare {
+            attribute: "path"
+            prefix: "src/index/"
+          }
+        }
+        rank_by {
+          text {
+            attribute: "content"
+            query: "checksum"
+          }
+        }
+      }
+    }
+    rrf {}
+  }
+}
+projection {
+  include {
+    names: "path"
+  }
+}
+```
+
+The response carries the fused score beside the rank each leg gave the row.
+
+```proto
+matches {
+  document {
+    id: "src/index/writer.go"
+    attributes {
+      key: "path"
+      value { text: "src/index/writer.go" }
+    }
+  }
+  score: 0.0323
+  node_ranks { name: "semantic" rank: 1 score: 0.14 }
+  node_ranks { name: "keyword" rank: 3 score: 8.21 }
+}
+matches {
+  document {
+    id: "src/index/reader.go"
+    attributes {
+      key: "path"
+      value { text: "src/index/reader.go" }
+    }
+  }
+  score: 0.0306
+  node_ranks { name: "semantic" rank: 2 score: 0.19 }
+  node_ranks { name: "keyword" rank: 9 score: 5.02 }
+}
+```
 
 ## Open
 
