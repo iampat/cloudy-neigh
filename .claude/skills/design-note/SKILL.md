@@ -147,13 +147,18 @@ headings to find a topic, not to collect conclusions.
 Put the open questions at the end, never in a footnote. An unresolved question is
 the most valuable part of a draft.
 
-## Diagrams
+## Diagrams and sketches
 
-Draw a diagram when the shape of the data is the point. Use box-drawing characters
-in a fenced code block. A fenced block renders as monospace everywhere.
+Pick the smallest view that makes the point. Put each visual next to the
+sentence it supports, not in a gallery at the end.
 
-Cap every diagram at 80 columns. A wider diagram scrolls sideways on GitHub and
-wraps in a terminal.
+Match the view to the content:
+
+- An algorithm or a state change: pseudocode.
+- Runtime flow: a call tree, one call per line, indented.
+- Ownership or layout: a shallow file tree, one comment per entry.
+- The shape of data or a system: a box diagram.
+- A measurement: a bar chart, with the number at the end of the bar.
 
 ```
   text attribute              vector attribute
@@ -166,14 +171,33 @@ wraps in a terminal.
   (lossy)   (exact)          (lossy)    (exact)
 ```
 
-Use these characters: `┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼ ─ │ ▶ ▼ ◀ ▲`.
-
-Show a measurement as a bar chart. Put the number at the end of the bar.
-
 ```
   v1 ║░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  51.6 GiB
   v2 ║░░░                                5.2 GiB
 ```
+
+Show a change to an existing shape as a diff on that shape — a file tree, a
+call tree, or pseudocode. A diff shows the delta without two full diagrams.
+
+```diff
+ wal/
+ ├── segment.go     # appends records
++├── checkpoint.go  # snapshots the applied offset
+ └── replay.go
+```
+
+Draw with box-drawing characters in a fenced code block. A fenced block
+renders as monospace on GitHub, in an editor, and in a terminal. Use these
+characters: `┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼ ─ │ ▶ ▼ ◀ ▲`.
+
+Cap every diagram at 80 columns. A wider diagram scrolls sideways on GitHub and
+wraps in a terminal.
+
+A diagram that does not fit these limits is a signal, not a formatting
+problem. It usually means the design has too many interacting parts. First
+simplify the design. Then split the diagram into one small diagram per
+decision. Use Mermaid only when the concept resists both. Treat a Mermaid
+diagram as a flag for design review.
 
 ## Code in a design note
 
@@ -212,6 +236,7 @@ The checklist below covers the judgment rules.
 - Every stated limit comes from a measurement.
 - No field name is a keyword in a target language.
 - Deleting any sentence loses something. No sentence explains the obvious.
-- Every diagram fits in 80 columns.
+- Every diagram fits in 80 columns and sits next to the text it supports.
+- No Mermaid diagram survives without a simplification attempt first.
 - Every open question carries a `CONSIDER(ali):` marker.
 - No normative sentence is longer than 25 words.

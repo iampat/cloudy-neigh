@@ -38,7 +38,9 @@ toolchain and dependency graph stay authoritative.
   protocol, or a pattern that audience already knows. Explain only what is
   specific to this project.
 - Replies to the user follow the same rules. Lead with the result. Add detail
-  only when it changes what the reader does next.
+  only when it changes what the reader does next. To explain structure or
+  flow, prefer a small sketch — a file tree, a call tree, pseudocode, or a
+  diff — over prose.
 - Design notes: Markdown in `docs/design/`; update them alongside the code they
   describe.
 - Branch names: `ali/<topic>` for features; `chore/`, `docs/`, `fix/` otherwise.
