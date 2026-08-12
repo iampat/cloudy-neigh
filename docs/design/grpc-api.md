@@ -14,7 +14,7 @@ Attributes are dynamic, but the index is not. A client attaches whatever
 attributes it likes, and the index cannot store one until it knows the type.
 
 Vectors are the bulk of a document, and they come in several widths. A model may
-emit float32, float16, or int8, and the index usually wants none of those.
+emit `float32`, `float16`, or `int8`, and the index usually wants none of those.
 
 The contract outlives the engine. Storage, index format, and planner all get
 replaced. The messages a client compiled against do not.
@@ -125,8 +125,9 @@ Prefix lookup is a range, so `doc:` becomes `["doc:", "doc;")`. A glob that star
 with a wildcard is not a range. It needs a scan or a separate index, and it is not
 in scope for v0.
 
-The engine compares IDs byte by byte and never interprets them. A client holding a
-typed key encodes it into a string that keeps the order of the source type.
+The engine compares IDs byte by byte and never interprets them. String is the only
+ID type we support. A client holding a typed key encodes it into a string that
+keeps the order of the source type, and owns that encoding.
 
 | Source type | Encoding | Ordered | Readable |
 | --- | --- | --- | --- |
@@ -151,7 +152,8 @@ qualifies; hex costs 2x, base32hex 1.6x.
 Readability is the reason for choosing a string, and it survives for text and
 integer keys only. A hex-encoded float or UUID is opaque, so those cases pay the
 expansion and get nothing back. Within the 64-byte limit, hex holds 32 raw bytes
-and base32hex holds 40, which is enough for a UUID either way.
+and base32hex holds 40, which is enough for a UUID either way. If binary keys turn
+out to dominate, `bytes` is the better home, and v0 is the window to move.
 
 Two limits worth stating. String order is UTF-8 byte order, which equals code
 point order but not linguistic collation, so `"Z"` sorts before `"a"`. A composite
@@ -197,39 +199,55 @@ to null" from "leave this attribute alone". Presence in the attribute map answer
 the second, and `NullValue` answers the first.
 
 `Value` is the most frequent message in the system, with one instance per
-attribute per document. Every variant uses a field number from 1 to 15, so the tag
-encodes in a single byte. Six numbers remain in that range.
+attribute per document. Its variants stay inside field numbers 1 to 15, where a
+tag costs one byte instead of two. Six numbers remain, so a later variant has to
+earn one.
 
 A client with nested source data flattens it before the write. A client that needs
 the original shape stores it in an unindexed `bytes` attribute.
 
 ### Vectors
 
-Every vector column has a name, a schema entry, and its own distance metric. There
-is no default column and no cap on the count.
+A namespace holds any number of vector columns. Each one is named, declared in the
+schema, and carries its own distance metric.
 
 ```proto
 message VectorColumn {
   uint32 dimensions = 1;
   DistanceMetric metric = 2;
-  Quantization index_quantization = 3;
-  bool store_original = 4;
+  VectorType original_type = 3;
+  Quantization index_quantization = 4;
+  bool store_original = 5;
+}
+
+enum VectorType {
+  VECTOR_TYPE_UNSPECIFIED = 0;
+  VECTOR_TYPE_FLOAT32 = 1;
+  VECTOR_TYPE_FLOAT16 = 2;
+  VECTOR_TYPE_INT8 = 3;
 }
 ```
 
-A column with a magic name would become a special case in every rule that follows
-it: type inference, schema validation, query ranking, and patch behavior. Naming
-every column keeps one rule for all of them. The cost is that a client cannot
-create a vector column by writing data alone.
+Naming every column keeps one rule for all of them. A column with a special name
+would need its own case in type inference, schema validation, query ranking, and
+patch behavior. The cost is that a client cannot create a vector column by writing
+data alone. An operator quota bounds the column count, since each column carries
+its own index and a filterable attribute is indexed once per index.
 
 A per-column metric follows from per-column embeddings. Two columns can hold
 output from two models with different geometry, and a namespace-wide metric would
 force a client to split one logical collection across two namespaces.
 
-A vector crosses the wire as `repeated float`. float32 holds every value of int8,
-float16, and bfloat16 without loss, so the wire type is a lossless container for
-every narrower format. The cost is bandwidth, not precision. A packed `bytes`
-field can arrive later, while changing the type of field 2 would break the wire.
+A vector crosses the wire as `repeated float`. `float32` holds every value of
+`int8`, `float16`, and `bfloat16` without loss, so the wire type is a lossless
+container for every narrower format. The cost is bandwidth, not precision. A
+packed `bytes` field can arrive later, while changing the type of field 2 would
+break the wire.
+
+`original_type` names the width the client's values actually have. It lets the
+stored copy keep that width instead of paying 4x for values that were never
+`float32`. It also marks the case where a producer already chose the
+representation, which pairs with `QUANTIZATION_NATIVE` below.
 
 A vector column has two representations, and they answer different questions.
 
@@ -247,11 +265,16 @@ A vector column has two representations, and they answer different questions.
 The index copy is lossy and rebuildable, and it only affects recall, which is
 approximate by construction. The stored copy is the client's data. A text index
 already has this split, because posting lists are a lossy transformation of the
-source text and the stored attribute holds the original. The cost is storage
-amplification, and it is the amplification a text index already accepts.
+source text and the stored attribute holds the original.
+
+`store_original` defaults to false. An exact second copy costs storage on every
+document, and most clients keep their vectors elsewhere or regenerate them from
+source. A client that needs its exact values back turns it on and pays for it. By
+default a vector is a derived artifact, and a read returns the index
+representation.
 
 Quantization has three possible owners. The server owns it by default. A client
-that sends a pre-quantized vector owns it. A model that emits int8 owns it, and
+that sends a pre-quantized vector owns it. A model that emits `int8` owns it, and
 then neither the server nor the client may quantize that output again.
 `QUANTIZATION_NATIVE` records the third case.
 
@@ -289,8 +312,8 @@ A query must use the same analysis pipeline as the write that built the index.
 
 A tokenizer that stems at write time but not at query time returns no match for a
 stemmed term, and the failure is silent. The same rule holds for an embedding
-model. A float32 query vector cannot rank against a column that a model quantized
-to int8, because the client does not hold the calibration.
+model. A `float32` query vector cannot rank against a column that a model
+quantized to `int8`, because the client does not hold the calibration.
 
 This is one invariant with two instances. Both a tokenizer and an embedding model
 carry a version for this reason.
@@ -299,7 +322,7 @@ carry a version for this reason.
 
 | Option | Why not |
 | --- | --- |
-| `bytes` ID | Holds any binary key without expansion, and needs no encoding for the byte case. Rejected because it makes every ID opaque in a log, a trace, and an error message. Still open, see below. |
+| `bytes` ID | Holds any binary key without expansion, and needs no encoding for the byte case. Rejected because it makes every ID opaque in a log, a trace, and an error message. |
 | Typed ID, as a `oneof` of string, integer, and UUID | Adds a type switch to every path and cannot be a Go map key. |
 | Optional sibling fields for write operations | Cannot express mutual exclusion, so every invalid combination fails at run time. |
 | `google.protobuf.Struct` for attributes | Stores every number as a `double`, so an integer above 2^53 loses precision and a range filter returns wrong rows. It is also recursive. |
@@ -310,7 +333,7 @@ carry a version for this reason.
 | Columnar documents, as parallel arrays per column | Cheaper for bulk ingest, because it sends each attribute name once instead of once per document. Rejected for readability at this stage, and reconsidered when ingest throughput becomes the constraint. |
 | Client-streaming write | Needed for a large batch, and additive later as a third call. |
 | Namespace-wide distance metric | Forces a second namespace when a client adds a second embedding model. |
-| Vectors as `bytes` with a data type | Required for float16 and int8 on the wire. Additive later as a second field. |
+| Vectors as `bytes` with a data type | Required for `float16` and `int8` on the wire. Additive later as a second field. |
 
 ## Prior art
 
@@ -323,14 +346,19 @@ version in a public enum marks a migration the system could not perform in place
 That is direct evidence for treating an analyzer as an on-disk contract, and we
 copy the convention.
 
-**A wire type wider than the storage type.** turbopuffer accepts and returns
-float32 even when a column is stored as `[512]f16`. A production system already
-separates the two, which supports the same split here.
+**A wire type wider than the storage type.** turbopuffer stores a column as
+`[512]f16` or `[512]i8`, and still moves `float32` on the wire. Its schema
+documentation states this twice, and the second is explicit:
 
-**A limit that reveals a structural cost.** turbopuffer allows a 512 MB upsert
-batch, but only 30 rows per batch when the server computes the embedding. That gap
-measures the cost of putting a model in the write path, and it argues for an
-asynchronous write path before server-side embedding arrives.
+> This does not affect the base64 vector encoding in the API, which always uses a
+> little-endian float32 binary format, regardless of the schema's element type.
+>
+> — <https://turbopuffer.com/docs/schema>, "Vectors"
+
+A production system already runs this split, which is stronger evidence than our
+own reasoning for it. We take two things from it. The wire keeps one vector type
+for good, so no client ever negotiates a width. Storage width stays a schema
+concern, so a future narrower format needs no wire change at all.
 
 We also take its 64-byte ID limit and its per-attribute analysis configuration.
 
@@ -351,26 +379,7 @@ to the second.
 
 ## Open
 
-`CONSIDER(ali):` Is this a system of record for vectors, or a derived index? If a
-vector is always rebuildable by running the embedding model again, lossy storage
-is a rebuild. If this database holds the only copy, lossy storage is data loss.
-The answer sets the default for `store_original`.
-
-`CONSIDER(ali):` Do binary IDs become common enough to move from `string` to
-`bytes`? A string keeps text and integer keys readable, and makes every other key
-opaque anyway. If most keys turn out to be UUIDs, the expansion buys nothing. v0
-is the window for this change.
-
-`CONSIDER(ali):` Where does the ID encoder live? A client-side encoder needs shared
-conformance vectors across languages, because a subtle difference between two
-encoders is silent data corruption. A server-side encoder needs the source type on
-the wire, which brings back the typed ID.
-
 `CONSIDER(ali):` Do we take a dependency on the `googleapis` protos? A failed batch
 write should name the document that caused the failure, and the idiomatic carrier
 is `google.rpc.BadRequest.FieldViolation` in the status details. That is a new
 third-party dependency and needs agreement first.
-
-`CONSIDER(ali):` When does the write path become asynchronous? Server-side
-embedding drops write throughput by orders of magnitude, and a synchronous write
-path that later gains that feature has to change shape.
