@@ -30,9 +30,16 @@ toolchain and dependency graph stay authoritative.
   if deleting the comment loses nothing, delete it. Applies to config and build
   files (`.bazelrc`, `MODULE.bazel`, `BUILD.bazel`, workflows) as much as to Go.
 - Flag open design questions with `CONSIDER(ali):` comments.
-- Design notes: standalone simple HTML in `docs/design/`, no CSS/JS frameworks;
-  update them alongside the code they describe.
+- Write prose in Simplified Technical English: active voice, present tense, one
+  idea per sentence, 15–20 words, one term per concept. Spell out an acronym at
+  first use. Write "for example", not "e.g.".
+- Write for a working software engineer. Do not explain a language feature, a
+  protocol, or a pattern that audience already knows. Explain only what is
+  specific to this project.
+- Design notes: Markdown in `docs/design/`; update them alongside the code they
+  describe.
 - Branch names: `ali/<topic>` for features; `chore/`, `docs/`, `fix/` otherwise.
 - Before declaring done: `bazel build //...` and `bazel run //:format.check` pass.
 
-For planning a new feature or design, use the `plan-feature` skill.
+For planning a new feature or design, use the `plan-feature` skill. For writing
+any document under `docs/`, use the `design-note` skill.
