@@ -22,6 +22,20 @@ wastes the reader's attention and buries the part that is specific to us.
 Write about the choice, not the mechanism. "Patch and delete join the same
 `oneof`" is enough. Why a `oneof` holds one field at a time is not.
 
+Three more habits waste the same attention.
+
+- Do not justify an obvious fact. The reader sees that a message is empty. A
+  sentence calling the emptiness deliberate, or naming what it reserves, adds
+  nothing.
+- Do not narrate incompleteness. "This section has no messages yet" and "four
+  operations are required" restate what the reader sees. Mark the item as future
+  work and list what is missing.
+- Do not explain implementation. How a prefix becomes a range, or why a square
+  root is monotonic, belongs to the engine, not to the contract.
+
+Apply one test. Delete the sentence. If the reader loses nothing they could not
+work out, the sentence was padding.
+
 ## Two kinds of prose
 
 A design note contains normative prose and rationale prose. They follow different
@@ -92,17 +106,26 @@ where the decision would go.
 
 Use this order. Skip a section that has no content.
 
-| Section   | Content                                               |
-| --------- | ----------------------------------------------------- |
-| Status    | Draft, accepted, or superseded. The date.             |
-| Problem   | What the work must achieve. The constraints.          |
-| Goals     | What success looks like.                              |
-| Non-goals | Two lists: planned for later, and out of scope.       |
-| Model     | The core objects and how they relate.                 |
-| Design    | One section per topic. Name the topic, not the answer.|
+| Section     | Content                                               |
+| ----------- | ----------------------------------------------------- |
+| Status      | Draft, accepted, or superseded. The date.             |
+| Problem     | What the work must achieve. The constraints.          |
+| Goals       | What success looks like.                              |
+| Non-goals   | What sits outside the objective of the document.      |
+| Future work | What belongs here later, and what defers it.          |
+| Model       | The core objects and how they relate.                 |
+| Design      | One section per topic. Name the topic, not the answer.|
 
-Split non-goals in two. A reader needs to know whether something is absent because
-it comes later, or because it never comes. The first shapes the messages today.
+A non-goal sits outside the objective of the document. It never enters the
+document. Future work is related and belongs here eventually. It waits because
+the document must stay manageable, or because the decision is too early.
+
+A reader needs both lists. Future work shapes the messages today. A non-goal
+never will.
+
+Define a term before another section uses it. Name the core objects in the Model
+section. A reader who meets "namespace" in a request message must not
+reconstruct the term from context.
 
 A heading names a topic. Write "Identifiers", not "One identifier type, ordered by
 encoding". State the decision in the first sentence of the section. A reader scans
@@ -146,13 +169,28 @@ the snippet to the fields under discussion. Cut the imports and the boilerplate.
 
 A design note is not a source file. Do not paste a whole file into it.
 
+## A stated limit is a promise
+
+A limit in a contract binds every client. Do not state a limit that nobody
+measured. An unmeasured limit is a guess, and a client builds against it. This
+covers sizes, counts, depths, and rates.
+
+## Field names in a public schema
+
+No field name is a keyword in a target language of the project. Some generators
+rename a colliding field, and others do not. Avoid the collision at the source.
+
 ## Checklist
 
 - The note opens with the problem, not with the answer.
 - Every heading names a topic. No heading states a conclusion.
 - The design reads on its own terms. Another system is not the spine.
 - Every decision names its cost, in the section that makes it.
-- Non-goals say which items are planned and which never come.
+- Non-goals and future work are separate sections.
+- The Model section defines every term a later section uses.
+- Every stated limit comes from a measurement.
+- No field name is a keyword in a target language.
+- Deleting any sentence loses something. No sentence explains the obvious.
 - Every diagram fits in 80 columns.
 - Every open question carries a `CONSIDER(ali):` marker.
 - No normative sentence is longer than 25 words.

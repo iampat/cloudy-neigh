@@ -6,7 +6,13 @@
 
 <One paragraph. What this note covers.>
 
-Out of scope: <list>.
+## Non-goals
+
+<Outside the objective of this note. Never enters it.>
+
+## Future work
+
+<Related, left out for now. What defers each item.>
 
 ## Model
 

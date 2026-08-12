@@ -9,7 +9,7 @@ Clients write those documents and then find them again by vector similarity, by
 text match, or by key. Real relevance usually needs more than one of those at
 once, so the query path has to combine them rather than pick one.
 
-This note defines the wire contract for both paths: the service shape, the
+This note defines the API contract for both paths: the service shape, the
 document model, the schema rules, the type of every attribute, and the query
 message.
 
@@ -42,8 +42,19 @@ cheap to revisit. After v1 it is not.
 
 ## Non-goals
 
-Planned for a later version. Of these, only the write operations reserve field
-numbers today:
+A non-goal never enters this contract. Future work does, in a later version.
+
+- The storage engine and the index format.
+- The query planner and the cost model.
+- Sharding and replication.
+- Authentication.
+
+The note names a constraint from those areas only where it changes the contract.
+
+## Future work
+
+Left out of v0 because it is too early to decide, or too large to carry here. Of
+these, only the write operations reserve field numbers today.
 
 - Patch, delete, and delete-by-filter operations.
 - Client-streaming writes for large batches.
@@ -54,16 +65,10 @@ numbers today:
 - Cross-encoder reranking, and weighted fusion beside rank fusion.
 - A string query language that compiles to the query messages.
 - Snapshot pagination over a retained version.
-
-Out of scope entirely: the storage engine, the index format, the query planner,
-the cost model, sharding, replication, and authentication. The note names a
-constraint from those areas only where it changes the contract.
+- Namespace administration messages.
+- Schema migration with reindexing.
 
 ## Conventions
-
-A planned message appears empty. It reserves the name and the field number, and
-the server returns `UNIMPLEMENTED` until the message is specified. An empty
-message is deliberate. It says the shape is decided and the detail is not.
 
 A field arrives when its semantics can be defended, not when they can be guessed.
 v0 allows a breaking change, but a field that ships wrong already has clients
@@ -72,9 +77,6 @@ depending on it.
 v0 states no limits. A limit in a contract is a promise, and every limit we could
 write today is a guess. An operator sets what a deployment carries. A real limit
 arrives with the measurement behind it.
-
-No field name is a keyword in Go, Python, or TypeScript. The Python protobuf
-runtime does not rename a colliding field, so `f.not` does not parse.
 
 ## Model
 
@@ -111,7 +113,7 @@ passes four rules.
    Scalar types are inferred from the data; vector types are not.
 4. Index configuration is fixed once set. A tokenizer, a distance metric, a
    quantization mode, and a match index cannot change in place, because the index
-   on disk is a product of them. Changing one requires a reindex.
+   on disk is a product of them.
 
 Rules 2 and 4 are the expensive ones. Both mean a mistake costs a rewrite of the
 namespace rather than an update.
@@ -131,30 +133,20 @@ consistency needs, and different scaling limits. A combined call would force bot
 through the same quota and the same timeout.
 
 `Plan` takes the same `QueryRequest` as `Query`, so a client plans exactly what it
-would send. The call runs nothing.
+would send. `Plan` does not execute the search and returns no documents.
 
-A failure returns a gRPC status code. Structured detail travels in the status
-details, and no response message carries a status field. This note names a code
-only where the choice is not obvious.
+An error returns a gRPC status code, with structured detail in the status
+details.
 
 ### Namespaces
 
-Namespace administration has no messages yet. Four operations are required:
+Namespace administration is future work. It needs four operations.
 
 - **List.** Enumerate the namespaces an account holds.
 - **Delete.** Drop a namespace and its data.
 - **Branch.** Copy a namespace cheaply, so the copy and the source diverge from a
-  shared starting point. A snapshot is a branch nobody writes to, so branching
-  covers both.
+  shared starting point. A snapshot is a branch nobody writes to.
 - **Archive.** Mark a namespace read only.
-
-Create is not one of them. A namespace appears on its first write, so a separate
-call would only duplicate what a write already does.
-
-CONSIDER(ali): what does namespace administration look like? A delete is either
-synchronous or a background reclaim the client polls. A namespace name needs a
-character rule, since it addresses stored data. A branch needs a story for what
-the two namespaces share on disk and what happens when one of them is deleted.
 
 ## Write path
 
@@ -192,9 +184,7 @@ message AttributeSchema {
 message WriteResponse {}
 ```
 
-`Patch`, `Delete`, and `DeleteByFilter` hold the field numbers and nothing else.
-Each one gains its own options when it is specified, such as a condition or a
-partial-completion flag.
+`Patch`, `Delete`, and `DeleteByFilter` reserve field numbers and nothing else.
 
 `schema` is where a declaration lives. It is the only carrier for a
 `VectorColumn` or a `TextIndex`, because there is no create-namespace call. The
@@ -202,60 +192,32 @@ server validates it against the four rules before it applies the operation, and
 rejects the whole request if a rule fails. A declaration that repeats the stored
 one unchanged passes, so a client can send the same schema on every write.
 
-`WriteResponse` is empty, and it is the one exception to the placeholder
-convention above: the RPC is implemented, and a successful write tells a client
-nothing it did not already know. A partial-completion report arrives with the
-patch and delete operations that need one.
-
 Every operation is idempotent, and that is the default we design toward. A batch
 applies to every document or to none, so a client can always retry. A future
 operation that cannot hold idempotency states the exception where it is defined.
 
 ### Document
 
-A document is an ID, a map of scalar attributes, and a map of vector attributes.
+A document is an ID and one map of named attributes.
 
 ```proto
 message Document {
   string id = 1;
   map<string, Value> attributes = 2;
-  map<string, Vector> vectors = 3;
-}
-
-message Vector {
-  repeated float values = 1;
 }
 ```
 
-A vector is an attribute, and it still sits outside `Value`. A vector is the only
-attribute that carries its own index configuration and its own storage split, so
-it needs a schema entry and a stored-copy decision that no scalar needs. Keeping
-it out of `Value` also keeps `Value` small, which matters because a document
-holds one `Value` per attribute.
-
-The two maps share one set of names. A name used in `vectors` cannot appear in
-`attributes`, so a filter, a projection, and a rank address an attribute by one
-name whatever its type.
+A vector is an attribute, so it lives in the attribute map with everything else.
+The cost is that a vector becomes expressible where a comparison expects a
+scalar, and the server rejects that.
 
 ### ID
 
 An ID is a string. It supports four lookups: exact key, range, prefix, and glob.
 
-Prefix lookup is a range, so `doc:` becomes `["doc:", "doc;")`. A glob that starts
-with a wildcard has no prefix to seek to, so it scans the range the rest of the
-filter leaves.
-
 The engine compares IDs byte by byte and never interprets them. String is the only
 ID type we support. A client holding a typed key encodes it into a string that
 keeps the order of the source type, and is responsible for that encoding.
-
-| Source type | Encoding | Ordered | Readable |
-| --- | --- | --- | --- |
-| Text | as written | yes | yes |
-| Unsigned integer | zero-padded decimal | yes | yes |
-| Signed integer | bias by 2^63, then zero-padded decimal | yes | no |
-| Float | order-preserving bit transform, then fixed-width hex | yes | no |
-| Bytes, UUID | unpadded base32hex, or hex | yes | no |
 
 ```
   encode(uint64 9)   →  "0000000000000009"   ┐ string order matches
@@ -265,26 +227,6 @@ keeps the order of the source type, and is responsible for that encoding.
   "10"               →  "10"                 ┘ match numeric order
 ```
 
-A signed integer needs a bias of 2^63 before padding, because a leading `-` sorts
-before every digit and `-5` would otherwise land after `3`. The bias maps the
-whole range onto `uint64` and restores the order, at the cost of a key no reader
-can decode by eye.
-
-A float needs its sign bit flipped when positive and all bits flipped when
-negative, then renders as 16 hex characters. A byte string needs an alphabet whose
-characters are already in ASCII order. base32hex from RFC 4648 uses `0-9A-V` and
-qualifies, without the `=` padding, which sorts between `9` and `A` and breaks
-the order for a key shorter than the block size. Hex costs 2x, base32hex 1.6x.
-
-Readability is the reason for choosing a string, and it survives for text and
-unsigned integer keys only. A hex-encoded float or UUID is opaque, so those cases
-pay the expansion and get nothing back. If binary keys turn out to dominate,
-`bytes` is the better home, and that change has to land before v1.
-
-Two consequences worth stating. String order is UTF-8 byte order, which equals
-code point order but not linguistic collation, so `"Z"` sorts before `"a"`. A
-composite key needs escaping, because `"ab"` is a prefix of `"abc"`.
-
 `"id"` is a reserved attribute name, and a client cannot use it for an attribute
 of its own. `Compare` addresses it like any other attribute, so an exact, range,
 prefix, or glob lookup on an ID uses the ordinary filter path and needs no
@@ -292,8 +234,8 @@ message of its own.
 
 ### Attributes
 
-An attribute holds a scalar, a timestamp, or a homogeneous list. Nested attributes
-are intentionally not supported at this stage.
+An attribute holds a scalar, a timestamp, a homogeneous list, or a vector. Nested
+attributes are intentionally not supported at this stage.
 
 ```proto
 message Value {
@@ -308,6 +250,7 @@ message Value {
     bytes blob = 8;
     StringList text_list = 9;
     IntList int_list = 10;
+    Vector vector = 11;
   }
 }
 
@@ -317,6 +260,10 @@ message StringList {
 
 message IntList {
   repeated int64 values = 1;
+}
+
+message Vector {
+  repeated float values = 1;
 }
 ```
 
@@ -335,9 +282,7 @@ to null" from "leave this attribute alone". Presence in the attribute map answer
 the second, and `NullValue` answers the first.
 
 `Value` is the most frequent message in the system, with one instance per
-attribute per document. Its variants stay inside field numbers 1 to 15, where a
-tag costs one byte instead of two. Five numbers remain, so a later variant takes
-one only if no existing variant can carry it.
+attribute per document. Its variants stay inside field numbers 1 to 15.
 
 A client with nested source data flattens it before the write. A client that needs
 the original shape stores it in an unindexed `bytes` attribute.
@@ -375,9 +320,6 @@ enum DistanceMetric {
   DISTANCE_METRIC_DOT_PRODUCT = 3;
 }
 ```
-
-The Euclidean metric is squared. The square root is monotonic, so it changes no
-ranking and costs one operation per comparison.
 
 Naming every column keeps one rule for all of them. A column with a special name
 would need its own case in type inference, schema validation, query ranking, and
@@ -470,8 +412,8 @@ first write.
 
 A tokenizer name carries a version. Tokenization is an on-disk contract, because
 every posting list is a product of it. A tokenizer cannot change in place. It can
-only gain a new version, and an existing namespace keeps the old version until a
-reindex. An unversioned name would be a permanent commitment to today's behavior.
+only gain a new version, and an existing namespace keeps the version it was built
+with. An unversioned name would be a permanent commitment to today's behavior.
 
 `TOKENIZER_PRE_TOKENIZED` lets a client supply tokens directly. A client that runs
 its own analysis pipeline should not have to reimplement it inside our tokenizer
@@ -823,9 +765,7 @@ message Actuals {
 node and with `node_ranks`. `exact` reports whether a retrieve ran exactly or
 approximately.
 
-`operation` and `indexes` carry server-defined strings. This note names no
-operation and no index, because both belong to an executor that does not exist
-yet.
+`operation` and `indexes` carry server-defined strings, and this note names none.
 
 Profile reuses the plan's node tree and fills in `actuals`. `Plan` returns the
 estimates alone, and `profile: true` returns the estimates beside the actuals in
