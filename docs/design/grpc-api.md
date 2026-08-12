@@ -7,24 +7,24 @@
 cloudy-neigh stores documents made of vectors, text, and scalar attributes.
 Clients write those documents and then find them again by vector similarity, by
 text match, or by key. Real relevance usually needs more than one of those at
-once, so the query path has to combine them rather than pick one.
+once, so the query path must combine them rather than pick one.
 
-This note defines the API contract for both paths: the service shape, the
-document model, the schema rules, the type of every attribute, and the query
+This note defines the API contract for both paths. It covers the service shape,
+the document model, the schema rules, the attribute types, and the query
 message.
 
 Three things make the contract awkward.
 
-Attributes are dynamic, but the index is not. A client attaches whatever
-attributes it likes, and the index cannot store one until it knows the type.
+Attributes are dynamic, but the index is not. A client attaches any attributes
+it chooses, and the index cannot store one until it knows the type.
 
-Vectors are the bulk of a document, and they come in several widths. A model may
-emit `float32`, `float16`, or `int8`, and the index usually wants none of those.
+Vectors are the bulk of a document, and their width varies. A model can emit
+`float32`, `float16`, or `int8`, and the index usually wants none of those.
 
-The contract outlives the engine. Storage, index format, and planner all get
-replaced. The messages a client compiled against do not.
+The contract outlives the engine. Storage, index format, and planner are all
+replaced in time. The messages a client compiled against are not.
 
-This is v0. Breaking the contract before v1 is acceptable, so a decision here is
+This is v0. A breaking change before v1 is permitted, so a decision here is
 cheap to revisit. After v1 it is not.
 
 ## Goals
@@ -35,14 +35,12 @@ cheap to revisit. After v1 it is not.
 - The API is optimized for client simplicity, not for storage or index
   performance. The internal systems that serve it stay simple and cheap.
 - IDs support range queries.
-- User data schemas evolve with backward and forward compatibility, following the
-  same practice as protobuf itself.
-- Adding a rank function, a filter predicate, or a fusion strategy never reshapes
-  a request.
+- User data schemas evolve with backward and forward compatibility, as protobuf
+  messages do.
+- A new rank function, filter predicate, or fusion strategy never reshapes a
+  request.
 
 ## Non-goals
-
-A non-goal never enters this contract. Future work does, in a later version.
 
 - The storage engine and the index format.
 - The query planner and the cost model.
@@ -53,8 +51,8 @@ The note names a constraint from those areas only where it changes the contract.
 
 ## Future work
 
-Left out of v0 because it is too early to decide, or too large to carry here. Of
-these, only the write operations reserve field numbers today.
+Each item waits because the decision is too early or the scope is too large for
+v0. Only the write operations reserve field numbers today.
 
 - Patch, delete, and delete-by-filter operations.
 - Client-streaming writes for large batches.
@@ -72,10 +70,10 @@ these, only the write operations reserve field numbers today.
 
 A field arrives when its semantics can be defended, not when they can be guessed.
 v0 allows a breaking change, but a field that ships wrong already has clients
-depending on it.
+that depend on it.
 
-v0 states no limits. A limit in a contract is a promise, and every limit we could
-write today is a guess. An operator sets what a deployment carries. A real limit
+v0 states no limits. A limit in a contract is a promise, and every limit stated
+today is a guess. An operator sets what a deployment carries. A real limit
 arrives with the measurement behind it.
 
 ## Model
@@ -102,18 +100,19 @@ attribute does not need.
 ### Schema evolution
 
 There is no create-namespace call and no migration call. A namespace appears on
-its first write. A schema change applies on the first write that carries it, if it
-passes four rules.
+its first write. If a schema change passes four rules, it applies on the first
+write that carries it.
 
-1. A new attribute is added automatically. It reads as null on every document
-   written before it.
+1. The server adds a new attribute automatically. It reads as null on every
+   document written before it.
 2. The type of an existing attribute never changes. A write that changes one
    fails.
-3. A vector column is declared before use, in the `schema` field of a write.
-   Scalar types are inferred from the data; vector types are not.
+3. A client declares a vector column before use, in the `schema` field of a
+   write. The server infers a scalar type from the data. It never infers a
+   vector type.
 4. Index configuration is fixed once set. A tokenizer, a distance metric, a
-   quantization mode, and a match index cannot change in place, because the index
-   on disk is a product of them.
+   quantization mode, and a match index cannot change in place. The index on
+   disk is a product of them.
 
 Rules 2 and 4 are the expensive ones. Both mean a mistake costs a rewrite of the
 namespace rather than an update.
@@ -135,17 +134,17 @@ through the same quota and the same timeout.
 `Plan` takes the same `QueryRequest` as `Query`, so a client plans exactly what it
 would send. `Plan` does not execute the search and returns no documents.
 
-An error returns a gRPC status code, with structured detail in the status
-details.
+The server reports an error as a gRPC status code, with structured detail in
+the status details.
 
 ### Namespaces
 
-Namespace administration is future work. It needs four operations.
+Namespace administration is future work.
 
 - **List.** Enumerate the namespaces an account holds.
 - **Delete.** Drop a namespace and its data.
 - **Branch.** Copy a namespace cheaply, so the copy and the source diverge from a
-  shared starting point. A snapshot is a branch nobody writes to.
+  shared starting point. A snapshot is a branch that nobody writes to.
 - **Archive.** Mark a namespace read only.
 
 ## Write path
@@ -184,16 +183,15 @@ message AttributeSchema {
 message WriteResponse {}
 ```
 
-`Patch`, `Delete`, and `DeleteByFilter` reserve field numbers and nothing else.
-
 `schema` is where a declaration lives. It is the only carrier for a
 `VectorColumn` or a `TextIndex`, because there is no create-namespace call. The
-server validates it against the four rules before it applies the operation, and
-rejects the whole request if a rule fails. A declaration that repeats the stored
-one unchanged passes, so a client can send the same schema on every write.
+server validates it against the four rules before it applies the operation. If
+a rule fails, the server rejects the whole request. A declaration that repeats
+the stored one unchanged passes, so a client can send the same schema on every
+write.
 
-Every operation is idempotent, and that is the default we design toward. A batch
-applies to every document or to none, so a client can always retry. A future
+Every operation is idempotent. A batch applies to every document or to none, so
+a client can always retry. A future
 operation that cannot hold idempotency states the exception where it is defined.
 
 ### Document
@@ -215,9 +213,9 @@ scalar, and the server rejects that.
 
 An ID is a string. It supports four lookups: exact key, range, prefix, and glob.
 
-The engine compares IDs byte by byte and never interprets them. String is the only
-ID type we support. A client holding a typed key encodes it into a string that
-keeps the order of the source type, and is responsible for that encoding.
+The engine compares IDs byte by byte and never interprets them. String is the
+only ID type. A client that holds a typed key encodes it into a string that
+keeps the order of the source type. The client owns that encoding.
 
 ```
   encode(uint64 9)   →  "0000000000000009"   ┐ string order matches
@@ -228,14 +226,14 @@ keeps the order of the source type, and is responsible for that encoding.
 ```
 
 `"id"` is a reserved attribute name, and a client cannot use it for an attribute
-of its own. `Compare` addresses it like any other attribute, so an exact, range,
+of its own. `Compare` addresses it like any other attribute. An exact, range,
 prefix, or glob lookup on an ID uses the ordinary filter path and needs no
 message of its own.
 
 ### Attributes
 
-An attribute holds a scalar, a timestamp, a homogeneous list, or a vector. Nested
-attributes are intentionally not supported at this stage.
+An attribute holds a scalar, a timestamp, a homogeneous list, or a vector. It
+never holds a nested object.
 
 ```proto
 message Value {
@@ -268,9 +266,9 @@ message Vector {
 ```
 
 A column store indexes columns, and a nested object has no column identity until
-something flattens it to a path. A client can flatten as well as the server can. A
-flat model also keeps `Value` free of recursion, which removes a depth limit and a
-parser attack surface, and it makes every attribute addressable by name in a
+something flattens it to a path. A client can flatten as well as the server can.
+A flat model keeps `Value` free of recursion, which removes a depth limit and a
+parser attack surface. It also makes every attribute addressable by name in a
 filter.
 
 Lists stay, because a list of strings is the most common filter target in a search
@@ -321,21 +319,21 @@ enum DistanceMetric {
 }
 ```
 
-Naming every column keeps one rule for all of them. A column with a special name
-would need its own case in type inference, schema validation, query ranking, and
-patch behavior. The cost is that a client cannot create a vector column by writing
-data alone. Each column also carries its own index, so column count drives index
-size.
+A name on every column keeps one rule for all of them. A column with a special
+name would need its own case in type inference, schema validation, query
+ranking, and patch behavior. The cost is that a client cannot create a vector
+column with data alone. Each column also carries its own index, so column count
+drives index size.
 
 A per-column metric follows from per-column embeddings. Two columns can hold
-output from two models with different geometry, and a namespace-wide metric would
+output from two models with different geometry. A namespace-wide metric would
 force a client to split one logical collection across two namespaces.
 
 A vector crosses the wire as `repeated float`. `float32` holds every value of
 `int8`, `float16`, and `bfloat16` without loss, so the wire type is a lossless
 container for every narrower format. The cost is bandwidth, not precision. The
 arrangement is proven: turbopuffer stores a column as `[512]f16` and still moves
-`float32` on the wire. Storage width therefore stays a schema concern, and a
+`float32` on the wire. Storage width thus stays a schema concern, and a
 future narrower format needs no wire change.
 
 `original_type` names the width the client's values actually have. It lets the
@@ -364,20 +362,20 @@ original.
 
 `store_original` defaults to false. An exact second copy costs storage on every
 document, and most clients keep their vectors elsewhere or regenerate them from
-source. A client that needs its exact values back turns it on and pays for it. By
-default a vector is a derived artifact, and a read returns the index
+source. A client that must read the exact values again enables it and pays the
+storage. By default a vector is a derived artifact, and a read returns the index
 representation.
 
-Quantization happens in one of three places. The server performs it by default. A
-client that sends a pre-quantized vector has already performed it. A model that
-emits `int8` has already performed it, and then neither the server nor the client
-may quantize that output again. `QUANTIZATION_UNSPECIFIED` leaves the choice to
+Quantization happens in one of three places. The server does it by default. A
+client that sends a pre-quantized vector has already done it. A model that emits
+`int8` has already done it, and then neither the server nor the client quantizes
+that output again. `QUANTIZATION_UNSPECIFIED` leaves the choice to
 the server, and `QUANTIZATION_NATIVE` records the third case.
 
 The enum names no mode. A mode name is a recall promise, and it waits on a recall
 benchmark that can hold one mode against another.
 
-A server that performs the quantization determines the recall, so it owes the
+A server that does the quantization determines the recall, so it owes the
 client a way to measure that recall.
 
 ### Text analysis
@@ -404,7 +402,7 @@ A title, a body, and a product code need different analysis, and a multilingual
 corpus needs a different language per attribute.
 
 `language` is a string rather than an enum. An enum is a commitment to a stemmer
-set, and the accepted values wait on the stemmers we ship.
+set, and the accepted values wait on the stemmers the server ships.
 
 The `glob`, `regex`, and `fuzzy` flags each build a separate index. A query cannot
 use a predicate the attribute did not declare, and rule 4 fixes the choice at
@@ -412,19 +410,18 @@ first write.
 
 A tokenizer name carries a version. Tokenization is an on-disk contract, because
 every posting list is a product of it. A tokenizer cannot change in place. It can
-only gain a new version, and an existing namespace keeps the version it was built
-with. An unversioned name would be a permanent commitment to today's behavior.
+only gain a new version, and an existing namespace keeps the version that it
+was built with. An unversioned name would be a permanent commitment to today's behavior.
 
-`TOKENIZER_PRE_TOKENIZED` lets a client supply tokens directly. A client that runs
-its own analysis pipeline should not have to reimplement it inside our tokenizer
-names.
+`TOKENIZER_PRE_TOKENIZED` lets a client supply tokens directly. A client that
+runs its own analysis pipeline does not reimplement it as a named tokenizer.
 
 ### Analysis versioning
 
 A query must use the same analysis pipeline as the write that built the index.
 
-A tokenizer that stems at write time but not at query time returns no match for a
-stemmed term, and the server reports no error. The same rule holds for an
+A tokenizer that stems at write time but not at query time returns no match for
+a stemmed term. The server reports no error. The same rule holds for an
 embedding model. A `float32` query vector ranks correctly against a column the
 server quantized, because the server holds both sides of the calibration. It
 cannot rank against a column the client or its model quantized, because there the
@@ -488,16 +485,16 @@ another fusion.
 ```
 
 `top_k` on a node is how many rows that node emits. The root node's `top_k` is
-therefore the number of rows returned, and an inner node's `top_k` is a candidate
-count feeding its parent. A client raises recall by widening the inner nodes
-without touching the result count.
+thus the number of returned rows, and an inner node's `top_k` is a candidate
+count for its parent. A client widens the inner nodes to raise recall. The
+result count does not change.
 
-`name` labels a node. Fusion destroys the evidence of why a row landed where it
+`name` labels a node. Fusion destroys the evidence of why a row ranked where it
 did, so the response reports each node's rank per row under this name.
 
-The query is typed. A client builds messages, not strings, so the server needs no
-grammar, no parser, and no error positions, and a malformed query fails at compile
-time. A string language stays possible later and compiles to these same messages
+The query is typed. A client builds messages, not strings, so the server needs
+no grammar, no parser, and no error positions. A malformed query fails at
+compile time. A string language stays possible later and compiles to these same messages
 on either side.
 
 ### Ranking
@@ -546,11 +543,11 @@ A retrieve with a filter and no `rank_by` is a plain lookup, returned in ID orde
 index-time choice stays where the index was configured, and a query never restates
 it.
 
-An exact retrieve returns exactly `top_k` rows when at least `top_k` rows match.
-An approximate retrieve returns at most `top_k`. ANN search selects its candidates
-without knowledge of the filter, so a selective filter can leave fewer surviving
-candidates than `top_k`, and the rows that come back may not be the true nearest
-neighbors.
+When at least `top_k` rows match, an exact retrieve returns exactly `top_k`
+rows. An approximate retrieve returns at most `top_k`. ANN search selects its
+candidates without knowledge of the filter. A selective filter can thus leave
+fewer than `top_k` surviving candidates, and the returned rows are not always
+the true nearest neighbors.
 
 ### Filters
 
@@ -602,7 +599,7 @@ message ValueList {
 ```
 
 `none_of` holds a group, so one node negates a set rather than a single filter.
-The three group cases then share one shape, and a client negating one filter
+The three group cases then share one shape, and a client that negates one filter
 passes a group of one.
 
 The predicate is a `oneof` of typed fields rather than an operator enum beside a
@@ -614,17 +611,17 @@ either. The cost is one field per predicate instead of one shared field.
 write stores. The fourteen predicates fill field numbers 2 to 15 exactly, so a
 fifteenth costs a two-byte tag.
 
-`Fuzzy` carries the term alone. An edit bound waits on the edit distance we
-adopt, because a budget means nothing until the rule that counts edits is fixed.
+`Fuzzy` carries the term alone. An edit bound waits on the choice of edit
+distance, because a budget means nothing until the rule that counts edits is
+fixed.
 
-`glob`, `regex`, and `fuzzy` require the attribute to declare the matching index.
-A query that uses one against an attribute without it fails rather than falling
-back to a scan. The fallback would read the whole namespace at a cost the request
-does not show.
+`glob`, `regex`, and `fuzzy` each need the match index the attribute declared. A
+query that uses one against an attribute without it fails. The server never
+substitutes a scan, because a scan reads the whole namespace at a cost the
+request does not show.
 
-`prefix` needs no declared index and works on any string attribute, not only on
-the ID. A prefix is a range over a sorted attribute, so the ordinary attribute
-index serves it.
+`prefix` needs no declared index and applies to any string attribute, not only
+to the ID.
 
 ### Fusion
 
@@ -636,11 +633,11 @@ message ReciprocalRankFusion {
 }
 ```
 
-Reciprocal rank fusion (RRF) is the only strategy in v0, and it is the right first
-one because it consumes ranks rather than scores. A vector distance and a BM25
-(Best Matching 25) score have different units and opposite directions, so any
-strategy that adds them needs normalization the client has to tune. Ranks need
-none.
+Reciprocal rank fusion (RRF) is the only strategy in v0, and it is the right
+first one because it consumes ranks rather than scores. A vector distance and a
+BM25 (Best Matching 25) score have different units and opposite directions. Any
+strategy that adds them needs normalization that the client must tune. Ranks
+need none.
 
 RRF scores a document as the sum of `1 / (k + rank)` over every input that
 returned it. A rank is 1-based. The join key is the document ID. An input that did
@@ -649,9 +646,8 @@ the end of that input's list. `Match.score` under a fusion root holds the fused
 value.
 
 `k` stays in v0, because the formula fixes its meaning without an engine behind
-it. It is `optional`, and unset means 60, the value published with the original
-method. A plain `uint32` cannot carry that default, because an unset field and a
-zero are the same bytes on the wire and `k = 0` is a legal parameter.
+it. It is `optional`, because `k = 0` is a legal parameter. Unset means 60, the
+value published with the original method.
 
 Weighted fusion joins the `oneof` in `Fusion` when a client needs to bias one
 input.
@@ -679,15 +675,15 @@ message AttributeNames {
 }
 ```
 
-`all` holds `Empty` rather than `bool`. Setting a `bool` to false still selects
-the case, so `all = false` and `all = true` would request the same thing.
+`all` holds `Empty` rather than `bool`. A `bool` set to false still selects the
+case, so `all = false` and `all = true` would request the same thing.
 
 An unset projection returns every attribute except vector columns. Vectors
 dominate response size, and `store_original` defaults to false, so a vector often
 cannot be returned exactly anyway. A client that wants one asks for it.
 
-We rejected an ID-only default, which is cheaper but returns what reads as an
-empty document until the client finds the projection field.
+An ID-only default is cheaper, but it returns what reads as an empty document
+until the client finds the projection field.
 
 ### Response
 
@@ -714,16 +710,16 @@ message NodeRank {
 }
 ```
 
-`score` is a field. A score does not belong in the attribute map under a reserved
-name such as `$dist`, because a typed response has somewhere better to put it and
-a `$` prefix only exists to dodge collisions in an untyped map.
+`score` is a field, not an entry in the attribute map under a reserved name
+such as `$dist`. A `$` prefix exists to avoid collisions in an untyped map, and
+a typed response does not need it.
 
 `score` is comparable within one response and meaningless across two. A vector
 distance depends on the query vector, and a BM25 score depends on corpus
 statistics that change with every write.
 
-`node_ranks` is populated for a query with more than one node, free and always on.
-It is the cheap subset of what `explain` returns per match.
+The server fills `node_ranks` for every query with more than one node. No flag
+controls it. It is the cheap subset of what `explain` returns per match.
 
 `explanation` is one field rather than a repeated one, because `details` already
 nests the contribution of every node under a single root. The server fills it only
@@ -761,20 +757,20 @@ message Actuals {
 }
 ```
 
-`name` is the node name from the request, so a plan node lines up with a query
+`name` is the node name from the request, so a plan node aligns with a query
 node and with `node_ranks`. `exact` reports whether a retrieve ran exactly or
 approximately.
 
 `operation` and `indexes` carry server-defined strings, and this note names none.
 
-Profile reuses the plan's node tree and fills in `actuals`. `Plan` returns the
+Profile reuses the plan's node tree and fills `actuals`. `Plan` returns the
 estimates alone, and `profile: true` returns the estimates beside the actuals in
 the same node. That pairing is what makes a bad estimate visible, and a separate
 profile message would leave a reader to align two trees by hand.
 
-Profile answers more of what degrades a hybrid query than a plan does, because
-those failures are runtime properties: recall collapsing under a selective filter,
-or one input dominating fusion.
+Profile answers more of what degrades a hybrid query than a plan does. Those
+failures are runtime properties: recall that collapses under a selective filter,
+or one input that dominates fusion.
 
 A plan is a prediction, not a promise. Cache state and index state move, so the
 executor can choose differently a second later.
@@ -787,13 +783,13 @@ message ScoreExplanation {
 }
 ```
 
-`ScoreExplanation` is deliberately loose, and it is the one place in this contract
-where typing everything is wrong. A strictly typed breakdown turns every scoring
-formula change into a proto change and a client break, for output no program
-should branch on. It is diagnostic text for a human.
+`ScoreExplanation` is deliberately loose, and it is the one place in this
+contract where typing everything is wrong. The output is diagnostic text for a
+human, and no program branches on it. A strictly typed breakdown turns every
+change to a scoring formula into a proto change and a client break.
 
-Per-match explanation is expensive, because it holds the scoring intermediates of
-every returned row until the response is built. It stays opt-in for that reason.
+Per-match explanation stays opt-in because it is expensive. The server holds the
+scoring intermediates of every returned row until it builds the response.
 
 ### Pagination
 
@@ -805,28 +801,29 @@ message Page {
 }
 ```
 
-`Page` carries the cursor alone, because the root node's `top_k` already sets the
-number of rows returned and a second size field would contradict it.
+`Page` carries the cursor alone. The root node's `top_k` already sets the number
+of returned rows, and a second size field would contradict it.
 
 A client resends the whole request with the cursor. The cursor holds a position
 and a fingerprint of the query, not the query itself. A cursor that carried the
-query would reach kilobytes for a query with a 768-dimension vector, and a
+query would reach kilobytes for a query with a 768-dimension vector. A
 server-side cursor would need storage, an expiry, and an answer for what happens
 after failover. A fingerprint that does not match the request fails with
 `INVALID_ARGUMENT`, so a filter changed mid-scan is rejected rather than served.
 
 A cursor works for a retrieve ordered by ID or by an attribute, because those
 orders are total. A ranked retrieve returns up to `top_k` rows and no cursor.
-Scores shift as documents are written and approximate search has no stable total
-order, so a cursor over a ranked result would skip and repeat rows.
+Scores shift as documents are written, and approximate search has no stable
+total order. A cursor over a ranked result would thus skip and repeat rows.
 
-Pagination requires strong consistency. Two pages served under eventual
+Pagination needs strong consistency. Two pages served under eventual
 consistency can land on replicas with different staleness, and the pages then
 disagree about the same document.
 
-The guarantee is this: a document that does not change during the scan is returned
-exactly once. A document written into an already-visited range is missed, and a
-document updated so that it moves ahead of the cursor can appear twice. Snapshot
+The guarantee is this: a document that does not change during the scan is
+returned exactly once. The scan misses a document written into an
+already-visited range. A document that an update moves ahead of the cursor can
+appear twice. Snapshot
 pagination fixes both and needs a retained version, which is a later feature.
 
 ### Consistency
@@ -842,9 +839,10 @@ enum Consistency {
 ```
 
 Strong sees every write that completed before the query started. Eventual trades
-that for throughput and may miss recent writes.
+that for throughput and can miss a recent write.
 
-Read-your-writes works by default. A client opts out of it deliberately.
+Read-your-writes works by default. A client loses it only through an explicit
+choice of eventual consistency.
 
 ### Examples
 
@@ -931,8 +929,8 @@ query {
 }
 ```
 
-One term across one subtree, retrieved twice and fused. Both legs filter to the
-same prefix, and `rrf` unset leaves `k` at 60.
+One term across one subtree, retrieved twice and fused. Both inputs filter to
+the same prefix, and the unset `k` means 60.
 
 ```proto
 namespace: "repo"
@@ -986,7 +984,7 @@ projection {
 }
 ```
 
-The response carries the fused score beside the rank each leg gave the row.
+The response carries the fused score beside the rank each input gave the row.
 
 ```proto
 matches {
