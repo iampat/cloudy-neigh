@@ -1,9 +1,13 @@
 ---
 name: design-note
-description: Write or update a document under docs/. Use for design notes, architecture notes, and READMEs to keep the style and structure consistent.
+description: Write or update any documentation or technical prose — design notes, architecture notes, READMEs, PR descriptions, release notes. Use for all technical writing to keep the style and structure consistent.
 ---
 
-# Design notes
+# Technical writing and design notes
+
+The writing rules and habits in this skill apply to all documentation and
+technical prose. The Structure section and the template apply to design notes
+in `docs/design/`.
 
 A design note records a decision and the reason for it. The reader arrives months
 later with one question. Answer that question near the top.
@@ -54,25 +58,34 @@ Rationale prose is still short. Three sentences per decision is usually enough.
 
 ## Writing rules
 
-These rules come from ASD-STE100 Simplified Technical English and the Proxmox
-technical writing style guide. Apply them strictly to normative prose and loosely
-to rationale prose.
+These rules follow ASD-STE100 Simplified Technical English, Issue 9. Apply them
+strictly to normative prose and loosely to rationale prose.
 
-- Put the important information first in the sentence.
-- Keep a sentence to 15–20 words. Split a longer sentence.
-- Write one idea per sentence and one topic per paragraph.
-- Use active voice. Write "the server rejects the write", not "the write is
-  rejected".
-- Use present tense. Describe what the system does, not what it will do.
+- Put the important information first in the sentence. Write a condition before
+  its instruction.
+- Keep an instruction to 20 words and a description to 25. Split a longer
+  sentence.
+- Write one idea per sentence. Keep a paragraph to one topic and a maximum of
+  six sentences.
+- Use active voice. Use passive only when the agent is unknown.
+- Use simple tenses only. Describe what the system does, not what it will do.
 - Use third person for a description. Use the imperative for an instruction.
 - Do not write "I". Write "we" only to give a recommendation.
 - Use one term for one concept. Never change a term for variety.
 - Use a list when a sentence names three or more items.
+- Do not use a semicolon. Write two sentences.
+- Do not use the "-ing" form of a verb, except in a technical noun or a heading.
+- Do not omit an article or the conjunction "that" to shorten a sentence.
+- Do not use a phrasal verb. Write "extinguish", not "put out".
 - Write "for example", not "e.g.". Write "and so on", not "etc.".
 - Spell out an acronym at first use, then use the acronym.
 - Do not use jargon, idiom, or an informal expression.
 - State a trade-off in one sentence. Do not argue both sides at length.
 - Delete a sentence that repeats the sentence before it.
+
+`word-list.md` in this skill directory gives the substitutions from the STE
+dictionary that software prose needs most, with sample rewrites. Read it when
+you write or review prose.
 
 ## Prior art is evidence, not a blueprint
 
@@ -134,13 +147,18 @@ headings to find a topic, not to collect conclusions.
 Put the open questions at the end, never in a footnote. An unresolved question is
 the most valuable part of a draft.
 
-## Diagrams
+## Diagrams and sketches
 
-Draw a diagram when the shape of the data is the point. Use box-drawing characters
-in a fenced code block. A fenced block renders as monospace everywhere.
+Pick the smallest view that makes the point. Put each visual next to the
+sentence it supports, not in a gallery at the end.
 
-Cap every diagram at 80 columns. A wider diagram scrolls sideways on GitHub and
-wraps in a terminal.
+Match the view to the content:
+
+- An algorithm or a state change: pseudocode.
+- Runtime flow: a call tree, one call per line, indented.
+- Ownership or layout: a shallow file tree, one comment per entry.
+- The shape of data or a system: a box diagram.
+- A measurement: a bar chart, with the number at the end of the bar.
 
 ```
   text attribute              vector attribute
@@ -153,14 +171,33 @@ wraps in a terminal.
   (lossy)   (exact)          (lossy)    (exact)
 ```
 
-Use these characters: `┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼ ─ │ ▶ ▼ ◀ ▲`.
-
-Show a measurement as a bar chart. Put the number at the end of the bar.
-
 ```
   v1 ║░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  51.6 GiB
   v2 ║░░░                                5.2 GiB
 ```
+
+Show a change to an existing shape as a diff on that shape — a file tree, a
+call tree, or pseudocode. A diff shows the delta without two full diagrams.
+
+```diff
+ wal/
+ ├── segment.go     # appends records
++├── checkpoint.go  # snapshots the applied offset
+ └── replay.go
+```
+
+Draw with box-drawing characters in a fenced code block. A fenced block
+renders as monospace on GitHub, in an editor, and in a terminal. Use these
+characters: `┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼ ─ │ ▶ ▼ ◀ ▲`.
+
+Cap every diagram at 80 columns. A wider diagram scrolls sideways on GitHub and
+wraps in a terminal.
+
+A diagram that does not fit these limits is a signal, not a formatting
+problem. It usually means the design has too many interacting parts. First
+simplify the design. Then split the diagram into one small diagram per
+decision. Use Mermaid only when the concept resists both. Treat a Mermaid
+diagram as a flag for design review.
 
 ## Code in a design note
 
@@ -180,6 +217,14 @@ covers sizes, counts, depths, and rates.
 No field name is a keyword in a target language of the project. Some generators
 rename a colliding field, and others do not. Avoid the collision at the source.
 
+## Lint
+
+Run `.claude/skills/design-note/lint.sh <file>` on every document before you
+finish. It checks the mechanical rules: semicolons, Latin abbreviations,
+contractions, sentence length, and common non-approved words. Its word counts
+are approximate, so a flagged sentence can be legal under the counting rules.
+The checklist below covers the judgment rules.
+
 ## Checklist
 
 - The note opens with the problem, not with the answer.
@@ -191,6 +236,7 @@ rename a colliding field, and others do not. Avoid the collision at the source.
 - Every stated limit comes from a measurement.
 - No field name is a keyword in a target language.
 - Deleting any sentence loses something. No sentence explains the obvious.
-- Every diagram fits in 80 columns.
+- Every diagram fits in 80 columns and sits next to the text it supports.
+- No Mermaid diagram survives without a simplification attempt first.
 - Every open question carries a `CONSIDER(ali):` marker.
 - No normative sentence is longer than 25 words.

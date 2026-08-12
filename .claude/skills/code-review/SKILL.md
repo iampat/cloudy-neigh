@@ -16,6 +16,9 @@ golangci-lint all run in CI. Formatting and unused-variable comments are noise.
 Report only what you can point at. An unverified suspicion stated as a finding
 costs more than it saves.
 
+Output findings only, ranked by severity. No summary of the diff, no praise, no
+preamble.
+
 ## 1. Delete code that does not earn its place — highest priority
 
 - Cut anything adding no value to the implementation or the test.

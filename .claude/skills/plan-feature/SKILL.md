@@ -7,7 +7,8 @@ description: Plan a new feature, subsystem, or design. Use when starting non-tri
 
 The cheapest place to find an unknown is before any code is written. Work through
 this before implementing; share the result concisely with the user (or as a design
-note in `docs/design/` if the scope warrants one).
+note in `docs/design/` if the scope warrants one). Lead with the riskiest unknown
+and the decisions that need input. Do not narrate the parts that are obvious.
 
 ## 1. Surface unknowns first
 

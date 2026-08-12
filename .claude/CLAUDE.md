@@ -30,16 +30,22 @@ toolchain and dependency graph stay authoritative.
   if deleting the comment loses nothing, delete it. Applies to config and build
   files (`.bazelrc`, `MODULE.bazel`, `BUILD.bazel`, workflows) as much as to Go.
 - Flag open design questions with `CONSIDER(ali):` comments.
-- Write prose in Simplified Technical English: active voice, present tense, one
-  idea per sentence, 15–20 words, one term per concept. Spell out an acronym at
-  first use. Write "for example", not "e.g.".
+- Write prose in ASD-STE100 Simplified Technical English: active voice, simple
+  tenses, one idea per sentence, one term per concept. Maximum 20 words in an
+  instruction, 25 in a description. No semicolons, no phrasal verbs. Spell out
+  an acronym at first use. Write "for example", not "e.g.".
 - Write for a working software engineer. Do not explain a language feature, a
   protocol, or a pattern that audience already knows. Explain only what is
   specific to this project.
+- Replies to the user follow the same rules. Lead with the result. Add detail
+  only when it changes what the reader does next. To explain structure or
+  flow, prefer a small sketch — a file tree, a call tree, pseudocode, or a
+  diff — over prose.
 - Design notes: Markdown in `docs/design/`; update them alongside the code they
   describe.
 - Branch names: `ali/<topic>` for features; `chore/`, `docs/`, `fix/` otherwise.
 - Before declaring done: `bazel build //...` and `bazel run //:format.check` pass.
 
-For planning a new feature or design, use the `plan-feature` skill. For writing
-any document under `docs/`, use the `design-note` skill.
+For planning a new feature or design, use the `plan-feature` skill. For any
+documentation or technical prose — `docs/`, READMEs, PR descriptions — use the
+`design-note` skill.
