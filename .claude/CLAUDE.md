@@ -33,6 +33,9 @@ toolchain and dependency graph stay authoritative.
 - Write prose in Simplified Technical English: active voice, present tense, one
   idea per sentence, 15–20 words, one term per concept. Spell out an acronym at
   first use. Write "for example", not "e.g.".
+- Write for a working software engineer. Do not explain a language feature, a
+  protocol, or a pattern that audience already knows. Explain only what is
+  specific to this project.
 - Design notes: Markdown in `docs/design/`; update them alongside the code they
   describe.
 - Branch names: `ali/<topic>` for features; `chore/`, `docs/`, `fix/` otherwise.

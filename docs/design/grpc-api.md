@@ -1,43 +1,35 @@
 # gRPC write and query API
 
-**Status:** Draft — 2026-08-11
+**Status:** Draft — 2026-08-11 — v0
 
 ## Problem
 
-cloudy-neigh stores documents that carry vectors, text, and scalar attributes. A
-client writes those documents and then retrieves them three ways: by vector
-similarity, by text match, and by exact key. This note defines the wire contract
-for the write path and the query path.
+cloudy-neigh stores documents made of vectors, text, and scalar attributes.
+Clients write those documents and then find them again by vector similarity, by
+text match, or by key. This note defines the wire contract for both paths.
 
-Four constraints shape the contract.
+Three things make the contract awkward.
 
-**Clients are polyglot.** Go, Python, and TypeScript clients read the same
-generated code. A rule the schema cannot express becomes a run-time error in three
-languages, and each language reports it differently.
+Attributes are dynamic, but the index is not. A client attaches whatever
+attributes it likes, and the index cannot store one until it knows the type.
 
-**Attributes are dynamic, but the index needs types.** A client attaches arbitrary
-attributes to a document. The index cannot store an attribute until it knows the
-type and the width. The contract must carry both the value and enough type
-information to index it.
+Vectors are the bulk of a document, and they come in several widths. A model may
+emit float32, float16, or int8, and the index usually wants none of those.
 
-**Vectors are large and have many representations.** A vector is the largest part
-of a document. Models emit float32, float16, and int8. The index wants a
-representation the model never produced. The contract must not force the storage
-engine into the representation that appears on the wire.
+The contract outlives the engine. Storage, index format, and planner all get
+replaced. The messages a client compiled against do not.
 
-**The wire contract outlives the engine.** The storage engine, the index format,
-and the query planner all change. The messages a client compiled against do not.
-Anything the contract fixes today is expensive to move later.
+This is v0. Breaking the contract before v1 is acceptable, so a decision here is
+cheap to revisit. After v1 it is not.
 
 ## Goals
 
-- One call to write and one call to query.
-- An invalid request fails at compile time wherever the schema can express the
-  rule.
-- The wire representation of a vector does not constrain its storage
-  representation.
-- An identifier has a total order, so a range scan and a cursor both work.
-- A field added later does not break a client compiled today.
+- A simple, ergonomic API.
+- The API is optimized for client simplicity, not for storage or index
+  performance. The internal systems that serve it stay simple and cheap.
+- IDs support range queries.
+- User data schemas evolve with backward and forward compatibility, following the
+  same practice as protobuf itself.
 
 ## Non-goals
 
@@ -47,9 +39,9 @@ constraint from those areas only where it changes the contract.
 
 ## Model
 
-A namespace holds documents. A document has one identifier, zero or more named
-vector columns, and a flat set of attributes. The first write creates the
-namespace.
+A namespace is a logical boundary, like a table or a collection. It holds
+documents. A document has one ID, zero or more named vector columns, and a flat
+set of attributes.
 
 ```
   namespace "products"
@@ -57,21 +49,36 @@ namespace.
   │  document                                              │
   │  ┌──────────┬─────────────────┬──────────────────────┐ │
   │  │    id    │  vector columns │      attributes      │ │
-  │  │  bytes   │  title: [f32]   │  name: "foo"         │ │
+  │  │  string  │  title: [f32]   │  name: "foo"         │ │
   │  │          │  image: [f32]   │  tags: ["a", "b"]    │ │
   │  └──────────┴─────────────────┴──────────────────────┘ │
   └────────────────────────────────────────────────────────┘
 ```
 
-A vector column is an attribute with a vector type and an index. It is not a
-separate kind of thing. The model keeps it in a separate box because its schema
-carries an index configuration that a scalar attribute does not need.
+A vector column is an attribute with a vector type and an index. The model shows
+it separately because its schema carries an index configuration that a scalar
+attribute does not need.
 
-## Design
+### Schema evolution
 
-### Service
+There is no create-namespace call and no migration call. A namespace appears on
+its first write. A schema change applies on the first write that carries it, if it
+passes four rules.
 
-The service has two unary calls. The namespace is a field in the request message.
+1. A new attribute is added automatically. It reads as null on every document
+   written before it.
+2. The type of an existing attribute never changes. A write that changes one
+   fails.
+3. A vector column is declared before use. Scalar types are inferred from the
+   data; vector types are not.
+4. Index configuration is fixed once set. A tokenizer, a distance metric, and a
+   quantization mode cannot change in place, because the index on disk is a
+   product of them. Changing one requires a reindex.
+
+Rules 2 and 4 are the ones that bite. Both mean a mistake costs a rewrite of the
+namespace rather than an update.
+
+## API design
 
 ```proto
 service Index {
@@ -80,16 +87,13 @@ service Index {
 }
 ```
 
-Write and query stay separate because they have different cost profiles, different
+Write and Query stay separate because they have different cost profiles, different
 consistency needs, and different scaling limits. A combined call would force both
-paths through the same quota and the same timeout.
-
-A failure returns a gRPC status code, and the response message carries no status
-field. Backpressure returns `RESOURCE_EXHAUSTED`.
+through the same quota and the same timeout.
 
 ### Write operations
 
-A write carries exactly one operation, held in a `oneof`.
+A write carries exactly one operation.
 
 ```proto
 message WriteRequest {
@@ -105,59 +109,61 @@ message WriteRequest {
 }
 ```
 
-The operation set grows. Patch, delete, and delete-by-filter join the same
-`oneof`. A request that mixed two operations would need a defined order between
-them, and no order is obviously right. The `oneof` removes the question.
+Patch, delete, and delete-by-filter join the same `oneof` later. Each wrapper
+message then holds its own options, such as a condition or a partial-completion
+flag.
 
-The cost is a wrapper message per operation, because a `oneof` cannot hold a
-repeated field. That wrapper later holds the per-operation options, such as a
-condition or a partial-completion flag.
+Every operation is idempotent, and that is the default we design toward. A batch
+applies to every document or to none, so a client can always retry. If a future
+operation has to break idempotency, this note says so loudly at that point.
 
-A batch write applies to every document or to none. All-or-nothing is the simplest
-contract to reason about, and it keeps a retry safe after a failure. An upsert is
-idempotent, so a client can retry after `UNAVAILABLE`. Conditional writes will end
-that property, and this note must record the change when they arrive.
+### ID
 
-### Identifiers
+An ID is a string. It supports four lookups: exact key, range, prefix, and glob.
 
-An identifier is an opaque byte string. Byte order is the only order.
+Prefix lookup is a range, so `doc:` becomes `["doc:", "doc;")`. A glob that starts
+with a wildcard is not a range. It needs a scan or a separate index, and it is not
+in scope for v0.
 
-The engine compares identifiers with a byte comparison and never interprets them.
-A client encodes a typed identifier into a byte string that preserves the order of
-the source type.
+The engine compares IDs byte by byte and never interprets them. A client holding a
+typed key encodes it into a string that keeps the order of the source type.
+
+| Source type | Encoding | Ordered | Readable |
+| --- | --- | --- | --- |
+| Text | as written | yes | yes |
+| Integer | zero-padded decimal | yes | yes |
+| Float | order-preserving bit transform, then fixed-width hex | yes | no |
+| Bytes, UUID | base32hex, or hex | yes | no |
 
 ```
-  encode(uint64 9)   →  00 00 00 00 00 00 00 09   ┐ byte order matches
-  encode(uint64 10)  →  00 00 00 00 00 00 00 0A   ┘ numeric order
+  encode(uint64 9)   →  "0000000000000009"   ┐ string order matches
+  encode(uint64 10)  →  "0000000000000010"   ┘ numeric order
 
-  "9"                →  39                        ┐ byte order does not
-  "10"               →  31 30                     ┘ match numeric order
+  "9"                →  "9"                  ┐ string order does not
+  "10"               →  "10"                 ┘ match numeric order
 ```
 
-One identifier type removes a type switch from every code path in the engine. It
-also makes an identifier usable as a map key in Go, which a `oneof` message is
-not. Order is a property of the encoding, so the engine gets a total order without
-knowing any types.
+A float needs its sign bit flipped when positive and all bits flipped when
+negative, then renders as 16 hex characters. A byte string needs an alphabet whose
+characters are already in ASCII order. base32hex from RFC 4648 uses `0-9A-V` and
+qualifies; hex costs 2x, base32hex 1.6x.
 
-The field is `bytes`, not `string`. A proto3 `string` must hold valid UTF-8, and a
-big-endian integer encoding produces bytes that are not valid UTF-8.
+Readability is the reason for choosing a string, and it survives for text and
+integer keys only. A hex-encoded float or UUID is opaque, so those cases pay the
+expansion and get nothing back. Within the 64-byte limit, hex holds 32 raw bytes
+and base32hex holds 40, which is enough for a UUID either way.
 
-An order-preserving encoder handles four cases:
+Two limits worth stating. String order is UTF-8 byte order, which equals code
+point order but not linguistic collation, so `"Z"` sorts before `"a"`. A composite
+key needs escaping, because `"ab"` is a prefix of `"abc"`.
 
-- A signed integer needs its sign bit flipped, because two's complement sorts a
-  negative value after a positive one.
-- A float needs all bits flipped when the sign bit is set, and only the sign bit
-  flipped otherwise.
-- A namespace that mixes source types needs a type tag as the first byte.
-- A composite key needs escaping, because `"ab"` is a prefix of `"abc"`.
-
-An identifier is limited to 64 bytes. The limit bounds the identifier dictionary,
-which is a memory control rather than a style rule.
+An ID is limited to 64 bytes. The limit bounds the ID dictionary, which is a
+memory control rather than a style rule.
 
 ### Attributes
 
-An attribute holds a scalar, a timestamp, or a homogeneous list. An attribute
-never holds another attribute set.
+An attribute holds a scalar, a timestamp, or a homogeneous list. Nested attributes
+are intentionally not supported at this stage.
 
 ```proto
 message Value {
@@ -186,17 +192,16 @@ Lists stay, because a list of strings is the most common filter target in a sear
 index. Explicit list variants keep `Value` free of recursion, which a
 `repeated Value` would reintroduce.
 
-The explicit null matters for the patch operation. A patch must distinguish
-"set this attribute to null" from "leave this attribute alone". Presence in the
-attribute map answers the second, and `NullValue` answers the first.
+The explicit null matters for patch. A patch must distinguish "set this attribute
+to null" from "leave this attribute alone". Presence in the attribute map answers
+the second, and `NullValue` answers the first.
 
 `Value` is the most frequent message in the system, with one instance per
-attribute per document. Every variant uses a field number from 1 to 15, where the
-tag encodes in a single byte. Six numbers remain in that range, so a later variant
-must earn one.
+attribute per document. Every variant uses a field number from 1 to 15, so the tag
+encodes in a single byte. Six numbers remain in that range.
 
-The cost is that a client with nested source data flattens it before the write. A
-client that needs the original shape stores it in an unindexed `bytes` attribute.
+A client with nested source data flattens it before the write. A client that needs
+the original shape stores it in an unindexed `bytes` attribute.
 
 ### Vectors
 
@@ -214,8 +219,8 @@ message VectorColumn {
 
 A column with a magic name would become a special case in every rule that follows
 it: type inference, schema validation, query ranking, and patch behavior. Naming
-every column keeps one rule for all of them. The cost is that the first write
-needs a schema, so a client cannot create a vector column by writing data alone.
+every column keeps one rule for all of them. The cost is that a client cannot
+create a vector column by writing data alone.
 
 A per-column metric follows from per-column embeddings. Two columns can hold
 output from two models with different geometry, and a namespace-wide metric would
@@ -223,9 +228,8 @@ force a client to split one logical collection across two namespaces.
 
 A vector crosses the wire as `repeated float`. float32 holds every value of int8,
 float16, and bfloat16 without loss, so the wire type is a lossless container for
-every narrower format. The cost is bandwidth, not precision. The choice is also
-reversible by addition: a packed `bytes` field with a data type in the column
-schema can arrive later, while changing the type of field 2 would break the wire.
+every narrower format. The cost is bandwidth, not precision. A packed `bytes`
+field can arrive later, while changing the type of field 2 would break the wire.
 
 A vector column has two representations, and they answer different questions.
 
@@ -251,8 +255,8 @@ that sends a pre-quantized vector owns it. A model that emits int8 owns it, and
 then neither the server nor the client may quantize that output again.
 `QUANTIZATION_NATIVE` records the third case.
 
-A server that owns quantization owns the recall budget. It therefore owes the
-client a way to measure recall.
+A server that owns quantization owns the recall budget, so it owes the client a
+way to measure recall.
 
 ### Text analysis
 
@@ -273,7 +277,7 @@ enum Tokenizer {
 Tokenization is an on-disk contract, because every posting list is a product of
 it. A tokenizer cannot change in place. It can only gain a new version, and an
 existing namespace keeps the old version until a reindex. An unversioned name
-would therefore be a permanent commitment to today's behavior.
+would be a permanent commitment to today's behavior.
 
 `TOKENIZER_PRE_TOKENIZED` lets a client supply tokens directly. A client that owns
 its analysis pipeline should not have to reimplement it inside our tokenizer
@@ -295,7 +299,8 @@ carry a version for this reason.
 
 | Option | Why not |
 | --- | --- |
-| Typed identifier, as a `oneof` of string, integer, and UUID | Adds a type switch to every path and cannot be a Go map key. Still open, see below. |
+| `bytes` ID | Holds any binary key without expansion, and needs no encoding for the byte case. Rejected because it makes every ID opaque in a log, a trace, and an error message. Still open, see below. |
+| Typed ID, as a `oneof` of string, integer, and UUID | Adds a type switch to every path and cannot be a Go map key. |
 | Optional sibling fields for write operations | Cannot express mutual exclusion, so every invalid combination fails at run time. |
 | `google.protobuf.Struct` for attributes | Stores every number as a `double`, so an integer above 2^53 loses precision and a range filter returns wrong rows. It is also recursive. |
 | `google.protobuf.Any` for attributes | Carries a type URL of about 50 bytes per value, and the server cannot index a payload it cannot read. |
@@ -309,26 +314,25 @@ carry a version for this reason.
 
 ## Prior art
 
-turbopuffer solves the same problem over HTTP and JSON, and it has published
+turbopuffer solves the same problem over HTTP and JSON, and it publishes its
 operating limits. Three of its choices carry information we could not get on our
 own.
 
 **Versioned tokenizer names.** turbopuffer ships `word_v0` through `word_v3`. A
-version in a public enum marks a migration that the system could not perform in
-place. That is direct evidence for treating an analyzer as an on-disk contract,
-and we copy the convention.
+version in a public enum marks a migration the system could not perform in place.
+That is direct evidence for treating an analyzer as an on-disk contract, and we
+copy the convention.
 
 **A wire type wider than the storage type.** turbopuffer accepts and returns
 float32 even when a column is stored as `[512]f16`. A production system already
 separates the two, which supports the same split here.
 
 **A limit that reveals a structural cost.** turbopuffer allows a 512 MB upsert
-batch, but only 30 rows per batch when the server computes the embedding. That
-gap measures the cost of putting a model in the write path, and it argues for an
+batch, but only 30 rows per batch when the server computes the embedding. That gap
+measures the cost of putting a model in the write path, and it argues for an
 asynchronous write path before server-side embedding arrives.
 
-We also take its 64-byte identifier limit and its per-attribute analysis
-configuration.
+We also take its 64-byte ID limit and its per-attribute analysis configuration.
 
 Three places where we go elsewhere:
 
@@ -352,17 +356,21 @@ vector is always rebuildable by running the embedding model again, lossy storage
 is a rebuild. If this database holds the only copy, lossy storage is data loss.
 The answer sets the default for `store_original`.
 
-`CONSIDER(ali):` Does the identifier encoder live in the client or in the server?
-A client-side encoder keeps the wire type as opaque `bytes` and needs shared
+`CONSIDER(ali):` Do binary IDs become common enough to move from `string` to
+`bytes`? A string keeps text and integer keys readable, and makes every other key
+opaque anyway. If most keys turn out to be UUIDs, the expansion buys nothing. v0
+is the window for this change.
+
+`CONSIDER(ali):` Where does the ID encoder live? A client-side encoder needs shared
 conformance vectors across languages, because a subtle difference between two
 encoders is silent data corruption. A server-side encoder needs the source type on
-the wire, which brings back the typed identifier.
+the wire, which brings back the typed ID.
 
-`CONSIDER(ali):` Do we take a dependency on the `googleapis` protos? A failed
-batch write should name the document that caused the failure, and the idiomatic
-carrier is `google.rpc.BadRequest.FieldViolation` in the status details. That is a
-new third-party dependency and needs agreement first.
+`CONSIDER(ali):` Do we take a dependency on the `googleapis` protos? A failed batch
+write should name the document that caused the failure, and the idiomatic carrier
+is `google.rpc.BadRequest.FieldViolation` in the status details. That is a new
+third-party dependency and needs agreement first.
 
 `CONSIDER(ali):` When does the write path become asynchronous? Server-side
-embedding drops write throughput by orders of magnitude. A synchronous write path
-that later gains that feature has to change shape.
+embedding drops write throughput by orders of magnitude, and a synchronous write
+path that later gains that feature has to change shape.

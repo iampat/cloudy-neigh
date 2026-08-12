@@ -13,6 +13,15 @@ a terminal. It also diffs one line at a time, so a reviewer can comment on a
 sentence. Do not write HTML. Generate HTML from the Markdown if a published site
 is needed later.
 
+## Assume a working software engineer
+
+The reader knows the language, the protocol, and the common patterns. Never
+explain a `oneof`, a status code, a map, or a retry. Explaining a known thing
+wastes the reader's attention and buries the part that is specific to us.
+
+Write about the choice, not the mechanism. "Patch and delete join the same
+`oneof`" is enough. Why a `oneof` holds one field at a time is not.
+
 ## Two kinds of prose
 
 A design note contains normative prose and rationale prose. They follow different
