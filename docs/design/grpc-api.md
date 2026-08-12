@@ -1,4 +1,4 @@
-# gRPC write and query API
+# gRPC API, part 1: the write path
 
 **Status:** Draft — 2026-08-11 — v0
 
@@ -6,7 +6,12 @@
 
 cloudy-neigh stores documents made of vectors, text, and scalar attributes.
 Clients write those documents and then find them again by vector similarity, by
-text match, or by key. This note defines the wire contract for both paths.
+text match, or by key.
+
+This note covers the write path: the service shape, the document model, the schema
+rules, and the type of every attribute on the wire. Part 2 covers the query path.
+The write path comes first because it fixes the data model, and the query path
+then has something to read.
 
 Three things make the contract awkward.
 
@@ -33,9 +38,12 @@ cheap to revisit. After v1 it is not.
 
 ## Non-goals
 
+Part 2 covers the query message, filters, ranking, projection, pagination, and
+consistency levels. This note fixes only what the write path has to settle first.
+
 The storage engine, the index format, the query planner, sharding, replication,
-authentication, and server-side embedding are out of scope. The note names a
-constraint from those areas only where it changes the contract.
+authentication, and server-side embedding are out of scope entirely. The note
+names a constraint from those areas only where it changes the contract.
 
 ## Model
 
@@ -90,6 +98,8 @@ service Index {
 Write and Query stay separate because they have different cost profiles, different
 consistency needs, and different scaling limits. A combined call would force both
 through the same quota and the same timeout.
+
+`Query` appears here for the service shape. Its messages belong to part 2.
 
 ### Write operations
 
