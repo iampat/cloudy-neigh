@@ -54,20 +54,25 @@ Rationale prose is still short. Three sentences per decision is usually enough.
 
 ## Writing rules
 
-These rules come from ASD-STE100 Simplified Technical English and the Proxmox
-technical writing style guide. Apply them strictly to normative prose and loosely
-to rationale prose.
+These rules follow ASD-STE100 Simplified Technical English, Issue 9. Apply them
+strictly to normative prose and loosely to rationale prose.
 
-- Put the important information first in the sentence.
-- Keep a sentence to 15–20 words. Split a longer sentence.
-- Write one idea per sentence and one topic per paragraph.
-- Use active voice. Write "the server rejects the write", not "the write is
-  rejected".
-- Use present tense. Describe what the system does, not what it will do.
+- Put the important information first in the sentence. Write a condition before
+  its instruction.
+- Keep an instruction to 20 words and a description to 25. Split a longer
+  sentence.
+- Write one idea per sentence. Keep a paragraph to one topic and a maximum of
+  six sentences.
+- Use active voice. Use passive only when the agent is unknown.
+- Use simple tenses only. Describe what the system does, not what it will do.
 - Use third person for a description. Use the imperative for an instruction.
 - Do not write "I". Write "we" only to give a recommendation.
 - Use one term for one concept. Never change a term for variety.
 - Use a list when a sentence names three or more items.
+- Do not use a semicolon. Write two sentences.
+- Do not use the "-ing" form of a verb, except in a technical noun or a heading.
+- Do not omit an article or the conjunction "that" to shorten a sentence.
+- Do not use a phrasal verb. Write "extinguish", not "put out".
 - Write "for example", not "e.g.". Write "and so on", not "etc.".
 - Spell out an acronym at first use, then use the acronym.
 - Do not use jargon, idiom, or an informal expression.
