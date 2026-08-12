@@ -83,6 +83,10 @@ strictly to normative prose and loosely to rationale prose.
 - State a trade-off in one sentence. Do not argue both sides at length.
 - Delete a sentence that repeats the sentence before it.
 
+`word-list.md` in this skill directory gives the substitutions from the STE
+dictionary that software prose needs most, with sample rewrites. Read it when
+you write or review prose.
+
 ## Prior art is evidence, not a blueprint
 
 This project studies other systems and takes what is useful. Present our design on
@@ -188,6 +192,14 @@ covers sizes, counts, depths, and rates.
 
 No field name is a keyword in a target language of the project. Some generators
 rename a colliding field, and others do not. Avoid the collision at the source.
+
+## Lint
+
+Run `.claude/skills/design-note/lint.sh <file>` on every document before you
+finish. It checks the mechanical rules: semicolons, Latin abbreviations,
+contractions, sentence length, and common non-approved words. Its word counts
+are approximate, so a flagged sentence can be legal under the counting rules.
+The checklist below covers the judgment rules.
 
 ## Checklist
 
