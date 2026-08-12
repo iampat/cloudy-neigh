@@ -1,9 +1,13 @@
 ---
 name: design-note
-description: Write or update a document under docs/. Use for design notes, architecture notes, and READMEs to keep the style and structure consistent.
+description: Write or update any documentation or technical prose — design notes, architecture notes, READMEs, PR descriptions, release notes. Use for all technical writing to keep the style and structure consistent.
 ---
 
-# Design notes
+# Technical writing and design notes
+
+The writing rules and habits in this skill apply to all documentation and
+technical prose. The Structure section and the template apply to design notes
+in `docs/design/`.
 
 A design note records a decision and the reason for it. The reader arrives months
 later with one question. Answer that question near the top.

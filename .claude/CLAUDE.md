@@ -44,5 +44,6 @@ toolchain and dependency graph stay authoritative.
 - Branch names: `ali/<topic>` for features; `chore/`, `docs/`, `fix/` otherwise.
 - Before declaring done: `bazel build //...` and `bazel run //:format.check` pass.
 
-For planning a new feature or design, use the `plan-feature` skill. For writing
-any document under `docs/`, use the `design-note` skill.
+For planning a new feature or design, use the `plan-feature` skill. For any
+documentation or technical prose — `docs/`, READMEs, PR descriptions — use the
+`design-note` skill.
