@@ -2,6 +2,8 @@
 
 **Status:** Draft — 2026-08-11 — v0
 
+Part 2 covers the query path: [query-api.md](query-api.md).
+
 ## Problem
 
 cloudy-neigh stores documents made of vectors, text, and scalar attributes.
