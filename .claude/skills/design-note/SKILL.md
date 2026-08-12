@@ -13,10 +13,27 @@ a terminal. It also diffs one line at a time, so a reviewer can comment on a
 sentence. Do not write HTML. Generate HTML from the Markdown if a published site
 is needed later.
 
+## Two kinds of prose
+
+A design note contains normative prose and rationale prose. They follow different
+rules.
+
+Normative prose states what the system does. It covers the model, the message
+shapes, the invariants, and the limits. Apply the writing rules below without
+exception. Ambiguity here becomes a defect later.
+
+Rationale prose explains why. It weighs one option against another and names a
+cost. Keep it plain, but let a sentence carry a subordinate clause when the
+argument needs one. A rule that forbids "because" and "which means" removes the
+connective tissue of an argument, and every claim then lands with equal weight.
+
+Rationale prose is still short. Three sentences per decision is usually enough.
+
 ## Writing rules
 
 These rules come from ASD-STE100 Simplified Technical English and the Proxmox
-technical writing style guide.
+technical writing style guide. Apply them strictly to normative prose and loosely
+to rationale prose.
 
 - Put the important information first in the sentence.
 - Keep a sentence to 15–20 words. Split a longer sentence.
@@ -34,32 +51,53 @@ technical writing style guide.
 - State a trade-off in one sentence. Do not argue both sides at length.
 - Delete a sentence that repeats the sentence before it.
 
-## Justify against prior art
+## Prior art is evidence, not a blueprint
 
-This project takes ideas from other systems. A design note must say what the other
-system does and why we agree or differ. A decision without a reason is not a
-decision, and the next reader will reverse it by accident.
+This project studies other systems and takes what is useful. Present our design on
+its own terms. Do not present it as a set of differences from another system.
 
-Give every decision three parts:
+A note that frames every decision against one reference system makes that system
+the spine of our architecture. It also implies that every choice the other system
+made was a live option for us, which is often false. A transport that dictates an
+answer is not a decision at all.
 
-1. What we do.
-2. What the reference system does.
-3. Why we differ, or why we agree.
+Keep prior art in one section. Cite another system where it carries information we
+do not have:
 
-Name the cost of a divergence. A choice with no cost is usually a choice that is
+- Operational experience. A published limit or a documented failure is evidence.
+- A trap they hit first. A versioned name usually marks a migration they could not
+  perform.
+- A genuine alternative we weighed and did not take.
+
+Do not cite another system to justify a choice the medium already forces.
+
+## Record the alternatives
+
+A decision needs its rejected alternatives. Give each one a line: what it is, and
+why we did not take it. Without that section the next reader re-proposes the same
+option, and nobody remembers the answer.
+
+Name the cost of every choice. A choice with no cost is usually a choice that is
 not yet understood.
 
 ## Structure
 
 Use this order. Skip a section that has no content.
 
-| Section  | Content                                            |
-| -------- | -------------------------------------------------- |
-| Status   | Draft, accepted, or superseded. The date.          |
-| Scope    | What the note covers. What it does not cover.      |
-| Model    | The core objects and how they relate.              |
-| Decisions| One entry per decision, with the justification.    |
-| Open     | Unresolved questions, marked `CONSIDER(ali):`.     |
+| Section      | Content                                              |
+| ------------ | ---------------------------------------------------- |
+| Status       | Draft, accepted, or superseded. The date.            |
+| Problem      | What the work must achieve. The constraints.         |
+| Goals        | Goals and non-goals, as two lists.                   |
+| Model        | The core objects and how they relate.                |
+| Design       | One section per topic. Name the topic, not the answer.|
+| Alternatives | Rejected options, one line each.                     |
+| Prior art    | What other systems teach. One section.               |
+| Open         | Unresolved questions, marked `CONSIDER(ali):`.       |
+
+A heading names a topic. Write "Identifiers", not "One identifier type, ordered by
+encoding". State the decision in the first sentence of the section. A reader scans
+headings to find a topic, not to collect conclusions.
 
 Put the open questions at the end, never in a footnote. An unresolved question is
 the most valuable part of a draft.
@@ -101,9 +139,12 @@ A design note is not a source file. Do not paste a whole file into it.
 
 ## Checklist
 
-- The title says what the note decides.
-- Every decision names the alternative and the reason.
-- Every divergence from prior art names its cost.
+- The note opens with the problem, not with the answer.
+- Every heading names a topic. No heading states a conclusion.
+- The design reads on its own terms. Another system is not the spine.
+- Prior art appears in one section, and each citation carries information.
+- Every decision names its cost.
+- Rejected alternatives have a home.
 - Every diagram fits in 80 columns.
 - Every open question carries a `CONSIDER(ali):` marker.
-- No sentence is longer than 25 words.
+- No normative sentence is longer than 25 words.
