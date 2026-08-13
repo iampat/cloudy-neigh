@@ -1,7 +1,6 @@
 #!/bin/sh
-# Mechanical checks for the writing rules in SKILL.md; the judgment rules stay
-# in the checklist. Word counts are approximate: STE rules 8.5 thru 8.7 count
-# parenthetical text, quoted text, and hyphenated groups as one word each.
+# Word counts are approximate. STE rules 8.5 to 8.7 count parenthetical text,
+# quoted text, and hyphenated groups as one word each.
 
 set -u
 
