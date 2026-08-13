@@ -86,6 +86,11 @@ imports it. Delete the copies when the tool finishes.
   title instead, as `feat:`, `fix:`, `chore:`, or `docs:`.
 - Report the URL when you open a PR, then stop. Do not wait for the checks and
   do not poll them. I read them myself.
+- Never put a Claude session link in a commit message or a PR body. Drop the
+  `Claude-Session:` trailer, and drop the `https://claude.ai/code/session_...`
+  URL under the generated-with line. The link opens for one person, and the
+  repository keeps it forever. Keep the `Co-Authored-By:` trailer and the
+  generated-with line, which name the tool without a private URL.
 - Before declaring done: `bazel build //...` and `bazel run //:format.check` pass.
 - Before opening a PR: run `bazel mod tidy`. A `go.mod` change leaves
   `MODULE.bazel` stale, and a stale `use_repo` call breaks the build.
