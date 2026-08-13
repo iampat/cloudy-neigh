@@ -5,30 +5,69 @@ durability, consistency, and failure modes matter more than feature velocity.
 
 ## Build — Bazel only
 
-Never invoke `go build`/`go test` or run scripts directly; go through Bazel so the
-toolchain and dependency graph stay authoritative.
+Never invoke `go build`/`go test` or run scripts directly. Go through Bazel so
+the toolchain and the dependency graph stay authoritative.
 
-- Test: `bazel test //...` (race: add `--config=race`)
-- Regenerate BUILD files after adding/moving Go code: `bazel run //:gazelle`
-- Format: `bazel run //:format` (check-only: `//:format.check`; BUILD files: `//:buildifier`)
-- Go toolchain passthrough: `bazel run @io_bazel_rules_go//go -- <args>`
-- Dependency change: edit `go.mod` → `bazel run @io_bazel_rules_go//go -- mod tidy`
-  (also updates MODULE.bazel) → `bazel run //:gazelle`
+| Plain Go | Here |
+| --- | --- |
+| `go build ./...` | `bazel build //...` |
+| `go test ./...` | `bazel test //...` (race: `--config=race`) |
+| `go test -run TestX ./pkg` | `bazel test //pkg:pkg_test --test_filter=TestX` |
+| `go test -v` | `bazel test //... --test_output=all` |
+| `go test -bench=.` | `bazel test //... --test_arg=-test.bench=. --test_output=all` |
+| `go get <module>` | `bazel run @io_bazel_rules_go//go -- get <module>` |
+| `go mod tidy` | `bazel mod tidy` |
+| `go fmt ./...` | `bazel run //:format` (check-only: `//:format.check`) |
+| `go vet ./...` | nogo, which runs inside `bazel build` |
+| `go run ./cmd/x -- a b` | `bazel run //cmd/x -- a b` |
+| `go run <tool>@<version>` | `bazel run @io_bazel_rules_go//go -- run <tool>@<version>` |
+| anything else | `bazel run @io_bazel_rules_go//go -- <args>` |
+
+### Useful commands
+
+```sh
+bazel run //:gazelle                           # regenerate BUILD files
+bazel run //:buildifier                        # format BUILD files
+rm <pkg>/BUILD.bazel && bazel run //:gazelle   # regenerate rather than merge
+bazel query "somepath(//a, //b)"               # why does A depend on B
+bazel build //... --verbose_failures --keep_going
+bazel aquery //proto/cloudyneigh:cloudyneigh_go_proto  # generated file paths
+find -L bazel-bin/proto -name '*.pb.go' -exec cp {} proto/cloudyneigh/ \;  # stage
+bazel mod show_extension @bazel_gazelle//:extensions.bzl%go_deps  # resolved Go repos
+```
+
+The last one stages the generated protobuf code in the source tree. A tool that
+reads source cannot load that package otherwise, and fails on every package that
+imports it. Delete the copies when the tool finishes.
 
 ## Gotchas & conventions
 
 - No new third-party Go dependencies unless we agree first — prefer stdlib,
   including for test assertions. This covers "convenience" deps like testify.
+- Generated code is not ours. Protoc output lives in `bazel-bin` and never
+  reaches the repository. It stays outside review, outside lint, and outside the
+  comment rules.
+- A function that does I/O, or calls one that does, takes `context.Context` as
+  its first parameter and passes it down. Check `ctx.Err()` where there is work
+  worth abandoning: once per item in a batch, and once more before a commit.
+  Never add a context that no implementation reads. `cas.Store` takes none,
+  because `os.Rename` and `File.Sync` do not observe one.
+- An external test package tests a package: `package index_test` for
+  `package index`. The test then proves the exported API is enough. Use an
+  internal test only to reach something unexported, and say why in the commit.
 - Structured logging via stdlib `log/slog`; prefer returning errors over
   fatal-level logging.
 - Never `time.Sleep` to synchronize a test — poll or use channels.
 - Explicit beats clever. Prefer the obvious solution a reader can follow without
   reconstructing your reasoning, even when a terser one exists.
-- Comment only what the code cannot say: a non-obvious *why*, a workaround and
-  the upstream issue forcing it, an invariant a reader would otherwise violate.
-  Do not restate the code, label sections, or narrate a change to the reader —
-  if deleting the comment loses nothing, delete it. Applies to config and build
-  files (`.bazelrc`, `MODULE.bazel`, `BUILD.bazel`, workflows) as much as to Go.
+- Default to no comment. Two kinds earn a place: a workaround with the upstream
+  issue that forces it, and an invariant a reader would otherwise violate. Write
+  nothing else, doc comments on exported names included. Go convention alone
+  does not justify a doc comment. Delete a comment that paraphrases the
+  identifier, restates the signature, explains a pattern the reader knows, gives
+  the reason for an obvious choice, or names the caller. Applies to config and
+  build files (`.bazelrc`, `MODULE.bazel`, `BUILD.bazel`, workflows) as much as
+  to Go.
 - Flag open design questions with `CONSIDER(ali):` comments.
 - Write prose in ASD-STE100 Simplified Technical English: active voice, simple
   tenses, one idea per sentence, one term per concept. Maximum 20 words in an
@@ -43,8 +82,18 @@ toolchain and dependency graph stay authoritative.
   diff — over prose.
 - Design notes: Markdown in `docs/design/`; update them alongside the code they
   describe.
-- Branch names: `ali/<topic>` for features; `chore/`, `docs/`, `fix/` otherwise.
+- A branch name always starts with `ali/`. The type of the change goes in the PR
+  title instead, as `feat:`, `fix:`, `chore:`, or `docs:`.
+- Report the URL when you open a PR, then stop. Do not wait for the checks and
+  do not poll them. I read them myself.
+- Never put a Claude session link in a commit message or a PR body. Drop the
+  `Claude-Session:` trailer, and drop the `https://claude.ai/code/session_...`
+  URL under the generated-with line. The link opens for one person, and the
+  repository keeps it forever. Keep the `Co-Authored-By:` trailer and the
+  generated-with line, which name the tool without a private URL.
 - Before declaring done: `bazel build //...` and `bazel run //:format.check` pass.
+- Before opening a PR: run `bazel mod tidy`. A `go.mod` change leaves
+  `MODULE.bazel` stale, and a stale `use_repo` call breaks the build.
 
 For planning a new feature or design, use the `plan-feature` skill. For any
 documentation or technical prose — `docs/`, READMEs, PR descriptions — use the

@@ -13,6 +13,12 @@ restructure instead.
 Skip anything the toolchain already enforces — gofumpt, buildifier, nogo, and
 golangci-lint all run in CI. Formatting and unused-variable comments are noise.
 
+Generated code is out of scope. Protoc output lives in `bazel-bin` and never
+reaches the repository. Do not review it, do not lint it, and do not apply the
+comment rules to it. A source-level tool that cannot load a generated package
+fails on every package that imports it. That is a fact about the tool, not a
+finding.
+
 Report only what you can point at. An unverified suspicion stated as a finding
 costs more than it saves.
 
@@ -56,6 +62,11 @@ Where a storage engine actually breaks. Look hardest here.
 - Every `<-ch` needs a `select` with `ctx.Done()`, or it can hang forever.
 - Anything claiming atomicity or durability must have an identifiable
   linearization point. Ask where it is.
+- A function that does I/O, or calls one that does, takes `context.Context`
+  first and passes it down. Flag a call that drops one, and flag a `_ context.Context`
+  parameter. Check `ctx.Err()` where there is work worth abandoning: once per
+  item in a batch, and once more before a commit. Flag a context parameter that
+  no implementation reads, which claims a cancellation that does not happen.
 
 ## 5. Tests
 
@@ -69,14 +80,36 @@ Where a storage engine actually breaks. Look hardest here.
 - Cover failure modes, not just the happy path: crash mid-write, partial write,
   concurrent writers, cancelled context.
 - Table-driven with named cases.
+- An external test package tests a package: `package index_test` for
+  `package index`. Flag an internal test that reaches nothing unexported, and
+  flag an identifier exported only to let a test see it.
 
 ## 6. Comments
 
-- Remove a comment whose content is apparent from the code.
-- If a better name would remove the need for the comment, suggest the name.
-- No metaphor, no counterfactuals, no account of the decision that produced the
-  code, no explanation of how callers use it.
-- Plain sentences. Several short ones beat one built from stacked clauses.
+The default is no comment. Two kinds earn a place: a workaround with the upstream
+issue that forces it, and an invariant a reader would otherwise violate. Flag
+every other comment for deletion. A doc comment on an exported name is not
+exempt. Go convention alone does not justify one.
+
+Flag a comment that:
+
+- paraphrases the identifier it documents. `// Digest names a blob by the
+  SHA-256 of its bytes` above `type Digest [sha256.Size]byte` says the type name
+  again.
+- restates the signature. `// Root reports false when nothing is stored` above
+  `Root() (Digest, bool, error)` says what the `bool` already says.
+- explains a pattern the reader knows, or derives what follows from it. A Go
+  engineer knows that a content-addressed store returns the same digest for the
+  same bytes.
+- gives the reason for a choice no reader would question. Hex in JSON needs no
+  defence.
+- names the caller, or describes how another package uses the code. That text is
+  wrong after the first refactor.
+- labels a section or narrates the change to the reviewer.
+
+If a better name removes the need for the comment, give the name. No metaphor
+and no counterfactual. Plain sentences. Several short ones beat one built from
+stacked clauses.
 
 ## 7. Naming
 
@@ -86,6 +119,6 @@ Where a storage engine actually breaks. Look hardest here.
 
 ## 8. Build files
 
-- `BUILD.bazel` files are gazelle output. Regenerate them; do not hand-edit.
-- A `go.mod` change must arrive with the regenerated `MODULE.bazel.lock` and
-  BUILD files.
+- `BUILD.bazel` files are gazelle output. Regenerate them. Do not hand-edit.
+- A `go.mod` change must arrive with the regenerated `MODULE.bazel`,
+  `MODULE.bazel.lock`, and BUILD files. `bazel mod tidy` produces the first two.
