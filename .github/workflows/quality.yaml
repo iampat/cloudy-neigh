@@ -28,15 +28,8 @@ jobs:
     - name: go mod verify
       run: bazel run @io_bazel_rules_go//go -- mod verify
 
-    # Off for now. A source scan cannot load the generated protobuf package,
-    # which lives only in bazel-bin, so `./...` fails on every package that
-    # imports it. Binary mode is the way back on, and it passes today:
-    #
-    # - name: govulncheck
-    #   run: |
-    #     bazel build //cmd/cloudy-neigh
-    #     bazel run @io_bazel_rules_go//go -- run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} \
-    #       -mode binary bazel-bin/cmd/cloudy-neigh/cloudy-neigh_/cloudy-neigh
+    - name: govulncheck
+      run: bazel run @io_bazel_rules_go//go -- run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
 
     - name: golangci-lint
       continue-on-error: true
