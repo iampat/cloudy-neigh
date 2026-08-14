@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "index",
+    srcs = ["index.go"],
+    importpath = "github.com/iampat/cloudy-neigh/internal/index",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/cas",
+        "//proto/cloudyneigh",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_test(
+    name = "index_test",
+    srcs = ["index_test.go"],
+    deps = [
+        ":index",
+        "//internal/cas",
+        "//proto/cloudyneigh",
+        "@org_golang_google_protobuf//proto",
+    ],
+)

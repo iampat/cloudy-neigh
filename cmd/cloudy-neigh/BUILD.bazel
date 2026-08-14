@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "cloudy-neigh_lib",
+    srcs = [
+        "client.go",
+        "ingest.go",
+        "main.go",
+        "query.go",
+        "root.go",
+        "serve.go",
+    ],
+    importpath = "github.com/iampat/cloudy-neigh/cmd/cloudy-neigh",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//internal/cas",
+        "//internal/index",
+        "//internal/server",
+        "//proto/cloudyneigh",
+        "@com_github_spf13_cobra//:cobra",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//reflection",
+        "@org_golang_google_protobuf//encoding/protojson",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_binary(
+    name = "cloudy-neigh",
+    embed = [":cloudy-neigh_lib"],
+    visibility = ["//visibility:public"],
+)
