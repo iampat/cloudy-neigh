@@ -1,0 +1,16 @@
+{
+  "permission-guard": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "command": "./scripts/permission_guard.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

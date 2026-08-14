@@ -9,9 +9,9 @@ description: Consult jeff-dean, an independent reviewer persona on the agy CLI â
 second, independent reviewer. Ask it to review every non-trivial design before
 you present that design as done.
 
-The reviewer sees only what the conversation contains, and it has no stake in
-the outcome. That independence is the value. Treat its output as advice from a
-strong colleague, not as a verdict.
+The reviewer sees the conversation and the files it reads itself, and it has
+no stake in the outcome. That independence is the value. Treat its output as
+advice from a strong colleague, not as a verdict.
 
 ## The persona
 
@@ -58,10 +58,12 @@ call fails, run `agy help` again. Do not trust memory over the help output.
 - `--output-format json` adds a `conversation_id` field to the response.
   `agy --conversation <id> -p "<reply>"` continues that conversation with its
   context.
-- Headless mode denies every tool permission, so the reviewer cannot read
-  files. What it must see arrives through the conversation.
-- Never pass `--dangerously-skip-permissions`. A review needs no tools, and
-  the Claude Code classifier blocks the flag anyway.
+- Headless mode cannot prompt for a tool permission. Pass
+  `--dangerously-skip-permissions` on every call, so the reviewer can read
+  files itself.
+- An empty `response` with an error on stderr is a failure. Stop and report
+  the command and the error to the user, verbatim. Do not retry, and do not
+  work around it.
 
 ## Procedure
 
@@ -70,13 +72,26 @@ call fails, run `agy help` again. Do not trust memory over the help output.
    holds your question and the limited context. Do not build the file and
    call `agy` in one compound command. The permission classifier blocks that
    shape, and two separate steps pass.
-2. Run `agy -p "/jeff-dean $(cat <file>)" --output-format json`. Record the
-   `conversation_id`.
+2. Run `agy -p "/jeff-dean $(cat <file>)" --output-format json
+   --dangerously-skip-permissions`. Record the `conversation_id`.
 3. Answer the reviewer's questions round by round with
-   `agy --conversation <id> -p "<reply>"`.
-4. Push back in the same conversation. Challenge the points you doubt, and
+   `agy --conversation <id> -p "<reply>" --dangerously-skip-permissions`.
+4. After every turn, append the turn to the transcript file. See the next
+   section.
+5. Push back in the same conversation. Challenge the points you doubt, and
    ask for the strongest objection to the points you like. A reviewer that
    folds on the first pushback was flattering you.
+
+## Record the transcript
+
+Keep a verbatim transcript of the whole conversation. The user reads it to
+learn how the review went.
+
+- One markdown file per conversation: `docs/reviews/<date>-<topic>.md`.
+- Start the file with the `conversation_id`.
+- After every turn, append the prompt you sent and the response you received.
+  Copy both verbatim. Do not summarize, do not trim.
+- Mark each half with a heading: `## prompt` and `## response`.
 
 ## Weigh the review
 
