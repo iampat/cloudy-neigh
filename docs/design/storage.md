@@ -1,6 +1,6 @@
 # Storage
 
-**Status:** Draft — 2026-08-14 — v1
+**Status:** Draft — 2026-08-14 — v2
 
 The code in `internal/cas` and `internal/index` implements the v0 draft of
 this note. That code is outdated. Where the code and this note disagree, the
@@ -11,302 +11,293 @@ note wins, and the code catches up.
 The gRPC API note names the storage engine a non-goal. The server still needs a
 place to put a document and a way to find it again by identifier.
 
-Two constraints shape the answer. A write survives a crash, or it does not
-appear at all. A batch applies to every document or to none, because the API
-promises that a client can always retry.
+The shape of the data bounds the design:
 
-A third constraint comes from the purpose of this build. The storage has to show
-its own work. A reader who doubts the durability claim inspects the files.
+- A document blob is less than 10 MiB.
+- A key is a UTF-8 byte string, 200 bytes on average, 1 KiB at most.
+- A namespace holds up to 100 million documents. The scale section shows
+  where the design bends and where it breaks.
+
+Three constraints shape the answer. A write survives a crash, or it does not
+appear at all. A batch applies to every document or to none, because the API
+promises that a client can always retry. Several writers, in one process or
+in several, commit to one store without a lock service.
+
+A fourth constraint comes from the purpose of this build. The storage has to
+show its own work. A reader who doubts a claim inspects the objects.
 
 ## Goals
 
-- One store over one driver interface, with a memory driver and a disk driver.
-- A driver moves named bytes and nothing more. The store owns every rule.
-- A batch applies whole or not at all.
-- Recovery reads one file. No log replay.
-- A person reads the on-disk state with `cat` and `shasum`.
+- One store over `gocloud.dev/blob`: memory for tests, local files for
+  development, GCS and S3 for production.
+- A batch commits with one conditional create. No lock file, no lease, and no
+  fsync of our own.
+- A write-ahead log (WAL) with checkpoints. Recovery reads one checkpoint and
+  replays a bounded tail.
+- A branch is one committed record. Branches share all blobs, so a branch is
+  copy-on-write from birth.
+- A person inspects a development store with `cat` and `shasum`, and a
+  production bucket with the provider's listing tools.
 
 ## Non-goals
 
-- Sharding and replication.
-- An index of any kind. This layer answers a lookup by identifier and no more.
-- Access to one directory from two processes.
+- Local files in production. The local driver serves development and tests.
+- Merge between branches. The model leaves room for it.
+- A blob over 10 MiB. The large-blob section sketches the extension only.
+- Sharding across stores, replication, and an index of any kind.
 
 ## Future work
 
-- An object-store driver, for example GCS or S3. A remote call can hang, so
-  that driver reads a context. Its arrival puts a context parameter on every
-  driver method. The change stays cheap while every driver lives in this
-  repository.
-- Collection of unreachable blobs. Mark from the root, then sweep the blob
-  directory. The sweep spares a blob younger than a grace period, because a
-  running batch owns blobs that no root names yet.
-- A lock file under `flock`, so a second process fails to open the directory.
-  `flock` holds on the local file systems this store targets.
-- An incremental manifest, so that a write does not rewrite a whole namespace.
-- Group commit, so that concurrent writers share one flush.
-- A streaming path for a document too large to hold in memory. It arrives as
-  an optional driver interface. The store probes for it with a type assertion
-  and falls back to the byte-slice path.
+- Merge between branches.
+- Collection of unreachable blobs and old WAL records. Mark from the live
+  checkpoints. Pin by WAL position and not by wall-clock age, so a slow batch
+  cannot lose its blobs to the sweeper.
+- A chunk tree for blobs over 10 MiB.
+- A read cache for manifest shards, once a namespace outgrows memory.
+- Compaction of manifest shards into sorted runs, if a namespace passes
+  100 million documents before sharding across stores does.
 
 ## Model
 
-The store holds two kinds of thing.
+The store holds immutable objects in one bucket. Nothing is ever overwritten.
 
 A blob is an immutable sequence of bytes. Its name is the SHA-256 of its
 content. Two writes of the same bytes produce one blob.
 
-The root is the one cell that changes. It holds the digest of the current
-manifest.
+A manifest is a blob that maps keys to document digests. A namespace that
+outgrows one manifest splits into a two-level tree. The root manifest maps
+key ranges to shard digests, and a shard maps keys to document digests.
 
-A manifest is a blob. It maps a namespace and a document identifier to the
-digest of that document.
+A WAL record is an object at a sequenced name. It holds the operations of one
+committed batch: upserts, deletes, and ref updates.
 
-```
-  root ──► manifest blob
-             {"repo": {"cas/disk.go": "e4cbad1c…"}}
-                                          │
-                                          ▼
-                                    document blob
-```
+A ref names a branch and holds a manifest digest. The set of refs lives in
+the checkpoint, and a ref update is an operation in a WAL record.
 
-A content-addressed store names bytes. It cannot answer which document a
-namespace holds under an identifier, because that answer changes. The root
-carries the change, so an update to the whole store is one swap of one pointer.
-
-The cost is that every write rewrites the manifest. The section on manifest cost
-gives the measurement.
-
-## The store and the driver
-
-One concrete store sits above one driver interface. A caller sees the store
-and never a driver.
+A checkpoint is a blob that holds the refs, the manifest tree digests, and
+the WAL sequence number it covers. A pointer object at a sequenced name marks
+each checkpoint.
 
 ```
-  index layer
-       │
-       ▼
-  cas.Store           concrete — hash, check, wrap
-       │
-       ▼
-  driver.Driver       interface — move named bytes
-       │
-   ┌───┴────┬───────────────┐
-   ▼        ▼               ▼
- memory    disk      object store (future)
+  wal/…0041 ─┐ ops                 checkpoints/…0040
+  wal/…0042 ─┤                          │
+             ▼                          ▼
+        state in memory  ◄────  checkpoint blob
+                                 refs {"main": m1}
+                                        │
+                              root manifest m1
+                               ┌────────┴───────┐
+                               ▼                ▼
+                           shard blob       shard blob
+                               │
+                               ▼
+                          document blob
 ```
 
-The driver interface moves into its own package. A caller that imports
-`cas/driver` is visible in review, so the raw interface stays out of
-application code.
+The current state of a branch is its checkpoint plus the WAL tail after it.
+Every object under a name is immutable, so a reader never sees a torn or a
+half-applied state.
+
+## The store and the bucket
+
+The store is one concrete type over `*blob.Bucket`. The v1 driver interface
+and the hand-written drivers disappear.
 
 ```diff
  internal/cas/
-+├── driver/
-+│   └── driver.go   # Driver, Digest, ErrNotFound
- ├── cas.go          # Store
- ├── disk.go
- └── memory.go
+-├── disk.go
+-├── memory.go
+ └── cas.go     # Store over *blob.Bucket
 ```
 
-```go
-package driver
+`gocloud.dev/blob` is a new dependency, agreed on 2026-08-14. It replaces our
+rename, sync, and directory code with drivers that Google runs over memory,
+local files, GCS, and S3. `main` wires a bucket in one line per environment.
 
-type Driver interface {
-	WriteBlob(d Digest, data []byte) error
-	ReadBlob(d Digest) ([]byte, error)
-	SetRoot(d Digest) error
-	Root() (Digest, bool, error)
-}
-```
+The store still owns every portable rule, so it exists once over all four
+drivers:
 
-The store is concrete, so every portable rule exists once:
+- `Put` hashes the bytes and names the blob. A driver that holds the name
+  already skips the write.
+- `Get` hashes the result and rejects a mismatch. A mismatch is bit rot and
+  not a miss.
+- The store maps `gcerrors` codes to its own errors. A caller tests
+  `errors.Is(err, cas.ErrNotFound)` and never imports a driver package.
 
-- `Put` hashes the bytes and names the blob.
-- `Get` hashes the result and rejects a mismatch. The name of a blob is the
-  hash of its content, so a mismatch is bit rot and not a miss.
-- The store rejects a malformed digest before any driver call.
-- The store wraps a driver error with the operation and the digest.
+Every store method takes a context and passes it to the bucket, because two
+of the four drivers cross the network.
 
-The driver receives that list as a guarantee, mirrored. A digest that reaches
-a driver is valid. Bytes that reach `WriteBlob` hash to their digest. A driver
-thus holds no defensive code, and a new driver is four byte operations.
-gocloud.dev runs this exact shape over memory, disk, GCS, and S3, and its
-drivers stay small for the same reason.
+Facts this design relies on, checked against the go-cloud source and the
+provider documents on 2026-08-14:
 
-The cost is one hash per read under every driver. The memory driver pays it
-for a bit rot that a map cannot suffer.
-
-The memory driver holds a map and a variable. The disk driver holds files.
-Nothing above the store branches on which one it has.
-
-A blob is immutable, so two writes of one name carry the same bytes. A driver
-can skip a write of a name it already holds.
-
-The store is a struct and not an interface. One implementation exists, and an
-interface with one implementation selects nothing. A test reaches every store
-behaviour through the memory driver. The interface returns when a second store
-shape appears, for example a cache in front of a slower driver.
-
-`main` wires a driver into the store in one line. A registry that selects a
-driver from a URL scheme earns its place at many drivers, and this store has
-two.
-
-`SetRoot` requires the caller to serialize its calls. Two concurrent calls race,
-and neither the store nor a driver orders them. The index layer holds one mutex,
-which supplies that order.
-
-`Put` takes a byte slice and not a reader. The store hashes a whole blob before
-it can name it, and every caller already holds the bytes. The cost is that a
-document too large for memory has no path through the store.
-
-No method takes a context. Both drivers are local, and neither `os.Rename` nor
-`File.Sync` observes a context. A parameter that no implementation reads claims
-that cancellation works. The object-store driver in future work does read one,
-and its arrival puts a context on every method.
-
-The index layer above does take a context, because it has work to abandon. It
-checks the context once per document, and again after it holds the commit lock.
-A batch of ten thousand documents thus stops when its caller goes away.
-
-## Errors
-
-A driver returns its own error, and marks a missing name with
-`driver.ErrNotFound`. The disk driver translates `fs.ErrNotExist` into the
-sentinel. The memory driver returns the sentinel itself.
-
-The store wraps every driver error with the operation and the digest, and
-keeps the chain with `%w`. A caller tests with
-`errors.Is(err, cas.ErrNotFound)` and never imports the driver package.
-`cas.ErrNotFound` is `driver.ErrNotFound` under a portable name.
-
-One sentinel is enough for two local drivers. A remote driver returns status
-codes, and its arrival grows the sentinel into a small code enum. The chain
-keeps the raw error either way, so `errors.As` still reaches an
-`*os.PathError` when a test needs one.
-
-## The conformance suite
-
-The driver contract lives in one test suite. The suite drives each driver
-through the store's public API, so it tests the behaviour a caller sees and
-not the driver's private shape.
-
-```go
-func TestMemoryDriver(t *testing.T) { drivertest.Run(t, newMemory) }
-func TestDiskDriver(t *testing.T)   { drivertest.Run(t, newDisk) }
-```
-
-A new driver passes the suite or it is wrong, and the contract never forks
-into per-driver copies. The memory driver doubles as the oracle. It has no
-rename and no sync, so a behaviour that differs between the two drivers points
-at the disk driver's own code.
-
-## The disk layout
-
-```
-  <dir>/blobs/<64 hex characters>   one file per blob
-  <dir>/tmp/blob-*                  cleared at open
-  <dir>/root                        64 hex characters
-```
-
-The blob directory is flat. A flat directory keeps the write path free of
-directory creation, which removes the question of whether a new directory entry
-is durable. The cost is that a large namespace makes the directory slow to scan
-on some file systems. A fanout of the first hex characters is the fix, and the
-migration to it is one idempotent move of immutable files. The flat start does
-not trap the layout.
-
-A crash leaves a temporary file behind. Nothing can reach that file, so the open
-path deletes the contents of `tmp`.
+- fileblob writes a temporary file and renames it into place on `Close`. A
+  reader never sees a partial blob.
+- fileblob never calls fsync, on the file or on the directory. A crash can
+  lose an acknowledged write. Local files thus serve development only. The
+  design needs no fsync code of its own, because GCS and S3 acknowledge only
+  durable writes.
+- `WriterOptions.IfNotExist` is a server-side atomic create on GCS, S3, and
+  memblob. On fileblob it is a stat-then-rename race, safe only for one
+  process.
+- Compare-and-swap overwrite is not portable. GCS and S3 reach it through
+  per-provider `BeforeWrite` hooks, memblob and fileblob not at all. Thus
+  the design never overwrites an object.
+- GCS throttles writes to one object name to one per second. S3 serves at
+  least 3,500 writes per second per prefix. Only same-name overwrite meets
+  the GCS limit, and this design has no same-name overwrite.
 
 ## The write path
 
+Linearization comes from one primitive: create an object if it is absent.
+The WAL sequence is the order of the store.
+
 ```
-  1. marshal and store every document blob      no lock held
-  2. take the lock
+  1. upload every document blob        parallel, no contention
+  2. build the WAL record for the batch
   3. stop here if the context is done
-  4. copy the manifest, and point each identifier at its digest
-  5. store the new manifest blob
-  6. set the root
-  7. replace the manifest in memory
-  8. release the lock
+  4. create wal/<next> with IfNotExist
+  5. won the slot: the batch is committed
+     lost the slot: read the winner's record, apply it, go to 4
+  6. apply the record to the state in memory
 ```
 
-Step 3 is the last point at which a cancelled batch costs nothing. It leaves
-unreachable document blobs, and the namespace exactly as it was.
+A blob upload never contends, because the name is the content. Two writers
+that race on step 4 both hold durable blobs, and the loser retries with only
+one small object write.
 
-Steps 5 and 6 write to the disk under the lock. The lock exists to serialize the
-read-modify-write of the manifest, and the bulk of the work at step 1 stays
-outside it.
+Step 6 is the linearization point for readers in the process. Step 4 makes
+the batch durable before step 6 makes it visible, so a crash never removes a
+document that a query returned.
 
-A published manifest never changes. An upsert builds a new manifest and replaces
-a pointer, so a lookup holds the lock only for one map read.
+One committer per process takes step 4, and local writers queue behind it.
+Concurrent batches in one process thus share the slot race. This is group
+commit over the WAL.
 
-The linearization point is step 7. Step 6 makes a batch durable before step 7
-makes it visible. A crash thus never removes a document that a query already
-returned.
+A retried batch is harmless. Its blobs deduplicate to the same names, and its
+operations are upserts of digests, so a record applied twice yields the same
+state.
+
+On S3 a lost conditional create can also surface as a conflict error that
+go-cloud reports as `gcerrors.Unknown`, not `FailedPrecondition`. The commit
+loop treats both as a lost slot. This is a workaround for the missing mapping
+in s3blob.
+
+Every `wal/<seq>` name is new, so the GCS one-write-per-second limit on a
+single object name never applies.
+
+## Checkpoints
+
+Every K records, or T seconds, the committer materializes the state. It
+writes the dirty manifest shards, the root manifests, and the checkpoint
+blob. It then creates a pointer at `checkpoints/<seq>` with `IfNotExist`.
+K and T are tuning knobs, not promises, and K bounds recovery.
+
+Recovery lists `checkpoints/`, reads the highest one, and replays the WAL
+records after its sequence number. The replay is bounded by K. There is no
+torn record to detect, because a record is one immutable object.
+
+A checkpoint references only blobs that commits already made durable, so a
+checkpoint found at restart always resolves.
+
+## The bucket layout
+
+```
+  blobs/<64 hex>        document, manifest, and checkpoint blobs
+  wal/<20 digits>       one record per commit, created if absent
+  checkpoints/<20 digits>   pointer to a checkpoint blob
+```
+
+Keys never appear as object names. Object names are digests and sequence
+numbers, so provider limits on object names never constrain keys. fileblob
+maps this layout onto a directory tree, and `cat` and `shasum` still answer
+a doubt in development.
+
+## Branches
+
+A ref update is an ordinary operation in a WAL record. A branch is born from
+one committed record that points a new ref at an existing manifest digest.
+
+The new branch shares every shard and every document blob with its parent.
+A write to either branch builds new shards for the touched ranges and leaves
+the shared rest in place. Copy-on-write is not a feature. It is what an
+immutable tree does.
+
+Merge stays in future work. The model keeps it possible: two refs name two
+manifest trees, and a merge is a third tree built from both.
+
+## Keys
+
+A key is a UTF-8 byte string of at most 1 KiB. The cap is policy at the API,
+not structure in the store: keys live inside manifest entries, never in
+object names.
+
+Two extensions stay open, with their costs:
+
+- A 10 KiB cap multiplies the manifest entry size by up to 40. The scale
+  table shifts by one order of magnitude.
+- Arbitrary byte sequences require a manifest format whose keys are bytes.
+  The manifest is JSON today, so that change trades `cat`-readability for
+  generality. Nothing else in the store cares.
+
+## Scale
+
+Estimates, not measurements. One manifest entry is a key (200 B average), a
+digest (32 B), and framing, near 250 B. A shard targets 1 MiB, near 4,000
+entries. The in-memory map costs roughly 350 B per document.
+
+| Documents | Manifest data | Resident map | Verdict                        |
+| --------- | ------------- | ------------ | ------------------------------ |
+| 1 M       | ~250 MiB      | ~350 MiB     | Comfortable, memory or disk.   |
+| 10 M      | ~2.5 GiB      | ~3.5 GiB     | Fine on a server. Laptop edge. |
+| 100 M     | ~25 GiB       | ~35 GiB      | Map no longer fits everywhere. Shards load lazily behind a cache. Design target's edge. |
+| 1 B       | ~250 GiB      | out          | Every lookup can touch the bucket. Needs sorted runs and compaction. Out of scope. |
+| 10 B      | ~2.5 TiB      | out          | Partition across stores. Out of scope. |
+
+Checkpoint cost scales with dirty shards, not with the namespace. A batch
+that touches D distinct shards rewrites near D MiB at the next checkpoint.
+The v0 design rewrote the whole manifest on every write. The table above is
+the reason it did not survive the first scale question.
+
+memblob holds blobs, WAL, and checkpoints in process memory. It serves tests
+and small corpora, bounded by the process.
+
+## Throughput
+
+Estimates, not measurements. The WAL sequence is one serialization point,
+so the commit rate is one over the slot-create round trip:
+
+```
+  memblob    ~1 µs      ║  ~10^6 commits/s, CPU-bound
+  fileblob   ~1 ms      ║  ~10^3 commits/s, no fsync in the path
+  GCS / S3   30–100 ms  ║  ~10–30 commits/s
+```
+
+Documents per second is the commit rate times the batch size. Thirty commits
+per second with 1,000-document batches is 30,000 documents per second. Blob
+uploads bind first past that: S3 serves ~3,500 creates per second per prefix.
+Large documents move the bound to bandwidth.
+
+A workload past one WAL sequence needs several sequences, which is sharding
+across stores, a non-goal.
 
 ## What survives a crash
 
-Every file arrives through a rename into its final name. A rename within one
-file system is atomic, so a reader sees the old file or the new one. A sync of
-the containing directory follows every rename. The file sync alone leaves the
-directory entry in the page cache, and a crash can then lose a durable file.
+GCS and S3 acknowledge an object create only after it is durable. The order
+of the write path carries the rest.
 
 | Crash point | State after restart |
 | --- | --- |
-| Step 1 | The old root. The batch is absent. |
-| Between steps 1 and 6 | The old root. The batch is absent. |
-| During the root rename | The old root or the new root. |
-| After step 6 | The new root. The batch is complete. |
+| During step 1 | Unreachable blobs. The batch is absent. |
+| Before the slot create returns | The batch is absent, or committed whole. |
+| After step 4 | The batch is committed. Recovery replays it. |
+| During a checkpoint | The previous checkpoint stands. Replay covers the gap. |
 
-The order of the three durable writes carries the guarantee. A document blob
-reaches the disk before the manifest that names it. The manifest reaches the
-disk before the root that names it. A root found at restart thus always resolves.
+A WAL record references only blobs uploaded before it. A checkpoint
+references only committed state. An object found at restart thus always
+resolves, and nothing needs a repair pass.
 
-Recovery reads `root` and then one blob. There is no log to replay and no torn
-record to detect.
-
-An upsert is idempotent, because the same bytes give the same digest. A repeated
-batch produces the same manifest and the same root.
-
-A failed batch leaves its document blobs on the disk. Nothing points at them,
-so they are unreachable rather than wrong.
-
-## The cost of one manifest
-
-A write rewrites a whole manifest, so the cost of a write grows with the size of
-the namespace.
-
-The benchmarks in `internal/cas` and `internal/index` run on an Apple M-series
-laptop. `Put` stores one blob of 4 KiB. `Upsert` writes one document into a
-namespace of 1000 documents, and holds the namespace at that size.
-
-```
-  Put,    memory  ║                            0.003 ms
-  Put,    disk    ║░░░░░░░░░                  12.5   ms
-  Upsert, memory  ║                            0.35  ms
-  Upsert, disk    ║░░░░░░░░░░░░░░░░░░░░░░░░   31.9   ms
-```
-
-The disk figures are the cost of `fsync`. An upsert costs three durable writes:
-the document blob, the manifest blob, and the root. The memory figure is the
-manifest rewrite alone, and it is the number that grows with the namespace.
-
-Each benchmark writes new bytes on every iteration. A repeated document takes
-the already-stored path in `Put`, which measures a hash and a lookup instead of
-a write.
-
-Every write also leaves the manifest it replaced behind as garbage. The blob
-count thus grows with the write count and not with the document count, and the
-flat directory fills at that rate. Collection is due earlier than the document
-count suggests.
-
-An append-only log of identifier and digest records is the alternative. Its
-write cost does not grow with the namespace, and its compaction deletes one
-old file. It costs a record format, a checksum, and a replay path that
-truncates a torn tail. This note takes the manifest, because the demo writes
-hundreds of documents and not millions.
+On fileblob none of this holds after a machine crash, because nothing syncs.
+That is the accepted cost of a development driver.
 
 ## Determinism of a document blob
 
@@ -323,18 +314,37 @@ documents are the same.
 
 ## Concurrency
 
-One mutex serializes every writer. A reader takes the same mutex for one map
-read and then leaves it.
+The conditional create on `wal/<seq>` is the only arbiter, in one process and
+across processes. There is no lock file, no lease, and no store mutex. A
+process that loses a slot reads the winner's record and retries. Two
+processes on one bucket thus interleave instead of diverging, which retires
+the v0 flock plan.
 
-Throughput is one batch per root swap. A root swap makes two files durable,
-and each costs a file sync and a directory sync. Concurrent writers queue
-behind that.
+In one process, readers load the current state from an atomic pointer that
+the committer swaps at step 6. A reader never blocks on a writer's network
+round trip.
 
-Two processes on one directory diverge without an error. Each holds its own
-manifest, and the later root swap discards the work of the other. The lock
-file in future work closes that trap.
+fileblob has no atomic create, so a development store admits one process.
+Tests that need real contention run on memblob, which arbitrates correctly.
 
-CONSIDER(ali): does a lookup need to verify the digest of a document blob? The
-store hashes every read, which doubles the cost of a read of a large document.
-A background scrubber that walks the blob directory is the alternative, and it
-finds bit rot late instead of at the read.
+CONSIDER(ali): does a lookup need to verify the digest of a document blob?
+Hardware SHA-256 runs near 2 GiB/s, so a 10 MiB document costs ~5 ms of CPU.
+The network read behind it already costs tens of milliseconds. Verification
+stays on for now. A background scrubber is the alternative, and it finds bit
+rot late instead of at the read.
+
+## Large blobs
+
+Everything to 10 MiB moves as one request on every driver. The door to
+1 GiB and 10 GiB stays open but is not designed here:
+
+- Upload mechanics survive as is. The go-cloud writers switch to multipart
+  on S3 and resumable upload on GCS on their own.
+- `Put([]byte)` does not survive. The digest names the object, and the
+  digest is unknown until the last byte. A large blob thus needs a streamed
+  hash with a staged upload, or a chunk tree. In a chunk tree the document
+  blob becomes a list of chunk digests, each chunk under 10 MiB. The chunk
+  tree also caps memory, uploads in parallel, and deduplicates between
+  versions of one document.
+
+We recommend the chunk tree when the need arrives.
