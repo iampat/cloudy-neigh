@@ -17,6 +17,7 @@ The shape of the data bounds the design:
 - A key is a UTF-8 byte string, 200 bytes on average, 1 KiB at most.
 - A namespace holds up to 100 million documents. The scale section shows
   where the design bends and where it breaks.
+- A local disk is an SSD. The design ignores seek-bound media.
 
 Three constraints shape the answer. A write survives a crash, or it does not
 appear at all. A batch applies to every document or to none, because the API
@@ -24,7 +25,9 @@ promises that a client can always retry. Several writers, in one process or
 in several, commit to one store without a lock service.
 
 A fourth constraint comes from the purpose of this build. The storage has to
-show its own work. A reader who doubts a claim inspects the objects.
+show its own work. A reader who doubts a claim inspects the objects of a
+development store. Readability serves development and debugging, nothing
+more.
 
 ## Goals
 
@@ -236,8 +239,9 @@ Two extensions stay open, with their costs:
 - A 10 KiB cap multiplies the manifest entry size by up to 40. The scale
   table shifts by one order of magnitude.
 - Arbitrary byte sequences require a manifest format whose keys are bytes.
-  The manifest is JSON today, so that change trades `cat`-readability for
-  generality. Nothing else in the store cares.
+  The manifest is JSON today. Manifest readability serves development and
+  debugging only, and a long key is unreadable in any format. The change
+  thus costs a format migration and little else.
 
 ## Scale
 
@@ -314,11 +318,12 @@ documents are the same.
 
 ## Concurrency
 
-The conditional create on `wal/<seq>` is the only arbiter, in one process and
-across processes. There is no lock file, no lease, and no store mutex. A
-process that loses a slot reads the winner's record and retries. Two
-processes on one bucket thus interleave instead of diverging, which retires
-the v0 flock plan.
+Several processes on one bucket is the normal production case on GCS and S3,
+not an exception. The conditional create on `wal/<seq>` is the only arbiter,
+in one process and across processes. There is no lock file, no lease, and no
+store mutex. A process that loses a slot reads the winner's record and
+retries. Processes on one bucket thus interleave instead of diverging, which
+retires the v0 flock plan.
 
 In one process, readers load the current state from an atomic pointer that
 the committer swaps at step 6. A reader never blocks on a writer's network
@@ -332,6 +337,44 @@ Hardware SHA-256 runs near 2 GiB/s, so a 10 MiB document costs ~5 ms of CPU.
 The network read behind it already costs tens of milliseconds. Verification
 stays on for now. A background scrubber is the alternative, and it finds bit
 rot late instead of at the read.
+
+## Consistency
+
+Writes are linearizable. The WAL admits one record per sequence number, so
+every commit takes one position in one total order. A batch is one record,
+so a batch is atomic at its position.
+
+A read serves a snapshot: the state at the process's applied sequence
+number. A commit applies to the local state before the call returns. The
+snapshot model gives three guarantees and one gap:
+
+- Read-your-writes, in the process that wrote.
+- Monotonic reads. The applied position never moves backward.
+- Atomic batches. A snapshot sits between records, never inside one.
+- The gap: a snapshot can trail a commit from another process until the
+  next tail advance.
+
+A process advances with a tail probe: read `wal/<applied+1>` by exact name,
+apply it, and repeat until the name is absent. One probe is one round trip.
+When to probe is the freshness knob, and it prices the gap:
+
+| Probe        | Guarantee                          | Cost                    |
+| ------------ | ---------------------------------- | ----------------------- |
+| On a cadence | Staleness bounded by the cadence   | One probe per interval  |
+| Every read   | Linearizable reads                 | ~30–100 ms on every read |
+
+The default is a cadence. A search index tolerates bounded staleness, and a
+caller that needs cross-process read-your-writes pays the probe on its own
+reads.
+
+Provider facts, checked against the consistency documents on 2026-08-14. S3
+gives strong read-after-write consistency, and a new object appears in a
+listing at once. GCS gives strong global consistency for reads and for
+listing. The GCS exception is a publicly cached object, and this store sets
+no public cache control. The portable go-cloud `List` contract promises only
+eventual consistency, weaker than either provider. Correctness thus never rests on a listing. The tail probe reads exact
+names. The startup listing that finds the latest checkpoint can only
+lengthen a replay, never corrupt one.
 
 ## Large blobs
 
