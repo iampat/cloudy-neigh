@@ -1,6 +1,10 @@
 # Storage
 
-**Status:** Draft — 2026-08-13 — v0
+**Status:** Draft — 2026-08-14 — v1
+
+The code in `internal/cas` and `internal/index` implements the v0 draft of
+this note. That code is outdated. Where the code and this note disagree, the
+note wins, and the code catches up.
 
 ## Problem
 
@@ -17,6 +21,7 @@ its own work. A reader who doubts the durability claim inspects the files.
 ## Goals
 
 - One store over one driver interface, with a memory driver and a disk driver.
+- A driver moves named bytes and nothing more. The store owns every rule.
 - A batch applies whole or not at all.
 - Recovery reads one file. No log replay.
 - A person reads the on-disk state with `cat` and `shasum`.
@@ -29,6 +34,10 @@ its own work. A reader who doubts the durability claim inspects the files.
 
 ## Future work
 
+- An object-store driver, for example GCS or S3. A remote call can hang, so
+  that driver reads a context. Its arrival puts a context parameter on every
+  driver method. The change stays cheap while every driver lives in this
+  repository.
 - Collection of unreachable blobs. Mark from the root, then sweep the blob
   directory. The sweep spares a blob younger than a grace period, because a
   running batch owns blobs that no root names yet.
@@ -36,7 +45,9 @@ its own work. A reader who doubts the durability claim inspects the files.
   `flock` holds on the local file systems this store targets.
 - An incremental manifest, so that a write does not rewrite a whole namespace.
 - Group commit, so that concurrent writers share one flush.
-- A streaming path for a document too large to hold in memory.
+- A streaming path for a document too large to hold in memory. It arrives as
+  an optional driver interface. The store probes for it with a type assertion
+  and falls back to the byte-slice path.
 
 ## Model
 
@@ -68,31 +79,63 @@ gives the measurement.
 
 ## The store and the driver
 
-One struct implements the store. A driver interface sits below it and moves
-named bytes. This is the shape of `database/sql`: one concrete type above one
-driver interface.
+One concrete store sits above one driver interface. A caller sees the store
+and never a driver.
+
+```
+  index layer
+       │
+       ▼
+  cas.Store           concrete — hash, check, wrap
+       │
+       ▼
+  driver.Driver       interface — move named bytes
+       │
+   ┌───┴────┬───────────────┐
+   ▼        ▼               ▼
+ memory    disk      object store (future)
+```
+
+The driver interface moves into its own package. A caller that imports
+`cas/driver` is visible in review, so the raw interface stays out of
+application code.
+
+```diff
+ internal/cas/
++├── driver/
++│   └── driver.go   # Driver, Digest, ErrNotFound
+ ├── cas.go          # Store
+ ├── disk.go
+ └── memory.go
+```
 
 ```go
+package driver
+
 type Driver interface {
 	WriteBlob(d Digest, data []byte) error
 	ReadBlob(d Digest) ([]byte, error)
 	SetRoot(d Digest) error
 	Root() (Digest, bool, error)
 }
-
-type Store struct {
-	driver Driver
-}
 ```
 
-The store exposes `Put`, `Get`, `SetRoot`, and `Root`. `Put` hashes the bytes,
-names the blob, and hands both to the driver. `Get` reads through the driver,
-hashes the result, and rejects a mismatch. The name of a blob is the hash of
-its content, so a mismatch is bit rot and not a miss.
+The store is concrete, so every portable rule exists once:
 
-The naming and the check thus exist once. A new driver implements four byte
-operations and inherits both. The cost is one hash per read under every driver.
-The memory driver pays it for a bit rot that a map cannot suffer.
+- `Put` hashes the bytes and names the blob.
+- `Get` hashes the result and rejects a mismatch. The name of a blob is the
+  hash of its content, so a mismatch is bit rot and not a miss.
+- The store rejects a malformed digest before any driver call.
+- The store wraps a driver error with the operation and the digest.
+
+The driver receives that list as a guarantee, mirrored. A digest that reaches
+a driver is valid. Bytes that reach `WriteBlob` hash to their digest. A driver
+thus holds no defensive code, and a new driver is four byte operations.
+gocloud.dev runs this exact shape over memory, disk, GCS, and S3, and its
+drivers stay small for the same reason.
+
+The cost is one hash per read under every driver. The memory driver pays it
+for a bit rot that a map cannot suffer.
 
 The memory driver holds a map and a variable. The disk driver holds files.
 Nothing above the store branches on which one it has.
@@ -105,6 +148,10 @@ interface with one implementation selects nothing. A test reaches every store
 behaviour through the memory driver. The interface returns when a second store
 shape appears, for example a cache in front of a slower driver.
 
+`main` wires a driver into the store in one line. A registry that selects a
+driver from a URL scheme earns its place at many drivers, and this store has
+two.
+
 `SetRoot` requires the caller to serialize its calls. Two concurrent calls race,
 and neither the store nor a driver orders them. The index layer holds one mutex,
 which supplies that order.
@@ -115,12 +162,44 @@ document too large for memory has no path through the store.
 
 No method takes a context. Both drivers are local, and neither `os.Rename` nor
 `File.Sync` observes a context. A parameter that no implementation reads claims
-that cancellation works. The cost is that a remote driver needs a different
-interface.
+that cancellation works. The object-store driver in future work does read one,
+and its arrival puts a context on every method.
 
 The index layer above does take a context, because it has work to abandon. It
 checks the context once per document, and again after it holds the commit lock.
 A batch of ten thousand documents thus stops when its caller goes away.
+
+## Errors
+
+A driver returns its own error, and marks a missing name with
+`driver.ErrNotFound`. The disk driver translates `fs.ErrNotExist` into the
+sentinel. The memory driver returns the sentinel itself.
+
+The store wraps every driver error with the operation and the digest, and
+keeps the chain with `%w`. A caller tests with
+`errors.Is(err, cas.ErrNotFound)` and never imports the driver package.
+`cas.ErrNotFound` is `driver.ErrNotFound` under a portable name.
+
+One sentinel is enough for two local drivers. A remote driver returns status
+codes, and its arrival grows the sentinel into a small code enum. The chain
+keeps the raw error either way, so `errors.As` still reaches an
+`*os.PathError` when a test needs one.
+
+## The conformance suite
+
+The driver contract lives in one test suite. The suite drives each driver
+through the store's public API, so it tests the behaviour a caller sees and
+not the driver's private shape.
+
+```go
+func TestMemoryDriver(t *testing.T) { drivertest.Run(t, newMemory) }
+func TestDiskDriver(t *testing.T)   { drivertest.Run(t, newDisk) }
+```
+
+A new driver passes the suite or it is wrong, and the contract never forks
+into per-driver copies. The memory driver doubles as the oracle. It has no
+rename and no sync, so a behaviour that differs between the two drivers points
+at the disk driver's own code.
 
 ## The disk layout
 
