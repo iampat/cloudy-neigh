@@ -97,4 +97,5 @@ imports it. Delete the copies when the tool finishes.
 
 For planning a new feature or design, use the `plan-feature` skill. For any
 documentation or technical prose — `docs/`, READMEs, PR descriptions — use the
-`design-note` skill.
+`design-note` skill. Before you present a design as done, use the `jeff-dean`
+skill to get an external review from `agy`.
