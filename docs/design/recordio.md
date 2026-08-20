@@ -203,60 +203,31 @@ import (
 
 // ProtoWriter writes typed protobuf messages with zero intermediate slice allocations.
 type ProtoWriter[T proto.Message] struct {
-    writer *Writer
-    buf    []byte
-    opts   proto.MarshalOptions
+    // unexported fields
 }
 
-func NewProtoWriter[T proto.Message](w *Writer, opts ...ProtoOption) *ProtoWriter[T] {
-    return &ProtoWriter[T]{
-        writer: w,
-        buf:    make([]byte, 0, 4096),
-        opts:   proto.MarshalOptions{},
-    }
-}
+// NewProtoWriter creates a typed protobuf writer wrapping a recordio.Writer.
+func NewProtoWriter[T proto.Message](w *Writer, opts ...ProtoWriterOption) *ProtoWriter[T]
 
-func (pw *ProtoWriter[T]) Write(msg T) error {
-    pw.buf = pw.buf[:0]
-    data, err := pw.opts.MarshalAppend(pw.buf, msg)
-    if err != nil {
-        return err
-    }
-    pw.buf = data
-    _, err = pw.writer.WriteRecord(pw.buf)
-    return err
-}
+// Write marshals and writes a typed protobuf message directly into the underlying record stream.
+func (pw *ProtoWriter[T]) Write(msg T) error
 
 // ProtoScanner scans typed protobuf messages directly from a RecordIO stream.
 type ProtoScanner[T proto.Message] struct {
-    scanner *Scanner
-    factory func() T
-    current T
-    opts    proto.UnmarshalOptions
+    // unexported fields
 }
 
-func NewProtoScanner[T proto.Message](s *Scanner, factory func() T) *ProtoScanner[T] {
-    return &ProtoScanner[T]{
-        scanner: s,
-        factory: factory,
-    }
-}
+// NewProtoScanner creates a typed protobuf scanner wrapping a recordio.Scanner.
+func NewProtoScanner[T proto.Message](s *Scanner, factory func() T, opts ...ProtoScannerOption) *ProtoScanner[T]
 
-func (ps *ProtoScanner[T]) Scan() bool {
-    if !ps.scanner.Scan() {
-        return false
-    }
-    ps.current = ps.factory()
-    return ps.opts.Unmarshal(ps.scanner.Record(), ps.current) == nil
-}
+// Scan advances the scanner to the next record and unmarshals it into a typed protobuf message.
+func (ps *ProtoScanner[T]) Scan() bool
 
-func (ps *ProtoScanner[T]) Message() T {
-    return ps.current
-}
+// Message returns the most recently scanned typed protobuf message.
+func (ps *ProtoScanner[T]) Message() T
 
-func (ps *ProtoScanner[T]) Err() error {
-    return ps.scanner.Err()
-}
+// Err returns the first non-EOF error encountered by the scanner.
+func (ps *ProtoScanner[T]) Err() error
 ```
 
 ---
