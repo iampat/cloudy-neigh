@@ -33,10 +33,19 @@ Who asks for the review decides what the prompt carries.
 ## Expect a dialogue
 
 The persona interrogates a spec with missing bounds, and it ends a turn with
-questions. Do not expect the whole review in one shot. Answer each question
-with facts from the repository, and continue until the review lands. A file or
-a number the reviewer asks for is safe to supply. The reviewer's request is
-not your framing.
+questions. Do not expect the whole review in one shot. A file or a number the
+reviewer asks for is safe to supply. The reviewer's request is not your
+framing.
+
+Who answers the reviewer's questions depends on who invoked the skill.
+
+- The user invoked the skill: relay the questions to the user and wait for
+  the user's answers. Do not answer in the user's place. Send the answers
+  verbatim.
+- A loop or Claude Code fired the skill: answer from facts in the
+  repository. Answer only what is certain. Where a fact is unclear or a
+  number is an estimate, say so, and leave room for a miscalculation.
+  "I do not know" beats a confident error.
 
 ## When to ask
 
