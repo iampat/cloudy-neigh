@@ -298,23 +298,51 @@ Because RecordIO operates over standard `io.Writer` and `io.Reader` interfaces, 
 
 ---
 
-## 6. Implementation Plan & Milestones
+## 6. Implementation Milestones & Tracking
 
-```mermaid
-flowchart TD
-    M1["Milestone 1: Core Engine<br/>• Masked CRC32C (SIMD)<br/>• Writer & Scanner<br/>• Zero-allocation tests"] --> M2["Milestone 2: Generic Protobuf Layer<br/>• ProtoWriter[T]<br/>• ProtoScanner[T]<br/>• Benchmarks with test protos"]
-    M2 --> M3["Milestone 3: Stream Compression<br/>• Zstandard, Snappy, Gzip codecs<br/>• Round-trip verification"]
-    M3 --> M4["Milestone 4: Resilient / Range Reader<br/>• Distributed shard splitting<br/>• Fuzz testing & property tests"]
-```
+### Milestone 1: Core Zero-Copy Engine
+- [ ] **Framing & Checksumming (`crc.go`)**
+  - [ ] Implement hardware-accelerated CRC32C using Castagnoli polynomial (`hash/crc32`).
+  - [ ] Implement `Mask(crc uint32) uint32` and `Unmask(masked uint32) uint32`.
+  - [ ] Unit tests verifying standard test vectors and round-trip masking.
+- [ ] **Low-Level & Buffered Writer (`writer.go`)**
+  - [ ] Implement `Writer` with stack-allocated header/footer staging (`[12]byte`, `[4]byte`).
+  - [ ] Implement `WriteRecord(record []byte) (int, error)`.
+  - [ ] Implement `WriteRecordFrom(r io.Reader, length int64) (int64, error)`.
+  - [ ] Implement `Flush() error` and `Close() error`.
+  - [ ] Writer options (`WithBufferSize`, `WithSyncOnFlush`).
+- [ ] **Streaming Scanner & Reader (`scanner.go`, `reader.go`)**
+  - [ ] Implement `Scanner` with reusable buffer and sub-slice borrowing (`Record() []byte`).
+  - [ ] Implement `Scan() bool`, `RecordCopy() []byte`, `Offset() int64`, `Skip() bool`, and `Err() error`.
+  - [ ] Implement `Reader` for explicit caller-managed buffer control (`ReadRecord(buf []byte)`).
+  - [ ] Scanner options (`WithInitialBufferSize`, `WithMaxRecordSize`).
+- [ ] **Verification & Allocation Benchmarks (`recordio_test.go`)**
+  - [ ] Verify 0 B/op and 0 allocs/op in steady-state loop via `testing.AllocsPerRun`.
+  - [ ] Comprehensive edge cases: 0-byte payloads, multi-megabyte payloads, header bit-flip corruption, payload bit-flip corruption, truncated files at each byte offset.
 
-1. **Milestone 1 (Core Zero-Copy Engine):**
-   - Implement `crc.go`, `writer.go`, `scanner.go`, `reader.go`.
-   - Validate 0 allocs/op with `testing.AllocsPerRun`.
-   - Comprehensive test suite covering edge cases (0-byte payload, multi-MB records, truncated files, corrupt checksums).
-2. **Milestone 2 (Generic Protobuf Layer):**
-   - Implement `proto.go` with generic `ProtoWriter[T]` and `ProtoScanner[T]`.
-   - Add integration tests and end-to-end serialization benchmarks.
-3. **Milestone 3 (Compression):**
-   - Add compression adapters (`klauspost/compress/zstd`, `golang/snappy`, `compress/gzip`).
-4. **Milestone 4 (Fuzzing & Hardening):**
-   - Native Go fuzz testing (`testing.F`) for parser resilience against malicious or malformed inputs.
+### Milestone 2: Generic Protobuf Layer
+- [ ] **Generic ProtoWriter (`proto.go`)**
+  - [ ] Implement `ProtoWriter[T proto.Message]` utilizing `proto.MarshalOptions.MarshalAppend` to avoid heap allocations.
+  - [ ] Support custom `proto.MarshalOptions` (deterministic serialization, emit unpopulated fields).
+- [ ] **Generic ProtoScanner (`proto.go`)**
+  - [ ] Implement `ProtoScanner[T proto.Message]` unmarshaling directly from borrowed `Scanner.Record()` slice.
+  - [ ] Support reusable message instance pooling and custom `proto.UnmarshalOptions`.
+- [ ] **Protobuf Integration Benchmarks**
+  - [ ] Benchmark proto serialization and deserialization throughput and allocs against raw byte baselines.
+
+### Milestone 3: Stream Compression
+- [ ] **Compression Adapters (`compression.go`)**
+  - [ ] Define `CompressionCodec` enum and options (`None`, `Zstd`, `Snappy`, `Gzip`).
+  - [ ] Implement `Zstd` reader/writer wrappers (`klauspost/compress/zstd`).
+  - [ ] Implement `Snappy` reader/writer wrappers (`golang/snappy`).
+  - [ ] Implement `Gzip` reader/writer wrappers (`compress/gzip`).
+- [ ] **Compression Tests & Benchmarks**
+  - [ ] Round-trip validation across all codecs with varying payload entropy and sizes.
+  - [ ] Benchmark throughput and compression ratios.
+
+### Milestone 4: Range Reader & Hardening
+- [ ] **Distributed Shard Range Reader (`splittable.go`)**
+  - [ ] Implement `RangeScanner` over byte range `[startOffset, endOffset)` with record sync boundary detection.
+- [ ] **Fuzzing & Hardening**
+  - [ ] Native Go fuzz tests (`testing.F`) for scanner resilience against corrupted and malformed inputs.
+
