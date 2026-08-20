@@ -1,0 +1,102 @@
+// Every field number matches docs/design/grpc-api.md. A number the note assigns
+// to a feature this server does not serve stays free for that feature.
+
+syntax = "proto3";
+
+package cloudyneigh;
+
+option go_package = "github.com/iampat/cloudy-neigh/proto/cloudyneigh;cloudyneigh";
+
+import "google/protobuf/struct.proto";
+
+service IndexAPI {
+  rpc Write(WriteRequest) returns (WriteResponse);
+  rpc Query(QueryRequest) returns (QueryResponse);
+}
+
+// Later operations take 3 for patch, 4 for delete, 5 for delete_by_filter, and
+// 6 for schema.
+message WriteRequest {
+  string namespace = 1;
+
+  oneof operation {
+    Upsert upsert = 2;
+  }
+}
+
+message WriteResponse {}
+
+// Upsert writes a document whole. It replaces any document already held under
+// the same id.
+message Upsert {
+  repeated Document documents = 1;
+}
+
+// Document is the unit a client writes and reads back. The id is unique within
+// a namespace, and "id" is a reserved attribute name.
+message Document {
+  string id = 1;
+  map<string, Value> attributes = 2;
+}
+
+// Value holds one attribute. Later kinds take 3 for int, 4 for uint, 5 for
+// real, 6 for boolean, 7 for timestamp, 8 for blob, 9 for text_list, 10 for
+// int_list, and 11 for vector.
+message Value {
+  oneof kind {
+    google.protobuf.NullValue null = 1;
+    string text = 2;
+  }
+}
+
+// Later fields take 3 for projection, 4 for consistency, 5 for page, 6 for
+// profile, and 7 for explain.
+message QueryRequest {
+  string namespace = 1;
+  QueryNode query = 2;
+}
+
+// QueryNode is one step of a query plan. Later fields take 1 for name, 2 for
+// top_k, and 4 for fusion.
+message QueryNode {
+  oneof kind {
+    Retrieve retrieve = 3;
+  }
+}
+
+// Retrieve selects the documents a filter matches. A later field takes 2 for
+// rank_by.
+message Retrieve {
+  Filter filter = 1;
+}
+
+// Filter decides whether one document matches. Later kinds take 2 for all_of, 3
+// for any_of, and 4 for none_of.
+message Filter {
+  oneof kind {
+    Compare compare = 1;
+  }
+}
+
+// Compare tests one attribute against one predicate. Later predicates take 3
+// for not_eq, 4 for lt, 5 for lte, 6 for gt, 7 for gte, 8 for is_in, 9 for
+// not_in, 10 for contains_any, 11 for contains_all, 12 for prefix, 13 for glob,
+// 14 for regex, and 15 for fuzzy.
+message Compare {
+  string attribute = 1;
+
+  oneof predicate {
+    Value eq = 2;
+  }
+}
+
+// Later fields take 2 for next_cursor and 3 for profile.
+message QueryResponse {
+  repeated Match matches = 1;
+}
+
+// Match is one document a query returned. Later fields take 2 for score, 3 for
+// node_ranks, and 4 for explanation.
+message Match {
+  Document document = 1;
+}
