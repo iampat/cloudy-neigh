@@ -1,4 +1,4 @@
-# RecordIO Go Library Design
+# RecordIO
 
 **Status:** Draft — 2026-08-20 — v0
 
