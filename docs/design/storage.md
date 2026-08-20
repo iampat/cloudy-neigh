@@ -1,6 +1,6 @@
 # Storage
 
-**Status:** Draft — 2026-08-14 — v2
+**Status:** Draft — 2026-08-20 — v2
 
 The code in `internal/cas` and `internal/index` implements the v0 draft of
 this note. That code is outdated. Where the code and this note disagree, the
@@ -166,7 +166,10 @@ The WAL sequence is the order of the store.
 
 A blob upload never contends, because the name is the content. Two writers
 that race on step 4 both hold durable blobs, and the loser retries with only
-one small object write.
+one small object write. A loser waits a random, growing delay before the
+retry, so racing processes do not collide in lockstep. A writer batches by
+time, count, or byte size before it enters the path, which keeps the slot
+rate low.
 
 Step 6 is the linearization point for readers in the process. Step 4 makes
 the batch durable before step 6 makes it visible, so a crash never removes a
@@ -198,6 +201,13 @@ K and T are tuning knobs, not promises, and K bounds recovery.
 Recovery lists `checkpoints/`, reads the highest one, and replays the WAL
 records after its sequence number. The replay is bounded by K. There is no
 torn record to detect, because a record is one immutable object.
+
+Replay fetches in parallel. One listing of `wal/` finds the outstanding
+records, parallel reads fetch them, and the replay applies them in sequence
+order. Sequential probes would cost K round trips, near 3 s at K = 100. The
+parallel path costs a fraction of a second at the same K. As estimates,
+K near 200 or T near 15 seconds holds recovery under one second, against a
+target of a few seconds.
 
 A checkpoint references only blobs that commits already made durable, so a
 checkpoint found at restart always resolves.
@@ -238,10 +248,9 @@ Two extensions stay open, with their costs:
 
 - A 10 KiB cap multiplies the manifest entry size by up to 40. The scale
   table shifts by one order of magnitude.
-- Arbitrary byte sequences require a manifest format whose keys are bytes.
-  The manifest is JSON today. Manifest readability serves development and
-  debugging only, and a long key is unreadable in any format. The change
-  thus costs a format migration and little else.
+- Arbitrary byte sequences cost almost nothing. The canonical manifest
+  format stores a key as bytes already, and the JSON rendering escapes a
+  key that is not valid UTF-8. Only the API cap moves.
 
 ## Scale
 
@@ -261,6 +270,22 @@ Checkpoint cost scales with dirty shards, not with the namespace. A batch
 that touches D distinct shards rewrites near D MiB at the next checkpoint.
 The v0 design rewrote the whole manifest on every write. The table above is
 the reason it did not survive the first scale question.
+
+At the 100 M edge the resident set shrinks to three tiers. The root
+manifest stays resident, under 3 MiB. A Bloom filter per shard costs near
+125 MiB at 10 bits per document. The filters absorb almost every lookup of
+an absent key. Shards load on demand into a cache under a fixed memory budget.
+As estimates: a cache hit answers from memory, and a miss pays one round
+trip. A 90 percent hit rate holds the mean read under 5 ms.
+
+A uniform-random key workload dirties almost one shard per updated document.
+Two levers tame that checkpoint cost. One is a smaller shard target, 128
+to 256 KiB. The other is delta layers, which hold several records of
+changes before the shards materialize. Hierarchical keys need neither lever.
+
+CONSIDER(ali): the shard split policy is open. A split at the median key
+balances the tree. A fixed prefix of the key hash routes without a root
+lookup. The checkpoint pass can do either.
 
 memblob holds blobs, WAL, and checkpoints in process memory. It serves tests
 and small corpora, bounded by the process.
@@ -303,13 +328,29 @@ resolves, and nothing needs a repair pass.
 On fileblob none of this holds after a machine crash, because nothing syncs.
 That is the accepted cost of a development driver.
 
-## Determinism of a document blob
+## Canonical encoding
 
-A document holds a protobuf map of attributes, and protobuf does not order map
-entries. The same document would otherwise produce a new digest on every write.
+A digest is always the hash of the canonical binary encoding. The store can
+also render a manifest as JSON, as configuration, for a debugging eye. A
+rendering is never hashed, so the mode does not change a digest.
 
-The write path marshals with the deterministic option, which sorts map keys.
-Protobuf promises that order within one build and not across library versions.
+The storage-owned messages — manifest shards, WAL records, and checkpoints —
+obey four rules, and their bytes are then canonical by construction:
+
+- No protobuf map field in a hashed message. A map order belongs to the
+  library, not to the format.
+- Entries are a repeated field, sorted by the key bytes before the marshal.
+  The sort order is part of the format.
+- Field tags stay ascending, and a hashed message drops unknown fields.
+- One shared marshal configuration: deterministic, no partial messages.
+
+The document blob is different, because the API owns its shape. A document
+holds a protobuf map of attributes, and protobuf does not order map entries.
+The same document would otherwise produce a new digest on every write.
+
+The write path marshals it with the deterministic option, which sorts map
+keys. Protobuf promises that order within one build and not across library
+versions.
 
 A toolchain upgrade can thus give a stored document a new digest. That costs
 deduplication and not correctness. The manifest records the digest that a write
@@ -329,14 +370,16 @@ In one process, readers load the current state from an atomic pointer that
 the committer swaps at step 6. A reader never blocks on a writer's network
 round trip.
 
-fileblob has no atomic create, so a development store admits one process.
-Tests that need real contention run on memblob, which arbitrates correctly.
+A development store admits one process, because fileblob has no atomic
+create. In that process, one lock serializes the commit path, over memblob
+and fileblob alike. Tests that need real contention run on memblob, which
+arbitrates correctly.
 
-CONSIDER(ali): does a lookup need to verify the digest of a document blob?
-Hardware SHA-256 runs near 2 GiB/s, so a 10 MiB document costs ~5 ms of CPU.
-The network read behind it already costs tens of milliseconds. Verification
-stays on for now. A background scrubber is the alternative, and it finds bit
-rot late instead of at the read.
+Every read from the bucket verifies the digest. Hardware SHA-256 runs near
+2 GiB/s, so a 10 MiB document costs ~5 ms of CPU under a network read that
+costs tens of milliseconds. A cache added later holds verified bytes, and a
+cache hit skips the hash. A background scrubber would find the same bit rot
+late instead of at the read.
 
 ## Consistency
 
@@ -356,6 +399,8 @@ snapshot model gives three guarantees and one gap:
 
 A process advances with a tail probe: read `wal/<applied+1>` by exact name,
 apply it, and repeat until the name is absent. One probe is one round trip.
+A process that trails by many records catches up as recovery does: one
+listing, parallel reads, and an ordered apply.
 When to probe is the freshness knob, and it prices the gap:
 
 | Probe        | Guarantee                          | Cost                    |
