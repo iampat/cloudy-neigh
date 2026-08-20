@@ -46,7 +46,7 @@ The canonical RecordIO framing encapsulates variable-length binary payloads with
 | uint64: Length (8B)   | uint32: Masked CRC32C (4B)  | byte[]: Data Payload (Length B)   | uint32: Masked CRC32C (4B)  |
 | Little-Endian         | Little-Endian               | Raw byte stream                   | Little-Endian               |
 +-----------------------+-----------------------------+-----------------------------------+-----------------------------+
-|<--------------------- Header: 12 Bytes -------------------->|<----------- Payload ------------->|<---- Footer: 4 Bytes ----->|
+|<---------------- Header: 12 Bytes ----------------->|<----- Payload: Length Bytes ----->|<----- Footer: 4 Bytes ----->|
 ```
 
 Every record adds exactly **16 bytes** of framing overhead.
@@ -75,17 +75,17 @@ $$\text{UnmaskedCRC}(y) = \left( ((y - 0\text{xa282ead8}) \gg 17) \mid ((y - 0\t
 In high-throughput systems (10GbE–100GbE ingestion, local NVMe reads at 2–7 GB/s), heap allocations dominate execution profiles, triggering severe Garbage Collection (GC) pauses and allocator contention. The core engine is designed for zero-copy operation and defensive bounds.
 
 ```text
-[ Reader / OS File ]
-       │
-       ▼ (Sequential read / Seek)
+                    [ Reader / OS File ]
+                              │
+                              ▼ (Sequential read / Seek)
 ┌──────────────────────────────────────────────────────────┐
 │ Scanner Internal Ring / Reusable Buffer                  │
 │ ┌───────────────┬────────────────────────┬─────────────┐ │
-│ │ 12B Header    │ Payload (N bytes)      │ 4B Footer   │ │
+│ │  12B Header   │   Payload (N bytes)    │  4B Footer  │ │
 │ └───────────────┴───────────┬────────────┴─────────────┘ │
 └─────────────────────────────┼────────────────────────────┘
                               │
-                    Borrowed Sub-slice: buf[12 : 12+N]
+              Borrowed Sub-slice: buf[12 : 12+N]
                               │
                               ▼
                ┌─────────────────────────────┐
