@@ -23,6 +23,7 @@
       "command(gh pr list*)",
       "command(gh pr diff*)",
       "command(gh pr checks*)",
+      "command(gh pr edit*)",
       "command(gh pr create*)",
       "command(git status*)",
       "command(git diff*)",
