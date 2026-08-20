@@ -150,8 +150,12 @@ func (w *Writer) WriteRecord(record []byte) (int, error)
 // WriteRecordFrom streams a record directly from an io.Reader of known length.
 func (w *Writer) WriteRecordFrom(r io.Reader, length int64) (int64, error)
 
-// Flush flushes any pending buffered data to the underlying writer.
+// Flush flushes pending buffered data from user-space memory to the underlying io.Writer.
 func (w *Writer) Flush() error
+
+// Sync flushes user-space buffers and invokes fsync on the underlying destination if it implements Sync() error.
+// Required for WAL commit durability guarantees.
+func (w *Writer) Sync() error
 
 // Close flushes data and closes any wrapped resources.
 func (w *Writer) Close() error
@@ -184,6 +188,10 @@ func (s *Scanner) RecordCopy() []byte
 
 // Offset returns the byte offset in the underlying stream where the current record begins.
 func (s *Scanner) Offset() int64
+
+// LastValidOffset returns the byte offset up to which all previous records were cleanly validated.
+// Essential for WAL crash recovery to safely truncate uncommitted torn writes at the tail.
+func (s *Scanner) LastValidOffset() int64
 
 // Skip skips the next record without reading its payload into the record buffer.
 func (s *Scanner) Skip() bool
@@ -232,24 +240,41 @@ func (ps *ProtoScanner[T]) Err() error
 
 ---
 
-## 4. Error Handling & Corruption Semantics
+## 4. Error Handling & WAL Recovery Semantics
 
-Data integrity failures must be surfaced with precise error types to enable recovery or clean failure logging:
+Data integrity failures must be surfaced with precise error types to differentiate between crash-induced torn writes and mid-stream data corruption:
 
 ```go
 var (
-    ErrHeaderCorrupted = errors.New("recordio: header length CRC mismatch")
-    ErrDataCorrupted   = errors.New("recordio: payload data CRC mismatch")
+    ErrTornWrite       = errors.New("recordio: incomplete record at stream tail (torn write)")
+    ErrHeaderCorrupted = errors.New("recordio: header length CRC mismatch mid-stream")
+    ErrDataCorrupted   = errors.New("recordio: payload data CRC mismatch mid-stream")
     ErrUnexpectedEOF   = errors.New("recordio: unexpected EOF within record")
     ErrRecordTooLarge  = errors.New("recordio: record size exceeds max limit")
 )
 ```
 
-### Corruption Recovery Behavior
+### WAL Crash Recovery & Replay Workflow
 
-1. **Header CRC Mismatch:** If `LengthCRC` does not match the calculated CRC of `Length`, the stream is desynchronized. Readers fail immediately unless configured in resilient scan mode.
-2. **Payload CRC Mismatch:** If `DataCRC` fails, the scanner flags `ErrDataCorrupted`. In permissive mode, the scanner can advance by $(N + 4)$ bytes and attempt to read the subsequent record.
-3. **Clean EOF vs Truncated Record:** If `io.EOF` occurs on an exact 16-byte boundary between records, `Scan()` returns `false` with `Err() == nil`. If EOF occurs inside a record header or payload, `Err()` reports `ErrUnexpectedEOF`.
+In a Write-Ahead Log (WAL), records represent an ordered sequence of state machine mutations. The recovery engine enforces two distinct policies depending on where corruption occurs:
+
+```text
+Scenario A: Crash during write (Torn Write at Tail) -> RECOVERABLE
+[ Record 1 (OK) ] [ Record 2 (OK) ] [ Record 3 (Half-written / Crashed) ] EOF
+                                    └── Truncate file at LastValidOffset()
+
+Scenario B: Bit-rot in the middle of the log -> FATAL
+[ Record 1 (OK) ] [ Record 2 (Corrupt Length/CRC) ] [ Record 3 (OK) ] ... EOF
+                  └── HARD STOP! Fail-fast to preserve prefix consistency.
+```
+
+1. **Tail Crash / Torn Write (`ErrTornWrite` / `ErrUnexpectedEOF`):**
+   - If an incomplete 12-byte header or truncated payload is encountered immediately followed by `io.EOF`, the scanner returns `ErrTornWrite`.
+   - The WAL replay engine retrieves `scanner.LastValidOffset()` and truncates the file back to the end of the last complete transaction.
+2. **Mid-Stream Bit-Rot (`ErrHeaderCorrupted` / `ErrDataCorrupted`):**
+   - If `LengthCRC` or `DataCRC` fails in the middle of the log, the scanner immediately terminates iteration and reports the error.
+   - **Prefix Invariant:** The scanner **never** skips forward over corrupted mid-log records during WAL replay, preventing state machine divergence.
+3. **Clean EOF:** If `io.EOF` occurs on an exact 16-byte boundary between records, `Scan()` returns `false` with `Err() == nil`.
 
 ---
 
@@ -285,16 +310,19 @@ Because RecordIO operates over standard `io.Writer` and `io.Reader` interfaces, 
   - [ ] Implement `WriteRecord(record []byte) (int, error)`.
   - [ ] Implement `WriteRecordFrom(r io.Reader, length int64) (int64, error)`.
   - [ ] Implement `Flush() error` and `Close() error`.
+  - [ ] Implement `Sync() error` (`fsync` durability contract on commit).
   - [ ] Writer options (`WithBufferSize`, `WithSyncOnFlush`).
 - [ ] **Streaming Scanner & Reader (`scanner.go`, `reader.go`)**
   - [ ] Implement `Scanner` with reusable buffer and sub-slice borrowing (`Record() []byte`).
   - [ ] Implement `Scan() bool`, `RecordCopy() []byte`, `Offset() int64`, and `Err() error`.
+  - [ ] Implement `LastValidOffset() int64` for crash-recovery tail truncation.
   - [ ] Implement `Skip() bool` with `io.Seeker` fast-path (~200ns `lseek`) and streaming fallback.
   - [ ] Implement `Reader` for explicit caller-managed buffer control (`ReadRecord(buf []byte)`).
   - [ ] Scanner options (`WithInitialBufferSize`, `WithMaxRecordSize` defaulting to 64 MB).
 - [ ] **Verification & Allocation Benchmarks (`recordio_test.go`)**
   - [ ] Verify 0 B/op and 0 allocs/op in steady-state loop via `testing.AllocsPerRun`.
   - [ ] Defensive bounds validation: ensure corrupted length headers (e.g. `0xFFFFFFFFFFFFFFFF`) fail with zero memory allocation.
+  - [ ] WAL crash recovery test: simulate partial writes at stream tail and assert `ErrTornWrite` + accurate `LastValidOffset()`.
   - [ ] Comprehensive edge cases: 0-byte payloads, multi-megabyte payloads, header bit-flip corruption, payload bit-flip corruption, truncated files at each byte offset.
 
 ### Milestone 2: Generic Protobuf Layer
