@@ -28,6 +28,7 @@ This document defines the architecture, wire format, memory model, and public Go
 
 ## Non-Goals
 
+- **Random Record Access / Secondary Indexing:** RecordIO is strictly a sequential, append-only streaming format. Point lookups by record offset or primary key require an external index structure (e.g. sidecar index `.idx` or SSTable index blocks).
 - **Columnar Layouts / SQL Predicate Pushdown:** RecordIO is strictly a sequential, row-oriented binary streaming format. Columnar projection (Parquet, ORC, Arrow) is out of scope.
 - **In-Place Updates:** RecordIO files are append-only. Mutation requires rewriting or compaction.
 - **Distributed Coordination:** The library provides single-stream / range readers; cluster-level partition assignment is handled by the calling orchestration system.
@@ -71,12 +72,12 @@ $$\text{UnmaskedCRC}(y) = \left( ((y - 0\text{xa282ead8}) \gg 17) \mid ((y - 0\t
 
 ## 2. Memory Model & Zero-Copy Architecture
 
-In high-throughput systems (10GbE–100GbE ingestion, local NVMe reads at 2–7 GB/s), heap allocations dominate execution profiles, triggering severe Garbage Collection (GC) pauses. The core engine is designed for zero-copy operation.
+In high-throughput systems (10GbE–100GbE ingestion, local NVMe reads at 2–7 GB/s), heap allocations dominate execution profiles, triggering severe Garbage Collection (GC) pauses and allocator contention. The core engine is designed for zero-copy operation and defensive bounds.
 
 ```text
 [ Reader / OS File ]
        │
-       ▼ (Sequential read)
+       ▼ (Sequential read / Seek)
 ┌──────────────────────────────────────────────────────────┐
 │ Scanner Internal Ring / Reusable Buffer                  │
 │ ┌───────────────┬────────────────────────┬─────────────┐ │
@@ -95,16 +96,18 @@ In high-throughput systems (10GbE–100GbE ingestion, local NVMe reads at 2–7 
 ### A. Zero-Allocation Write Path
 
 1. **Stack-Allocated Framing Staging:** The 12-byte header and 4-byte footer are serialized into fixed arrays on the stack (`var header [12]byte`, `var footer [4]byte`).
-2. **Single Pass I/O:** The writer writes `header[:]`, `payload`, and `footer[:]` into an underlying `bufio.Writer` or vectorized writer, avoiding payload copy or intermediate slice allocation.
-3. **`WriteRecordFrom(io.Reader, int64)`:** Allows piping large blobs directly into the stream without holding the full record in memory.
+2. **Buffered I/O by Default:** The `Writer` embeds a default 64 KB staging buffer (`DefaultBufferSize = 64 * 1024`) to amortize syscall overhead. Writing 100B–1KB records without buffering would bottleneck on kernel transitions.
+3. **Concurrency Contract:** `recordio.Writer` is strictly **single-goroutine (unlocked)** for maximum throughput. Callers with concurrent producers synchronize externally via mutex or fan-in channels.
+4. **`WriteRecordFrom(io.Reader, int64)`:** Allows piping large blobs directly into the stream without holding the full record in memory.
 
 ### B. Zero-Allocation Read Path (`Scanner`)
 
-1. **Buffer Reusability:** The `Scanner` owns a single internal backing buffer (`[]byte`) that dynamically grows to fit the largest record encountered, but is reused across every subsequent record.
+1. **Buffer Reusability:** The `Scanner` owns a single internal backing buffer (`[]byte`) that dynamically grows up to `MaxRecordSize` (default: 64 MB), reused across every subsequent record.
 2. **Sub-slice Borrowing:** `Scanner.Record()` returns a sub-slice pointing directly into the internal buffer:
    - **Contract:** The returned slice is valid **only until the next call to `Scan()`**.
    - **Ownership Escape:** Callers needing to retain the record across iterations must call `Scanner.RecordCopy()`, which explicitly allocates a dedicated copy.
-3. **No-Allocation Skip:** `Scanner.Skip()` advances the underlying stream by $(N + 4)$ bytes after validating the header without copying payload bytes into memory.
+3. **Poison-Pill & OOM Defense:** Before allocating or growing any buffer, the scanner validates `Length <= MaxRecordSize` **and** verifies `LengthCRC`. Corrupted length headers (e.g. `0xFFFFFFFFFFFFFFFF`) fail immediately with zero heap allocation.
+4. **`io.Seeker` Fast-Path for `Skip()`:** If the underlying reader satisfies `io.Seeker` (such as `*os.File`), `Scanner.Skip()` performs a single fast kernel `Seek(N + 4, io.SeekCurrent)` syscall (~200 ns) to bypass payloads without transferring discard bytes across user/kernel space. For streaming network inputs (`io.Reader`), it falls back to streaming discard.
 
 ---
 
@@ -307,17 +310,20 @@ Because RecordIO operates over standard `io.Writer` and `io.Reader` interfaces, 
   - [ ] Unit tests verifying standard test vectors and round-trip masking.
 - [ ] **Low-Level & Buffered Writer (`writer.go`)**
   - [ ] Implement `Writer` with stack-allocated header/footer staging (`[12]byte`, `[4]byte`).
+  - [ ] Implement default 64 KB buffered staging (`DefaultBufferSize = 64 * 1024`).
   - [ ] Implement `WriteRecord(record []byte) (int, error)`.
   - [ ] Implement `WriteRecordFrom(r io.Reader, length int64) (int64, error)`.
   - [ ] Implement `Flush() error` and `Close() error`.
   - [ ] Writer options (`WithBufferSize`, `WithSyncOnFlush`).
 - [ ] **Streaming Scanner & Reader (`scanner.go`, `reader.go`)**
   - [ ] Implement `Scanner` with reusable buffer and sub-slice borrowing (`Record() []byte`).
-  - [ ] Implement `Scan() bool`, `RecordCopy() []byte`, `Offset() int64`, `Skip() bool`, and `Err() error`.
+  - [ ] Implement `Scan() bool`, `RecordCopy() []byte`, `Offset() int64`, and `Err() error`.
+  - [ ] Implement `Skip() bool` with `io.Seeker` fast-path (~200ns `lseek`) and streaming fallback.
   - [ ] Implement `Reader` for explicit caller-managed buffer control (`ReadRecord(buf []byte)`).
-  - [ ] Scanner options (`WithInitialBufferSize`, `WithMaxRecordSize`).
+  - [ ] Scanner options (`WithInitialBufferSize`, `WithMaxRecordSize` defaulting to 64 MB).
 - [ ] **Verification & Allocation Benchmarks (`recordio_test.go`)**
   - [ ] Verify 0 B/op and 0 allocs/op in steady-state loop via `testing.AllocsPerRun`.
+  - [ ] Defensive bounds validation: ensure corrupted length headers (e.g. `0xFFFFFFFFFFFFFFFF`) fail with zero memory allocation.
   - [ ] Comprehensive edge cases: 0-byte payloads, multi-megabyte payloads, header bit-flip corruption, payload bit-flip corruption, truncated files at each byte offset.
 
 ### Milestone 2: Generic Protobuf Layer
