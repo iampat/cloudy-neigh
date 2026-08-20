@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/iampat/cloudy-neigh/internal/cas"
+	"github.com/iampat/cloudy-neigh/cas"
 )
 
 type backend struct {

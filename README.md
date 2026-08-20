@@ -7,6 +7,16 @@ Cloudy with a Chance of Neighbors
 
 A cloud-native search engine.
 
+## Packages
+
+Every package sits at the repository root, so another module can import it.
+
+- `github.com/iampat/cloudy-neigh/cas` — content-addressed blob storage. The
+  content of a blob names it.
+- `github.com/iampat/cloudy-neigh/index` — namespaces, and lookup of a document
+  by identifier.
+- `github.com/iampat/cloudy-neigh/server` — the gRPC service over `index`.
+
 ## Demo
 
 Documents live in a content-addressed store, either in memory or on disk.
@@ -21,14 +31,14 @@ bazel run //cmd/cloudy-neigh -- serve --store disk --dir /tmp/cn
 In another terminal:
 
 ```sh
-bazel run //cmd/cloudy-neigh -- ingest --namespace repo ./internal
-# ingested 12 documents, skipped 0
-# verified cas/BUILD.bazel
-# verified cas/cas.go
-# verified cas/cas_test.go
+bazel run //cmd/cloudy-neigh -- ingest --namespace repo ./cmd
+# ingested 7 documents, skipped 0
+# verified cloudy-neigh/BUILD.bazel
+# verified cloudy-neigh/client.go
+# verified cloudy-neigh/ingest.go
 
 # The identifier is the path relative to the directory that was ingested.
-bazel run //cmd/cloudy-neigh -- query --namespace repo --id cas/disk.go
+bazel run //cmd/cloudy-neigh -- query --namespace repo --id cloudy-neigh/serve.go
 ```
 
 `ingest` skips a file that is not valid UTF-8, and a file over `--max-size`.

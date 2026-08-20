@@ -8,7 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/iampat/cloudy-neigh/internal/index"
+	"github.com/iampat/cloudy-neigh/index"
 	"github.com/iampat/cloudy-neigh/proto/cloudyneigh"
 )
 

@@ -13,10 +13,10 @@ go_library(
     importpath = "github.com/iampat/cloudy-neigh/cmd/cloudy-neigh",
     visibility = ["//visibility:private"],
     deps = [
-        "//internal/cas",
-        "//internal/index",
-        "//internal/server",
+        "//cas",
+        "//index",
         "//proto/cloudyneigh",
+        "//server",
         "@com_github_spf13_cobra//:cobra",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",

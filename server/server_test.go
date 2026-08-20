@@ -12,10 +12,10 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/iampat/cloudy-neigh/internal/cas"
-	"github.com/iampat/cloudy-neigh/internal/index"
-	"github.com/iampat/cloudy-neigh/internal/server"
+	"github.com/iampat/cloudy-neigh/cas"
+	"github.com/iampat/cloudy-neigh/index"
 	"github.com/iampat/cloudy-neigh/proto/cloudyneigh"
+	"github.com/iampat/cloudy-neigh/server"
 )
 
 func newClient(t *testing.T) cloudyneigh.IndexAPIClient {

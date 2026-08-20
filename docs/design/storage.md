@@ -2,7 +2,7 @@
 
 **Status:** Draft — 2026-08-20 — v2
 
-The code in `internal/cas` and `internal/index` implements the v0 draft of
+The code in `cas` and `index` implements the v0 draft of
 this note. That code is outdated. Where the code and this note disagree, the
 note wins, and the code catches up.
 
@@ -107,7 +107,7 @@ The store is one concrete type over `*blob.Bucket`. The v1 driver interface
 and the hand-written drivers disappear.
 
 ```diff
- internal/cas/
+ cas/
 -├── disk.go
 -├── memory.go
  └── cas.go     # Store over *blob.Bucket

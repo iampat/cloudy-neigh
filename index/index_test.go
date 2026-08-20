@@ -9,8 +9,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/iampat/cloudy-neigh/internal/cas"
-	"github.com/iampat/cloudy-neigh/internal/index"
+	"github.com/iampat/cloudy-neigh/cas"
+	"github.com/iampat/cloudy-neigh/index"
 	"github.com/iampat/cloudy-neigh/proto/cloudyneigh"
 )
 
