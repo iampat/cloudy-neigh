@@ -23,9 +23,15 @@
       "command(gh pr list*)",
       "command(gh pr diff*)",
       "command(gh pr checks*)",
+      "command(gh pr create*)",
       "command(git status*)",
       "command(git diff*)",
       "command(git log*)",
+      "command(git checkout*)",
+      "command(git switch*)",
+      "command(git branch*)",
+      "command(git add*)",
+      "command(git commit*)",
       "command(git push*)"
     ]
   }
