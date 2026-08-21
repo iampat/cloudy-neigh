@@ -47,6 +47,34 @@ func (e *errReader) Read(p []byte) (int, error) {
 	return 0, e.err
 }
 
+type faultyReader struct {
+	data   []byte
+	pos    int
+	failAt int
+	failed bool
+	err    error
+}
+
+func (f *faultyReader) Read(p []byte) (int, error) {
+	if !f.failed && f.pos >= f.failAt {
+		f.failed = true
+		return 0, f.err
+	}
+	if f.pos >= len(f.data) {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if !f.failed && f.pos+n > f.failAt {
+		n = f.failAt - f.pos
+	}
+	if f.pos+n > len(f.data) {
+		n = len(f.data) - f.pos
+	}
+	copy(p, f.data[f.pos:f.pos+n])
+	f.pos += n
+	return n, nil
+}
+
 func TestWriterReader_RoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	writer := recordio.NewWriter(&buf)
@@ -498,6 +526,52 @@ func TestRealIOErrorsPreserved(t *testing.T) {
 	}
 	if !errors.Is(scanner.Err(), customErr) {
 		t.Errorf("Scanner err = %v, want %v", scanner.Err(), customErr)
+	}
+}
+
+func TestReader_TransientErrorPoisons(t *testing.T) {
+	var buf bytes.Buffer
+	writer := recordio.NewWriter(&buf)
+	payload := bytes.Repeat([]byte("x"), 64)
+	for i := 0; i < 2; i++ {
+		if _, _, err := writer.WriteRecord(payload); err != nil {
+			t.Fatalf("WriteRecord(%d) failed: %v", i, err)
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		t.Fatalf("Flush failed: %v", err)
+	}
+
+	const headerBytes = 12
+
+	tests := []struct {
+		name   string
+		failAt int
+	}{
+		{"InPayload", headerBytes + 8},
+		{"AtFooter", headerBytes + len(payload)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transient := errors.New("connection reset by peer")
+			src := &faultyReader{data: buf.Bytes(), failAt: tt.failAt, err: transient}
+			reader := recordio.NewReader(src, recordio.WithReaderBufferSize(16))
+			dst := make([]byte, 128)
+
+			if _, err := reader.ReadRecord(dst); !errors.Is(err, transient) {
+				t.Fatalf("first ReadRecord err = %v, want %v", err, transient)
+			}
+			if !src.failed {
+				t.Fatal("faultyReader never injected the error")
+			}
+
+			// ReadRecord consumed the header, so a retry would read payload
+			// bytes as a header and report corruption for a transient fault.
+			if _, err := reader.ReadRecord(dst); !errors.Is(err, transient) {
+				t.Errorf("second ReadRecord err = %v, want %v", err, transient)
+			}
+		})
 	}
 }
 

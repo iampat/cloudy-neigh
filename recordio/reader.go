@@ -92,6 +92,7 @@ func (r *Reader) ReadRecord(dst []byte) (n int, err error) {
 				r.err = ErrTornWrite
 				return 0, ErrTornWrite
 			}
+			r.err = err
 			return 0, err
 		}
 	}
@@ -101,6 +102,7 @@ func (r *Reader) ReadRecord(dst []byte) (n int, err error) {
 			r.err = ErrTornWrite
 			return 0, ErrTornWrite
 		}
+		r.err = err
 		return 0, err
 	}
 
