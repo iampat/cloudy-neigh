@@ -52,7 +52,7 @@ The note names a constraint from those areas only where it changes the contract.
 ## Future work
 
 Each item waits because the decision is too early or the scope is too large for
-v0. Only the write operations reserve field numbers today.
+v0. Only the write operations name the numbers a later field takes.
 
 - Patch, delete, and delete-by-filter operations.
 - Client-streaming writes for large batches.
@@ -120,7 +120,7 @@ namespace rather than an update.
 ## Service
 
 ```proto
-service Index {
+service IndexAPI {
   rpc Write(WriteRequest) returns (WriteResponse);
   rpc Query(QueryRequest) returns (QueryResponse);
   rpc Plan(QueryRequest) returns (PlanResponse);
@@ -154,16 +154,16 @@ Namespace administration is future work.
 A write carries exactly one operation.
 
 ```proto
+message Upsert {
+  repeated Document documents = 1;
+}
+message Patch {}
+message Delete {}
+message DeleteByFilter {}
+
 message WriteRequest {
   string namespace = 1;
   map<string, AttributeSchema> schema = 6;
-
-  message Upsert {
-    repeated Document documents = 1;
-  }
-  message Patch {}
-  message Delete {}
-  message DeleteByFilter {}
 
   oneof operation {
     Upsert upsert = 2;
