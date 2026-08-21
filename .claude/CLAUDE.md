@@ -72,7 +72,7 @@ imports it. Delete the copies when the tool finishes.
 - Write prose in ASD-STE100 Simplified Technical English: active voice, simple
   tenses, one idea per sentence, one term per concept. Maximum 20 words in an
   instruction, 25 in a description. No semicolons, no phrasal verbs. Spell out
-  an acronym at first use. Write "for example", not "e.g.".
+  an acronym at first use. "e.g." is permitted.
 - Write for a working software engineer. Do not explain a language feature, a
   protocol, or a pattern that audience already knows. Explain only what is
   specific to this project.

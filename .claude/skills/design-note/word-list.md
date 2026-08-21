@@ -46,7 +46,6 @@ after you select a term, keep it.
 | the following table                 | the table that follows |
 | above, below (for limits)           | more than, less than   |
 | should                              | must, or can           |
-| e.g.                                | for example            |
 | i.e.                                | that is                |
 | etc.                                | and so on, or omit it  |
 
@@ -57,6 +56,8 @@ disable, download, drag, enable, encrypt, install, load, paste, reboot, save,
 scroll, sort, update, upgrade, upload. Rule 1.5, category 19, approves
 technical nouns such as: backup, database, field, file, firewall, interface,
 memory, metadata, network, operating system, search engine, token.
+
+This project also permits "e.g.", which STE replaces with "for example".
 
 ## Sample rewrites
 

@@ -77,7 +77,7 @@ strictly to normative prose and loosely to rationale prose.
 - Do not use the "-ing" form of a verb, except in a technical noun or a heading.
 - Do not omit an article or the conjunction "that" to shorten a sentence.
 - Do not use a phrasal verb. Write "extinguish", not "put out".
-- Write "for example", not "e.g.". Write "and so on", not "etc.".
+- Use "e.g." or "for example". Write "and so on", not "etc.".
 - Spell out an acronym at first use, then use the acronym.
 - Do not use jargon, idiom, or an informal expression.
 - State a trade-off in one sentence. Do not argue both sides at length.
