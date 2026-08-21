@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "recordio",
+    srcs = [
+        "crc.go",
+        "reader.go",
+        "scanner.go",
+        "writer.go",
+    ],
+    importpath = "github.com/iampat/cloudy-neigh/recordio",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "recordio_test",
+    srcs = ["recordio_test.go"],
+    deps = [":recordio"],
+)
