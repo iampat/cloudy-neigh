@@ -92,6 +92,8 @@ imports it. Delete the copies when the tool finishes.
   repository keeps it forever. Keep the `Co-Authored-By:` trailer and the
   generated-with line, which name the tool without a private URL.
 - Before declaring done: `bazel build //...` and `bazel run //:format.check` pass.
+  A change that touches only Markdown skips both. Run
+  `.claude/skills/design-note/lint.sh <file>` on each changed document instead.
 - Before opening a PR: run `bazel mod tidy`. A `go.mod` change leaves
   `MODULE.bazel` stale, and a stale `use_repo` call breaks the build.
 
