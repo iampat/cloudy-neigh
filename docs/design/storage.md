@@ -3,7 +3,7 @@
 ## 1. Problem Statement
 
 ### 1.1 Overview
-Design and implement a modular, high-performance storage engine on top of cloud object storage (e.g., Google Cloud Storage, AWS S3) without requiring external coordination systems (e.g., Redis, ZooKeeper, RDBMS).
+Design and implement a modular, high-performance storage engine on top of cloud object storage, for example Google Cloud Storage or AWS S3. The engine needs no external coordination system, for example Redis, ZooKeeper, or RDBMS.
 
 The system is structured in two decoupled, composable layers:
 1. **Generic LogStream (WAL / Message Queue)**: An append-only, sequentially numbered, payload-agnostic log primitive backed by object storage.
@@ -12,14 +12,14 @@ The system is structured in two decoupled, composable layers:
 ### 1.2 Functional Requirements
 * **Generic LogStream Layer**:
   * Unconditional and conditional appends of opaque binary records.
-  * Strictly contiguous, gapless 64-bit sequence numbers (`00000000000000000001.recordio`).
+  * Strictly contiguous 64-bit sequence numbers (`00000000000000000001.recordio`).
   * Self-delimiting RecordIO binary framing with CRC32 data integrity verification.
   * Reusable independently as a distributed message queue, event sourcing log, or database WAL.
 * **Key-Value Filesystem Layer (KVFS)**:
   * Atomic `PUT`, `GET`, and `DELETE` operations for arbitrary UTF-8 paths.
   * Zero-copy, $O(1)$ branching rooted at any branch snapshot.
   * Branch-isolated Copy-on-Write (CoW) mutations.
-  * **Direct CAS Blob API**: Direct `GetBlob(blob_hash)` and `PutBlob(data)` access to bypass branch heads and manifests for internal systems and remote build caches that already possess the content hash ($1\text{ RTT}$).
+  * **Direct content-addressed storage (CAS) blob API**: Direct `GetBlob(blob_hash)` and `PutBlob(data)` access to bypass branch heads and manifests for internal systems and remote build caches that already possess the content hash ($1\text{ RTT}$).
 * **Concurrency Control**:
   * Native storage conditional write preconditions (`if-generation-match=0` / `If-None-Match: *` / generation matching) to guarantee atomicity with zero external consensus servers.
 
@@ -49,7 +49,7 @@ The system is structured in two decoupled, composable layers:
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                       Layer 0: Cloud ObjectStore Adapter                    │
-│                       (S3 / GCS CAS Preconditions & Blobs)                  │
+│                    (S3 / GCS Conditional Writes & Blobs)                    │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -57,7 +57,7 @@ The system is structured in two decoupled, composable layers:
 
 ```text
 [Bucket Root]
-├── refs/heads/                  <-- Layer 2: Mutable Branch Heads (CAS via preconditions)
+├── refs/heads/                  <-- Layer 2: Mutable Branch Heads (conditional write)
 │   ├── main                     --> "1a2beff8..." (Generation: 17234001)
 │   └── feature-1                --> "c94d0199..." (Generation: 17234002)
 │
@@ -81,7 +81,7 @@ The system is structured in two decoupled, composable layers:
 
 ### Component Breakdown
 * **`wal/<stream>/<020d_seq>.recordio` (Layer 1)**: Opaque, sequentially numbered RecordIO container files. Records are strictly append-only, immutable, and permanent.
-* **`refs/heads/<branch>` (Layer 2)**: Plaintext reference storing the active manifest ID (e.g., `1a2beff8...`). This is the **only mutable pointer** in the KVFS layer.
+* **`refs/heads/<branch>` (Layer 2)**: A reference object that stores the active manifest ID, for example `1a2beff8...`. This is the **only mutable pointer** in the KVFS layer. The storage system supplies the generation token, which the object content does not hold.
 * **`manifests/<h0>/<h1>/<manifest_id>` (Layer 2)**: Immutable snapshot containing path-to-hash mappings and the committed `last_wal_seq` watermark. Partitioned across $65,536$ 2-byte prefixes (`manifests/1a/2b/...`) to eliminate cloud storage partition throttling.
 * **`objects/<h0>/<h1>/<blob_hash>` (Layer 2)**: Raw, immutable file content addressed by `SHA-256(payload)`, partitioned across $65,536$ 2-byte prefixes (`objects/a3/f1/...`) for horizontal I/O distribution ($>200\text{M req/sec}$ theoretical bucket throughput).
 
@@ -115,7 +115,7 @@ Client                          GCS / S3 Storage
   │                                     │
   │── 4. Write Manifest M2 ────────────>│ Write manifests/<m0>/<m1>/M2 (Immutable)
   │                                     │
-  │── 5. Atomic CAS Update ────────────>│ Write refs/heads/<branch> -> "M2"
+  │── 5. Atomic Conditional Update ────>│ Write refs/heads/<branch> -> "M2"
   │      (if-generation-match=G1)       │   ├─ Match: SUCCESS
   │                                     │   └─ Mismatch: CONFLICT -> Retry step 2
 ```
@@ -167,7 +167,7 @@ Client                          GCS / S3 Storage
   │                                     │
   │── 2. Write New Manifest M2 ────────>│ Write manifests/<m0>/<m1>/M2 (Immutable)
   │                                     │
-  │── 3. Atomic CAS Update ────────────>│ Write refs/heads/<branch> -> "M2"
+  │── 3. Atomic Conditional Update ────>│ Write refs/heads/<branch> -> "M2"
   │      (if-generation-match=G1)       │
 ```
 
@@ -210,7 +210,8 @@ Read Manifest (manifests/M_old)
 Write New Manifest (manifests/M_new)
                             │█████████████│ (60 - 90ms)
                                           │
-CAS Update Ref (refs/heads/<branch>)      │█████████████│ (90 - 120ms)
+Conditional Update Ref (refs/heads/<branch>)
+                                          │█████████████│ (90 - 120ms)
                                                         │
 Operation Complete ─────────────────────────────────────▼ ~90-120ms
 ```
@@ -237,7 +238,7 @@ Complete ───────────────────────�
 
 * **Warm Cached `GET` (Concurrent / Bypassed — 1 to 2 RTTs / ~30–60ms)**:
   * **Manifest Caching (2 RTTs)**: Manifests are immutable and content-addressed. Caching manifests in memory eliminates Step 2, reducing the lookup to `Read Ref -> Read Object`.
-  * **Branch Ref Leases / Short TTL (1 RTT)**: Caching the branch Ref locally allows clients to immediately issue a single direct read to `objects/<blob_hash>`.
+  * **Branch Ref Leases / Short TTL (1 RTT)**: A client that caches the branch Ref locally issues a single direct read to `objects/<blob_hash>`.
 
 ---
 
@@ -308,7 +309,8 @@ message Manifest {
   repeated string parent_manifest_ids = 3;
 }
 
-// BranchHead represents the mutable pointer state stored in refs/heads/<branch>.
+// BranchHead is the client view of refs/heads/<branch>. The reference object
+// stores manifest_id. The storage system supplies generation.
 message BranchHead {
   string manifest_id = 1;       // Content hash of active Manifest
   int64 generation = 2;         // Cloud storage generation precondition token
@@ -323,7 +325,7 @@ message BranchHead {
 
 #### Append Algorithm (Atomic Reservation):
 1. The writer determines target sequence `seq = last_known_seq + 1`.
-2. The writer formats the path: `wal/<stream>/<020d_seq>.recordio` (e.g., `wal/main/00000000000000000005.recordio`).
+2. The writer formats the path: `wal/<stream>/<020d_seq>.recordio`, for example `wal/main/00000000000000000005.recordio`.
 3. The writer encodes the `LogSegment` into RecordIO format with CRC32 framing.
 4. The writer issues a conditional create:
    * **GCS**: `Put(path, if-generation-match=0)`
@@ -333,8 +335,8 @@ message BranchHead {
    * If `412 Conflict`: Another writer claimed `seq`. Increment `seq = seq + 1` and retry.
 
 #### Read Algorithm (Direct Indexed Seek):
-* Because sequences are strictly contiguous ($1, 2, 3\dots$), readers read `wal/<stream>/<020d_seq>.recordio` directly via `GetObject`.
-* If the object returns `404 Not Found`, the reader has reached the head of the stream. Zero `ListPrefix` API calls required on normal read loops.
+* Because sequences are strictly contiguous ($1, 2, 3\dots$), readers read `wal/<stream>/<020d_seq>.recordio` directly with `GetObject`.
+* If the object returns `404 Not Found`, the reader has reached the head of the stream. Zero `ListPrefix` API calls are necessary on normal read loops.
 
 ---
 
@@ -357,7 +359,7 @@ message BranchHead {
     ├── 3. Decode LogRecords & KVMutations
     ├── 4. Fold mutations into map ────────► Manifest M2 (last_wal_seq: 11)
     ├── 5. Write new Manifest ─────────────► Write manifests/<m0>/<m1>/M2
-    └── 6. CAS Advance Branch Ref ─────────► Write refs/heads/main -> "M2" (if-generation-match=G1)
+    └── 6. Conditional Advance Branch Ref ─► Write refs/heads/main -> "M2" (if-generation-match=G1)
 ```
 
 ---
@@ -365,9 +367,9 @@ message BranchHead {
 ### 6.3 Layer 2: KVFS Read Flow (`GET(branch, path)` vs. Direct CAS)
 
 * **Direct CAS Read (Bypass Manifest - 1 RTT / ~30ms)**:
-  Internal systems, remote build caches (e.g. Bazel), or client layers that already possess the content hash (`blob_hash`) call `GetBlob(blob_hash)` directly. Reads `objects/<h0>/<h1>/<blob_hash>` in **1 single network round-trip ($30\text{ms}$)**, completely bypassing branch head CAS resolution and manifest parsing.
+  Internal systems, remote build caches (for example Bazel), or client layers that already possess the content hash (`blob_hash`) call `GetBlob(blob_hash)` directly. Reads `objects/<h0>/<h1>/<blob_hash>` in **1 single network round-trip ($30\text{ms}$)**, completely bypassing branch head resolution and manifest parsing.
 * **Warm Cached Branch Read (1 RTT / ~30ms)**:
-  Local branch ref lease / cached manifest allows direct resolution to `blob_hash` followed by reading `objects/<h0>/<h1>/<blob_hash>`.
+  A branch ref lease or a cached manifest resolves `blob_hash` locally. The client then reads `objects/<h0>/<h1>/<blob_hash>`.
 * **Cold Branch Read (3 RTTs / ~90ms)**:
   1. `Read refs/heads/<branch>` $\to$ `manifest_id` (30ms).
   2. `Read manifests/<m0>/<m1>/<manifest_id>` $\to$ resolves `path` $\to$ `blob_hash` (30ms).
@@ -443,7 +445,7 @@ service KVStoreService {
   rpc Delete(KVDeleteRequest) returns (KVDeleteResponse);
   rpc Branch(KVBranchRequest) returns (KVBranchResponse);
 
-  // Direct Content-Addressed Storage (CAS) Operations (Bypasses Manifests)
+  // Direct CAS Operations (Bypasses Manifests)
   rpc GetBlob(GetBlobRequest) returns (GetBlobResponse);
   rpc PutBlob(PutBlobRequest) returns (PutBlobResponse);
 }
@@ -528,10 +530,10 @@ Phase 2 (Congestion Mitigation) Dedicated WALWriter Gateway Service      • 1,0
 
 | Scenario | Behavior / Resolution |
 | :--- | :--- |
-| **Concurrent Append Collision** | If two writers target sequence $N$, one succeeds via `if-generation-match=0`. The other receives `412 Conflict`, increments to $N+1$, and retries. |
+| **Concurrent Append Collision** | If two writers target sequence $N$, one succeeds with `if-generation-match=0`. The other receives `412 Conflict`, increments to $N+1$, and retries. |
 | **Committer Crash / Re-execution** | Manifest tracks `last_wal_seq`. The committer resumes by requesting `last_wal_seq + 1`, guaranteeing complete idempotency and zero ghost overwrites. |
 | **Cross-Branch Isolation** | Streams and branches are partitioned under distinct prefixes (`wal/<branch>/`, `refs/heads/<branch>`), eliminating cross-branch contention. |
-| **Read-After-Write Consistency** | V1 provides committed snapshot isolation (reads reflect the latest committed branch manifest). Future extensions provide optional in-memory session write buffering and hybrid overlay reads for strict RYOW across processes. |
+| **Read-After-Write Consistency** | V1 provides committed snapshot isolation (reads reflect the latest committed branch manifest). Future extensions provide optional in-memory session write buffering and hybrid overlay reads for strict read-your-own-writes (RYOW) across processes. |
 | **Orphaned Payload Writes** | Blobs uploaded to `objects/<hash>` before a failed append remain content-addressed and unreferenced, causing zero data corruption. |
 | **Branch Creation Collision** | `if-generation-match=0` prevents overwriting an existing branch pointer during `BRANCH` calls. |
 
@@ -543,7 +545,7 @@ Phase 2 (Congestion Mitigation) Dedicated WALWriter Gateway Service      • 1,0
 
 ## Appendix A: LSM & SSTable Metadata Scaling Strategy (V2 Roadmap)
 
-When a branch scales beyond $\sim 100,000$ keys, downloading and parsing a single flat manifest on every commit incurs excessive I/O and GC overhead. To scale seamlessly to **100M+ keys** without redesigning storage primitives, the manifest engine transitions to an **LSM (Log-Structured Merge-tree) SSTable architecture**.
+When a branch scales beyond $\sim 100,000$ keys, downloading and parsing a single flat manifest on every commit incurs I/O and GC overhead. To scale to **100M+ keys** without redesigning storage primitives, the manifest engine transitions to an **LSM (Log-Structured Merge-tree) SSTable architecture**.
 
 ```text
                                 [ WAL Records ] (Layer 1)
@@ -614,6 +616,6 @@ message Manifest {
 | Dimension | Threshold Where Base Architecture Breaks | Root Bottleneck Cause | V2 Mitigating Strategy |
 | :--- | :--- | :--- | :--- |
 | **Total Keys per Branch** | $\gt 100,000$ items | Flat manifest download & parse serialization overhead ($O(N)$ write cost) | LSM SSTable Chunked Range Manifests ([Appendix A](#appendix-a-lsm--sstable-metadata-scaling-strategy-v2-roadmap)) |
-| **Concurrent Writes (Direct Mode)** | $\gt 10\text{--}20\text{ writes/sec}$ on a single branch | CAS precondition collisions (`if-generation-match`) & thundering herd | WAL staging tier with asynchronous batch consolidation |
+| **Concurrent Writes (Direct Mode)** | $\gt 10\text{--}20\text{ writes/sec}$ on a single branch | Conditional write collisions (`if-generation-match`) & thundering herd | WAL staging tier with asynchronous batch consolidation |
 | **Concurrent Writes (WAL Mode)** | $\gt 500\text{--}1,000\text{ writes/sec}$ on a single stream | Direct client conditional create congestion on sequence numbers | `WALWriter Service` gateway micro-batching into RecordIO streams |
 | **Cloud Storage API Limits** | $\gt 3,500\text{--}5,500\text{ req/sec}$ on root prefixes | Hotspotting on `objects/`, `manifests/`, or `wal/` prefixes | 2-byte deterministic hash prefixes (`objects/a3/f1/...`) |
