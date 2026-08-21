@@ -13,8 +13,19 @@ bazel_dep(name = "aspect_rules_lint", version = "2.7.2", dev_dependency = True)
 
 go_sdk = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.download(version = "1.26.5")
-go_sdk.download(version = "1.27rc2")
+go_sdk.download(version = "1.27.0")
 go_sdk.nogo(nogo = "//:nogo")
 
 go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
+
+# nogo reads export data with golang.org/x/tools. rules_go 0.62.0 pins v0.34.0,
+# which decodes export data to version 2 at most. Go 1.27 writes version 4, so
+# every nogo action fails under --config=go1.27. x/tools v0.44.0 added version 4.
+# Remove this override when rules_go pins v0.44.0 or later.
+go_deps.module(
+    path = "golang.org/x/tools",
+    sum = "h1:3NI7VXzL9+1WZD52Dx2ttoPwD5DWrFGpl9mFZDlmisI=",
+    version = "v0.49.0",
+)
+use_repo(go_deps, "org_golang_x_tools")
