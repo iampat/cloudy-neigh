@@ -257,6 +257,34 @@ The opaque token also lets S3 in, with these assumptions:
 An S3 backend stays future work. These assumptions only keep the interface
 from excluding it. Until it exists, an S3 path fails at `Open`.
 
+### The cost of one direct read
+
+A direct read of a key costs one round trip. The generation arrives in the
+same response through `Reader.As`, so `GetWithGeneration` costs the same as
+`Get`. No call in this layer resolves a name, because the caller supplies the
+key.
+
+`probe-latency/` measured 3000 content-addressed keys of 1 KiB from a
+us-west1 virtual machine against a us-west1 bucket. Each key is read once, in
+random order, one request at a time.
+
+```text
+                    p50     p95     p99     mean
+random cold key    45.7    76.8   105.6     47.0   ms
+one hot key        18.2    25.5    34.8     18.8   ms
+```
+
+The working set decides which row applies. A benchmark that reads one key
+measures the hot row. A content-addressed store reads the cold row, so the
+`objects/` layer costs about 46 ms per read, not 18 ms.
+
+Sixteen concurrent readers hold the same distribution and reach 371 reads per
+second. The cold number is a latency floor, not a throughput limit.
+
+CONSIDER(ali): storage.md, Section 4.2 models a 30 ms round trip. The cold
+measurement is 46 ms. The 3-round-trip cold read is thus about 140 ms, not
+90 ms. The section needs the measured number.
+
 ### The per-object write rate
 
 GCS caps mutations of one object. A benchmark from a us-west1 VM against a
