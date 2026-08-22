@@ -13,7 +13,7 @@ The system is structured in two decoupled, composable layers:
 * **Generic LogStream Layer**:
   * Unconditional and conditional appends of opaque binary records.
   * Strictly contiguous 64-bit sequence numbers (`00000000000000000001.recordio`).
-  * Self-delimiting RecordIO binary framing with CRC32 data integrity verification.
+  * Self-delimiting RecordIO framing with masked CRC32C integrity checks. See [RecordIO](recordio.md).
   * Reusable independently as a distributed message queue, event sourcing log, or database WAL.
 * **Key-Value Filesystem Layer (KVFS)**:
   * Atomic `PUT`, `GET`, and `DELETE` operations for arbitrary UTF-8 paths.
@@ -80,7 +80,7 @@ The system is structured in two decoupled, composable layers:
 ```
 
 ### Component Breakdown
-* **`wal/<stream>/<020d_seq>.recordio` (Layer 1)**: Opaque, sequentially numbered RecordIO container files. Records are strictly append-only, immutable, and permanent.
+* **`wal/<stream>/<020d_seq>.recordio` (Layer 1)**: Opaque, sequentially numbered segment files. One file is one RecordIO stream that holds N records. No container message wraps them. Records are strictly append-only, immutable, and permanent.
 * **`refs/heads/<branch>` (Layer 2)**: A reference object that stores the active manifest ID, for example `1a2beff8...`. This is the **only mutable pointer** in the KVFS layer. The storage system supplies the generation token, which the object content does not hold.
 * **`manifests/<h0>/<h1>/<manifest_id>` (Layer 2)**: Immutable snapshot containing path-to-hash mappings and the committed `last_wal_seq` watermark. Partitioned across $65,536$ 2-byte prefixes (`manifests/1a/2b/...`) to eliminate cloud storage partition throttling.
 * **`objects/<h0>/<h1>/<blob_hash>` (Layer 2)**: Raw, immutable file content addressed by `SHA-256(payload)`, partitioned across $65,536$ 2-byte prefixes (`objects/a3/f1/...`) for horizontal I/O distribution ($>200\text{M req/sec}$ theoretical bucket throughput).
@@ -125,7 +125,7 @@ Client                          GCS / S3 Storage
 2. Read `refs/heads/<branch>` to get current manifest ID `M_old` and object generation `Gen_old`.
 3. Fetch and parse `manifests/<m0>/<m1>/<M_old>`.
 4. Update in-memory map: `M_new_entries = M_old_entries.set(path, blob_hash)`.
-5. Compute `M_new_id = SHA256(serialized(M_new_entries))` and write `manifests/<m0>/<m1>/<M_new_id>`.
+5. Compute `M_new_id` with the stable hash from Section 5.3. Write `manifests/<m0>/<m1>/<M_new_id>`.
 6. Update `refs/heads/<branch>` to `M_new_id` using condition `if-generation-match = Gen_old`.
 7. If precondition fails, back off and retry from Step 2.
 
@@ -261,19 +261,11 @@ message LogRecord {
   // Opaque application payload bytes (completely payload-agnostic).
   bytes payload = 2;
 }
-
-// LogSegment is the container payload serialized into a .recordio file.
-message LogSegment {
-  // Sequence number of this segment.
-  uint64 sequence_number = 1;
-
-  // Stream name / partition identifier.
-  string stream_name = 2;
-
-  // One or more records batched in this segment.
-  repeated LogRecord records = 3;
-}
 ```
+
+A `.recordio` file is the segment. The object key carries the sequence number,
+and the prefix carries the stream name, so no container message repeats them.
+The RecordIO framing delimits the N records inside the file.
 
 ### 5.2 Layer 2: KVFS Schemas (`kvfs/v1/kvfs.proto`)
 
@@ -317,6 +309,21 @@ message BranchHead {
 }
 ```
 
+### 5.3 Manifest Identity
+
+`manifest_id` must be a stable hash of the manifest content. The same manifest
+must always produce the same id.
+
+A hash over the protobuf serialization does not give that. proto3 leaves map
+field order unspecified, and the Go implementation varies it on purpose.
+`proto.MarshalOptions{Deterministic: true}` promises nothing across builds,
+versions, or languages. The same manifest hashed twice can yield two ids, which
+breaks content addressing and weakens the committer idempotency claim in
+Section 10.
+
+The manifest layer thus needs its own canonical encoding for the hash. The
+encoding is not chosen yet.
+
 ---
 
 ## 6. End-to-End Operations
@@ -326,7 +333,7 @@ message BranchHead {
 #### Append Algorithm (Atomic Reservation):
 1. The writer determines target sequence `seq = last_known_seq + 1`.
 2. The writer formats the path: `wal/<stream>/<020d_seq>.recordio`, for example `wal/main/00000000000000000005.recordio`.
-3. The writer encodes the `LogSegment` into RecordIO format with CRC32 framing.
+3. The writer encodes the batch as a RecordIO stream, one frame per record. See [RecordIO](recordio.md) for the frame layout.
 4. The writer issues a conditional create:
    * **GCS**: `Put(path, if-generation-match=0)`
    * **AWS S3**: `Put(path, If-None-Match="*")`
@@ -508,7 +515,192 @@ message PutBlobResponse {
 
 ---
 
-## 8. Scaling Evolution: Direct Writers to Gateway Service
+## 8. Go Interfaces
+
+### 8.1 Layer 0: ObjectStore (`objectstore`)
+
+```go
+package objectstore
+
+import (
+	"context"
+	"errors"
+	"io"
+)
+
+var (
+	ErrNotFound           = errors.New("objectstore: not found")
+	ErrPreconditionFailed = errors.New("objectstore: precondition failed")
+)
+
+type Object struct {
+	Key        string
+	Generation int64
+	Size       int64
+}
+
+type Store interface {
+	Get(ctx context.Context, key string) (io.ReadCloser, error)
+	GetWithGeneration(ctx context.Context, key string) (io.ReadCloser, int64, error)
+	Put(ctx context.Context, key string, r io.Reader) (int64, error)
+	PutIfAbsent(ctx context.Context, key string, r io.Reader) (int64, error)
+	PutIfGenerationMatch(ctx context.Context, key string, r io.Reader, generation int64) (int64, error)
+	List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error)
+	Delete(ctx context.Context, key string) error
+}
+```
+
+`PutIfAbsent` maps to `if-generation-match=0` on GCS and to `If-None-Match: *`
+on S3. It reports `ErrPreconditionFailed` when the key already exists. Both the
+LogStream append and the `BRANCH` operation depend on it.
+
+`PutIfAbsent` also removes the `Exists` call from the blob upload path. A blob is
+content-addressed, so a key that exists already holds the same bytes. The writer
+treats `ErrPreconditionFailed` as success and pays one round trip, not two.
+
+`List` returns objects in lexicographic key order, starting after `startAfter`.
+Only the cold-start tail search and operator tooling call it. The steady-state
+read, append, and commit loops issue zero list calls.
+
+### 8.2 Layer 1: LogStream (`logstream`)
+
+```go
+package logstream
+
+import (
+	"context"
+	"errors"
+)
+
+var ErrEndOfStream = errors.New("logstream: end of stream")
+
+type Record struct {
+	Headers map[string]string
+	Payload []byte
+}
+
+type Appender interface {
+	Append(ctx context.Context, stream string, records []Record) (uint64, error)
+}
+
+type Reader interface {
+	Read(ctx context.Context, stream string, seq uint64) ([]Record, error)
+	// CONSIDER(ali): the cold-start search strategy is not settled.
+	Tail(ctx context.Context, stream string) (uint64, error)
+}
+```
+
+`Append` writes one segment file and returns the sequence number it claimed. The
+whole batch lands in that one file. A caller that needs a record boundary for
+recovery appends that record alone.
+
+`Read` returns every record of one segment. It reports `ErrEndOfStream` when the
+segment does not exist, which means the reader reached the head.
+
+`Tail` reports the highest written sequence number. A writer calls it once on
+start and then counts in memory.
+
+### 8.3 Layer 2: KVFS (`kvfs`)
+
+```go
+package kvfs
+
+import (
+	"context"
+	"io"
+)
+
+type Manifest struct {
+	LastWALSeq        uint64
+	Entries           map[string]string
+	ParentManifestIDs []string
+}
+
+type WriteResult struct {
+	WALSeq   uint64
+	BlobHash string
+}
+
+type CommitResult struct {
+	ManifestID string
+	LastWALSeq uint64
+	Mutations  int
+}
+
+type Store interface {
+	Put(ctx context.Context, branch, path string, data io.Reader) (WriteResult, error)
+	Get(ctx context.Context, branch, path string) (io.ReadCloser, error)
+	Delete(ctx context.Context, branch, path string) (WriteResult, error)
+	Branch(ctx context.Context, newBranch, parentBranch string) (string, error)
+	PutBlob(ctx context.Context, data io.Reader) (string, error)
+	GetBlob(ctx context.Context, blobHash string) (io.ReadCloser, error)
+}
+
+type BlobStore interface {
+	Put(ctx context.Context, data io.Reader) (string, error)
+	Get(ctx context.Context, blobHash string) (io.ReadCloser, error)
+}
+
+type BranchReader interface {
+	Head(ctx context.Context, branch string) (manifestID string, generation int64, err error)
+	Manifest(ctx context.Context, manifestID string) (*Manifest, error)
+}
+
+type Committer interface {
+	Commit(ctx context.Context, branch string) (CommitResult, error)
+}
+```
+
+`Store` is the whole client surface. It matches `KVStoreService` in Section 7,
+including the two direct content-addressed calls that skip branch resolution.
+
+`BlobStore` and `BranchReader` split the read path. `BlobStore` serves the
+1-round-trip hash read. `BranchReader` serves the 3-round-trip path read, and it
+owns the manifest cache, because a manifest is immutable.
+
+`Committer` runs in the background, one instance per branch. `Commit` folds the
+segments above `Manifest.LastWALSeq`, writes the new manifest, and advances the
+ref. It returns without an error and with zero mutations when the branch has no
+pending segment.
+
+`Manifest.Entries` is a Go map, and a map has no order. Section 5.3 covers the
+stable hash that the manifest id needs.
+
+### 8.4 Call Tree
+
+```text
+kvfs.Store
+├── Get(branch, path)
+│   ├── kvfs.BranchReader.Head      ──► objectstore.GetWithGeneration  refs/heads/<branch>
+│   ├── kvfs.BranchReader.Manifest  ──► objectstore.Get                manifests/<m0>/<m1>/<id>
+│   └── kvfs.BlobStore.Get          ──► objectstore.Get                objects/<h0>/<h1>/<hash>
+│
+├── Put(branch, path, data) / Delete(branch, path)
+│   ├── kvfs.BlobStore.Put          ──► objectstore.PutIfAbsent        objects/<h0>/<h1>/<hash>
+│   └── logstream.Appender.Append   ──► objectstore.PutIfAbsent        wal/<branch>/<seq>.recordio
+│
+├── Branch(newBranch, parentBranch)
+│   ├── kvfs.BranchReader.Head      ──► objectstore.GetWithGeneration  refs/heads/<parent>
+│   └──                                 objectstore.PutIfAbsent        refs/heads/<new>
+│
+└── GetBlob / PutBlob
+    └── kvfs.BlobStore              ──► objectstore                    objects/<h0>/<h1>/<hash>
+
+kvfs.Committer.Commit(branch)                        (background, one per branch)
+├── kvfs.BranchReader.Head/Manifest ──► objectstore.Get                refs + manifest
+├── logstream.Reader.Read(seq+1…)   ──► objectstore.Get                wal/<branch>/<seq>.recordio
+├── fold KVMutation records into Manifest.Entries
+├── write the new manifest          ──► objectstore.Put                manifests/<m0>/<m1>/<id>
+└── advance the ref                 ──► objectstore.PutIfGenerationMatch  refs/heads/<branch>
+```
+
+The write path never reads a manifest. The read path never touches the log. Only
+the committer spans both, which is why it is the only component that needs the
+`last_wal_seq` watermark.
+
+---
+
+## 9. Scaling Evolution: Direct Writers to Gateway Service
 
 To scale the system across orders of magnitude without breaking API contracts:
 
@@ -526,14 +718,14 @@ Phase 2 (Congestion Mitigation) Dedicated WALWriter Gateway Service      • 1,0
 
 ---
 
-## 9. Failure & Concurrency Semantics
+## 10. Failure & Concurrency Semantics
 
 | Scenario | Behavior / Resolution |
 | :--- | :--- |
 | **Concurrent Append Collision** | If two writers target sequence $N$, one succeeds with `if-generation-match=0`. The other receives `412 Conflict`, increments to $N+1$, and retries. |
 | **Committer Crash / Re-execution** | Manifest tracks `last_wal_seq`. The committer resumes by requesting `last_wal_seq + 1`, guaranteeing complete idempotency and zero ghost overwrites. |
 | **Cross-Branch Isolation** | Streams and branches are partitioned under distinct prefixes (`wal/<branch>/`, `refs/heads/<branch>`), eliminating cross-branch contention. |
-| **Read-After-Write Consistency** | V1 provides committed snapshot isolation (reads reflect the latest committed branch manifest). Future extensions provide optional in-memory session write buffering and hybrid overlay reads for strict read-your-own-writes (RYOW) across processes. |
+| **Read-After-Write Consistency** | V1 provides committed snapshot isolation (reads reflect the latest committed branch manifest). [Appendix C](#appendix-c-read-your-own-writes-placeholder) sketches a read-your-own-writes (RYOW) extension. Nothing is committed. |
 | **Orphaned Payload Writes** | Blobs uploaded to `objects/<hash>` before a failed append remain content-addressed and unreferenced, causing zero data corruption. |
 | **Branch Creation Collision** | `if-generation-match=0` prevents overwriting an existing branch pointer during `BRANCH` calls. |
 
@@ -619,3 +811,42 @@ message Manifest {
 | **Concurrent Writes (Direct Mode)** | $\gt 10\text{--}20\text{ writes/sec}$ on a single branch | Conditional write collisions (`if-generation-match`) & thundering herd | WAL staging tier with asynchronous batch consolidation |
 | **Concurrent Writes (WAL Mode)** | $\gt 500\text{--}1,000\text{ writes/sec}$ on a single stream | Direct client conditional create congestion on sequence numbers | `WALWriter Service` gateway micro-batching into RecordIO streams |
 | **Cloud Storage API Limits** | $\gt 3,500\text{--}5,500\text{ req/sec}$ on root prefixes | Hotspotting on `objects/`, `manifests/`, or `wal/` prefixes | 2-byte deterministic hash prefixes (`objects/a3/f1/...`) |
+
+---
+
+## Appendix C: Read-Your-Own-Writes (Placeholder)
+
+**This appendix is a placeholder. The project is not committed to this design.
+It records the shape of the problem, not a decision.**
+
+V1 gives committed snapshot isolation. A `GET` reflects the manifest that the
+committer last published. A client that reads straight after its own `PUT` can
+miss that write, because the commit is asynchronous.
+
+One possible direction:
+
+```text
+[ GET(branch, path, after_seq) ]
+          │
+          ├── 1. Session write buffer (local, uncommitted)
+          │      └─ hit ──► return the payload
+          │
+          ├── 2. Segments above Manifest.LastWALSeq (remote, uncommitted)
+          │      └─ hit ──► resolve blob_hash ──► fetch the object
+          │
+          └── 3. Committed manifest
+                 └─ resolve path ──► fetch the object
+```
+
+`KVPutResponse` already returns `wal_sequence_number`. A reader passes that value
+back as an `after_seq` token. When the branch manifest is behind the token, the
+reader folds the uncommitted segments over the manifest during lookup.
+
+Open questions:
+* The cost of step 2. A reader far behind the committer pays one `GET` per
+  pending segment, and the count is unbounded.
+* The token must cross process boundaries, or the guarantee holds inside one
+  client only.
+* `KVGetRequest` carries no `after_seq` field. Adding one changes the contract.
+* Step 2 needs the same fold order as the committer, which duplicates commit
+  logic on the read path.
