@@ -18,10 +18,14 @@ func benchStore(b *testing.B, open func(b *testing.B) objectstore.Store) {
 	payload := bytes.Repeat([]byte("x"), 1024)
 	prefix := fmt.Sprintf("bench%d/", time.Now().UnixNano())
 
+	// Every mutation benchmark uses a distinct key per iteration. GCS caps
+	// mutations of one object at about one per second, so reusing a key
+	// measures that limit instead of the write latency.
 	b.Run("Put", func(b *testing.B) {
 		s := open(b)
+		nonce := time.Now().UnixNano()
 		for i := 0; i < b.N; i++ {
-			if _, err := s.Put(ctx, prefix+"put", bytes.NewReader(payload)); err != nil {
+			if _, err := s.Put(ctx, fmt.Sprintf("%sput/%d/%d", prefix, nonce, i), bytes.NewReader(payload)); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -72,16 +76,53 @@ func benchStore(b *testing.B, open func(b *testing.B) objectstore.Store) {
 	})
 	b.Run("PutIfGenerationMatch", func(b *testing.B) {
 		s := open(b)
-		gen, err := s.Put(ctx, prefix+"cas", bytes.NewReader(payload))
+		nonce := time.Now().UnixNano()
+		keys := make([]string, b.N)
+		gens := make([]string, b.N)
+		for i := range keys {
+			keys[i] = fmt.Sprintf("%scas/%d/%d", prefix, nonce, i)
+			gen, err := s.Put(ctx, keys[i], bytes.NewReader(payload))
+			if err != nil {
+				b.Fatal(err)
+			}
+			gens[i] = gen
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, err := s.PutIfGenerationMatch(ctx, keys[i], bytes.NewReader(payload), gens[i]); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+// SameKeyMutationRate reports the sustained mutation rate of one key, which
+// is the rate a branch ref sees. It is a rate, not a latency: GCS answers a
+// mutation of the same object at about one per second.
+func benchSameKeyRate(b *testing.B, open func(b *testing.B) objectstore.Store) {
+	b.Run("SameKeyMutationRate", func(b *testing.B) {
+		s := open(b)
+		ctx := context.Background()
+		payload := bytes.Repeat([]byte("x"), 1024)
+		key := fmt.Sprintf("hot%d", time.Now().UnixNano())
+		gen, err := s.Put(ctx, key, bytes.NewReader(payload))
 		if err != nil {
 			b.Fatal(err)
 		}
 		b.ResetTimer()
+		start := time.Now()
+		done := 0
 		for i := 0; i < b.N; i++ {
-			gen, err = s.PutIfGenerationMatch(ctx, prefix+"cas", bytes.NewReader(payload), gen)
+			gen, err = s.PutIfGenerationMatch(ctx, key, bytes.NewReader(payload), gen)
 			if err != nil {
-				b.Fatal(err)
+				b.Logf("stopped after %d mutations: %v", done, err)
+				break
 			}
+			done++
+		}
+		b.StopTimer()
+		if done > 0 {
+			b.ReportMetric(float64(done)/time.Since(start).Seconds(), "mutations/sec")
 		}
 	})
 }
@@ -97,6 +138,25 @@ func BenchmarkMem(b *testing.B) {
 func BenchmarkDisk(b *testing.B) {
 	benchStore(b, func(b *testing.B) objectstore.Store {
 		s, err := objectstore.OpenDisk(b.TempDir() + "/bucket")
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Cleanup(func() { s.Close() })
+		return s
+	})
+}
+
+func BenchmarkGCSSameKeyRate(b *testing.B) {
+	bucket := os.Getenv("OBJECTSTORE_TEST_GCS_BUCKET")
+	if bucket == "" {
+		b.Skip("OBJECTSTORE_TEST_GCS_BUCKET is not set")
+	}
+	var ts oauth2.TokenSource
+	if tok := os.Getenv("OBJECTSTORE_TEST_GCS_TOKEN"); tok != "" {
+		ts = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: tok})
+	}
+	benchSameKeyRate(b, func(b *testing.B) objectstore.Store {
+		s, err := objectstore.OpenGCS(context.Background(), bucket, ts)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -257,6 +257,24 @@ The opaque token also lets S3 in, with these assumptions:
 An S3 backend stays future work. These assumptions only keep the interface
 from excluding it. Until it exists, an S3 path fails at `Open`.
 
+### The per-object write rate
+
+GCS caps mutations of one object. A benchmark from a us-west1 VM against a
+us-west1 bucket sustained 2.7 mutations per second on one key. A faster loop
+returned HTTP 429 `rateLimitExceeded`, which the driver maps to
+`gcerrors.ResourceExhausted`.
+
+The limit binds `refs/heads/<branch>`, the one mutable object per branch. It
+does not bind the blob, manifest, or log writes, because each of those
+writes a new key. The measurement replaces the 10 to 20 writes per second
+estimate in storage.md, Appendix B.
+
+`Store` does not retry a 429. The caller sees `ResourceExhausted` through the
+raw error, and the commit loop above it owns the backoff.
+
+CONSIDER(ali): the contract has no sentinel for a rate limit. A caller that
+needs to distinguish throttling from a precondition failure needs one.
+
 ### Errors
 
 The wrapper translates once, at its boundary, with a switch on
