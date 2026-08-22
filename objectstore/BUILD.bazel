@@ -28,6 +28,7 @@ go_library(
 go_test(
     name = "objectstore_test",
     srcs = [
+        "bench_test.go",
         "disk_test.go",
         "gcs_test.go",
         "open_test.go",
