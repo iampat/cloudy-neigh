@@ -4,6 +4,7 @@ load("@buildifier_prebuilt//:rules.bzl", "buildifier")
 load("@io_bazel_rules_go//go:def.bzl", "TOOLS_NOGO", "nogo")
 
 # gazelle:prefix github.com/iampat/cloudy-neigh
+# gazelle:exclude experimentals
 gazelle(name = "gazelle")
 
 buildifier(

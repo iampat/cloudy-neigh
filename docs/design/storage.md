@@ -548,8 +548,13 @@ type Store interface {
 	PutIfGenerationMatch(ctx context.Context, key string, r io.Reader, generation string) (string, error)
 	List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error)
 	Delete(ctx context.Context, key string) error
+	Close() error
 }
 ```
+
+`Close` releases what the backend holds open, for example the disk lock file
+descriptor. It takes no context because no implementation does network I/O
+in it.
 
 `Generation` is an opaque token. A caller compares it only for equality and
 passes it back unmodified. Each backend picks its own encoding: GCS renders
