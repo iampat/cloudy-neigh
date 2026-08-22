@@ -548,8 +548,13 @@ type Store interface {
 	PutIfGenerationMatch(ctx context.Context, key string, r io.Reader, generation string) (string, error)
 	List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error)
 	Delete(ctx context.Context, key string) error
+	Close() error
 }
 ```
+
+`Close` releases what the backend holds open, for example the disk lock file
+descriptor. It takes no context because no implementation does network I/O
+in it.
 
 `Generation` is an opaque token. A caller compares it only for equality and
 passes it back unmodified. Each backend picks its own encoding: GCS renders
@@ -819,7 +824,7 @@ message Manifest {
 | Dimension | Threshold Where Base Architecture Breaks | Root Bottleneck Cause | V2 Mitigating Strategy |
 | :--- | :--- | :--- | :--- |
 | **Total Keys per Branch** | $\gt 100,000$ items | Flat manifest download & parse serialization overhead ($O(N)$ write cost) | LSM SSTable Chunked Range Manifests ([Appendix A](#appendix-a-lsm--sstable-metadata-scaling-strategy-v2-roadmap)) |
-| **Concurrent Writes (Direct Mode)** | $\gt 10\text{--}20\text{ writes/sec}$ on a single branch | Conditional write collisions (`if-generation-match`) & thundering herd | WAL staging tier with asynchronous batch consolidation |
+| **Concurrent Writes (Direct Mode)** | $\gt 3\text{ writes/sec}$ on a single branch | GCS caps mutations of one object. A measurement from a us-west1 VM against a us-west1 bucket sustained 2.7 mutations/sec on one key, and a faster loop got HTTP 429. | WAL staging tier with asynchronous batch consolidation |
 | **Concurrent Writes (WAL Mode)** | $\gt 500\text{--}1,000\text{ writes/sec}$ on a single stream | Direct client conditional create congestion on sequence numbers | `WALWriter Service` gateway micro-batching into RecordIO streams |
 | **Cloud Storage API Limits** | $\gt 3,500\text{--}5,500\text{ req/sec}$ on root prefixes | Hotspotting on `objects/`, `manifests/`, or `wal/` prefixes | 2-byte deterministic hash prefixes (`objects/a3/f1/...`) |
 
