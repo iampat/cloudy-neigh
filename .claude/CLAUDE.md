@@ -40,6 +40,17 @@ The last one stages the generated protobuf code in the source tree. A tool that
 reads source cannot load that package otherwise, and fails on every package that
 imports it. Delete the copies when the tool finishes.
 
+## Google Cloud
+
+- Always use the `kentrolabs-ai` project with the `amiri1982@gmail.com`
+  account. Pass `--account=amiri1982@gmail.com` and
+  `--project=kentrolabs-ai` on every gcloud call. Never use `ali@across.ai`
+  or its `turtlenova` project, and never change the global gcloud config or
+  the application default credentials.
+- For a Go client, mint a token with
+  `gcloud auth print-access-token --account=amiri1982@gmail.com` and pass it
+  as an `oauth2.StaticTokenSource`.
+
 ## Gotchas & conventions
 
 - No new third-party Go dependencies unless we agree first — prefer stdlib,
