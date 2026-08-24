@@ -302,10 +302,11 @@ message Manifest {
 }
 
 // BranchHead is the client view of refs/heads/<branch>. The reference object
-// stores manifest_id. The storage system supplies generation.
+// stores manifest_id. The storage system supplies generation, an opaque
+// token the client passes back unmodified.
 message BranchHead {
   string manifest_id = 1;       // Content hash of active Manifest
-  int64 generation = 2;         // Cloud storage generation precondition token
+  string generation = 2;        // Opaque precondition token, compared for equality
 }
 ```
 
@@ -535,20 +536,28 @@ var (
 
 type Object struct {
 	Key        string
-	Generation int64
+	Generation string
 	Size       int64
 }
 
 type Store interface {
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
-	GetWithGeneration(ctx context.Context, key string) (io.ReadCloser, int64, error)
-	Put(ctx context.Context, key string, r io.Reader) (int64, error)
-	PutIfAbsent(ctx context.Context, key string, r io.Reader) (int64, error)
-	PutIfGenerationMatch(ctx context.Context, key string, r io.Reader, generation int64) (int64, error)
+	GetWithGeneration(ctx context.Context, key string) (io.ReadCloser, string, error)
+	Put(ctx context.Context, key string, r io.Reader) (string, error)
+	PutIfAbsent(ctx context.Context, key string, r io.Reader) (string, error)
+	PutIfGenerationMatch(ctx context.Context, key string, r io.Reader, generation string) (string, error)
 	List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error)
 	Delete(ctx context.Context, key string) error
 }
 ```
+
+`Generation` is an opaque token. A caller compares it only for equality and
+passes it back unmodified. Each backend picks its own encoding: GCS renders
+its `int64` generation as decimal, and the local backends render a counter.
+A future S3 backend would use the `ETag`. Every `Put` variant returns the
+token of its write. A conditional write changes the token, identical bytes
+included, on every backend except S3. `PutIfGenerationMatch` rejects an empty
+token. `PutIfAbsent` is the one way to write a key that must be absent.
 
 `PutIfAbsent` maps to `if-generation-match=0` on GCS and to `If-None-Match: *`
 on S3. It reports `ErrPreconditionFailed` when the key already exists. Both the
@@ -559,8 +568,10 @@ content-addressed, so a key that exists already holds the same bytes. The writer
 treats `ErrPreconditionFailed` as success and pays one round trip, not two.
 
 `List` returns objects in lexicographic key order, starting after `startAfter`.
-Only the cold-start tail search and operator tooling call it. The steady-state
-read, append, and commit loops issue zero list calls.
+It guarantees `Key` and `Size`. It fills `Generation` only when the backend's
+listing supplies it, which GCS does and the local backends do not. Only the
+cold-start tail search and operator tooling call it. The steady-state read,
+append, and commit loops issue zero list calls.
 
 ### 8.2 Layer 1: LogStream (`logstream`)
 
@@ -642,7 +653,7 @@ type BlobStore interface {
 }
 
 type BranchReader interface {
-	Head(ctx context.Context, branch string) (manifestID string, generation int64, err error)
+	Head(ctx context.Context, branch string) (manifestID string, generation string, err error)
 	Manifest(ctx context.Context, manifestID string) (*Manifest, error)
 }
 
