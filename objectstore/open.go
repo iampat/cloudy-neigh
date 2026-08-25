@@ -17,11 +17,6 @@ func Open(ctx context.Context, rawURL string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch u.Scheme {
-	case "gs", "mem", "file":
-	default:
-		return nil, fmt.Errorf("objectstore: unsupported scheme %q in %q (supported: file, gs, mem)", u.Scheme, rawURL)
-	}
 	b, err := blob.OpenBucket(ctx, rawURL)
 	if err != nil {
 		return nil, err

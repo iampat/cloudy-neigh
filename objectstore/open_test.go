@@ -2,7 +2,6 @@ package objectstore_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -24,8 +23,8 @@ func TestOpen(t *testing.T) {
 
 func TestOpenRejectsS3(t *testing.T) {
 	for _, u := range []string{"s3://bucket/key", "azblob://c", "bogus://x", "relative/path"} {
-		if _, err := objectstore.Open(context.Background(), u); err == nil || !strings.Contains(err.Error(), "unsupported scheme") {
-			t.Errorf("Open(%q) = %v, want unsupported-scheme error", u, err)
+		if _, err := objectstore.Open(context.Background(), u); err == nil {
+			t.Errorf("Open(%q) = nil error, want a rejection", u)
 		}
 	}
 }

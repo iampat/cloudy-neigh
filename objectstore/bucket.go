@@ -6,6 +6,9 @@ import (
 	"gocloud.dev/blob"
 )
 
+// bucket is the internal seam between Store and a backend. It is unexported
+// and exists for developers who add a backend, not for users of the package.
+//
 // Store.Put drives a bucket in this order:
 //
 //	defer s.bucket.lock()()

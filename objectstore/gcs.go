@@ -56,8 +56,8 @@ func (gcsBucket) writeOptions(_ context.Context, key string, cond *Condition) (*
 			return nil, nil, fmt.Errorf("objectstore: key %q: malformed generation %q", key, cond.GenerationMatch)
 		}
 		opts.BeforeWrite = func(as func(any) bool) error {
-			// The handle must be conditioned before the writer exists. Asking
-			// for the writer materializes it, so capture must come second.
+			// Asking for the writer materializes it and freezes the
+			// conditions, so capture must stay last.
 			var objp **storage.ObjectHandle
 			if !as(&objp) {
 				return errNotGCS

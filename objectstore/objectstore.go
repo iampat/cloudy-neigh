@@ -21,15 +21,16 @@ type Object struct {
 	Size       int64
 }
 
-// Condition states what the live object must satisfy for a write to apply.
-// The zero Condition, like a nil *Condition, writes unconditionally.
 type Condition struct {
 	Absent          bool
 	GenerationMatch string
 }
 
 func (c *Condition) validate(key string) error {
-	if c != nil && c.Absent && c.GenerationMatch != "" {
+	if c == nil {
+		return nil
+	}
+	if c.Absent && c.GenerationMatch != "" {
 		return fmt.Errorf("objectstore: key %q: Condition sets both Absent and GenerationMatch", key)
 	}
 	return nil
@@ -44,10 +45,6 @@ func (s *Store) Close() error {
 	return s.b.Close()
 }
 
-// Get takes no lock on any backend: the generation rides the reader itself.
-// Under a concurrent overwrite on file:// the token can lag the bytes by one
-// generation, which only makes a CAS with it fail and retry -- the reverse
-// pairing, which would lose an update, cannot occur.
 func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, string, error) {
 	r, err := s.b.NewReader(ctx, key, nil)
 	if err != nil {
@@ -61,8 +58,6 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, string, err
 	return r, generation, nil
 }
 
-// Put writes r to key and returns the generation it created. A nil cond
-// overwrites unconditionally.
 func (s *Store) Put(ctx context.Context, key string, r io.Reader, cond *Condition) (string, error) {
 	if err := cond.validate(key); err != nil {
 		return "", err

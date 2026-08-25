@@ -72,6 +72,8 @@ Where a storage engine actually breaks. Look hardest here.
 ## 5. Tests
 
 - Never `time.Sleep` to order events — use channels, `sync.WaitGroup`, or polling.
+- Flag `for i := 0; i < b.N; i++` in a benchmark. The loop is
+  `for b.Loop()`, and it makes `ResetTimer` around setup unnecessary.
 - Never `time.Now` for uniqueness or ordering. Use `t.Name()` for a key
   prefix and a counter for a nonce. The clock is permitted only to measure a
   reported rate.

@@ -59,6 +59,8 @@ imports it. Delete the copies when the tool finishes.
 - Structured logging via stdlib `log/slog`; prefer returning errors over
   fatal-level logging.
 - Never `time.Sleep` to synchronize a test — poll or use channels.
+- A benchmark loop is `for b.Loop()`, never `for i := 0; i < b.N; i++`.
+  Setup goes before the loop and cleanup after it, with no `ResetTimer`.
 - Never `time.Now` for uniqueness in a test. Use `t.Name()` for a key prefix
   and a counter for a nonce, and delete what an earlier run left. The clock
   is permitted only to measure a reported rate.
