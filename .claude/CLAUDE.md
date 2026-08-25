@@ -15,8 +15,8 @@ the toolchain and the dependency graph stay authoritative.
 | `go test -run TestX ./pkg` | `bazel test //pkg:pkg_test --test_filter=TestX` |
 | `go test -v` | `bazel test //... --test_output=all` |
 | `go test -bench=.` | `bazel test //... --test_arg=-test.bench=. --test_output=all` |
-| `go get <module>` | `bazel run @io_bazel_rules_go//go -- get <module>` |
-| `go mod tidy` | `bazel mod tidy` |
+| add a dependency | add the import, then `bazel run @io_bazel_rules_go//go -- mod tidy` |
+| `go mod tidy` | `bazel run @io_bazel_rules_go//go -- mod tidy` (also runs `bazel mod tidy`) |
 | `go fmt ./...` | `bazel run //:format` (check-only: `//:format.check`) |
 | `go vet ./...` | nogo, which runs inside `bazel build` |
 | `go run ./cmd/x -- a b` | `bazel run //cmd/x -- a b` |
@@ -42,8 +42,9 @@ imports it. Delete the copies when the tool finishes.
 
 ## Gotchas & conventions
 
-- No new third-party Go dependencies unless we agree first — prefer stdlib,
-  including for test assertions. This covers "convenience" deps like testify.
+- No new third-party Go dependencies unless we agree first — prefer stdlib.
+  Exception: `github.com/stretchr/testify` is pre-agreed for tests. Use it
+  when it makes a test more readable than the stdlib form.
 - Generated code is not ours. Protoc output lives in `bazel-bin` and never
   reaches the repository. It stays outside review, outside lint, and outside the
   comment rules.
@@ -58,11 +59,19 @@ imports it. Delete the copies when the tool finishes.
 - Structured logging via stdlib `log/slog`; prefer returning errors over
   fatal-level logging.
 - Never `time.Sleep` to synchronize a test — poll or use channels.
+- Never `time.Now` for uniqueness in a test. Use `t.Name()` for a key prefix
+  and a counter for a nonce, and delete what an earlier run left. The clock
+  is permitted only to measure a reported rate.
+- Make the zero value useful (Go proverb). The zero value of a type is the
+  documented default, not an error. Reject only a state the contract has no
+  meaning for.
 - Explicit beats clever. Prefer the obvious solution a reader can follow without
   reconstructing your reasoning, even when a terser one exists.
 - Default to no comment. Two kinds earn a place: a workaround with the upstream
   issue that forces it, and an invariant a reader would otherwise violate. Write
-  nothing else, doc comments on exported names included. Go convention alone
+  nothing else, doc comments on exported names included. A comment that earns
+  its place is at most two sentences. Do not restate a design note in code.
+  The note holds the rationale, and the copy goes stale. Go convention alone
   does not justify a doc comment. Delete a comment that paraphrases the
   identifier, restates the signature, explains a pattern the reader knows, gives
   the reason for an obvious choice, or names the caller. Applies to config and

@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "objectstore",
+    srcs = [
+        "bucket.go",
+        "gcs.go",
+        "local.go",
+        "objectstore.go",
+        "open.go",
+    ],
+    importpath = "github.com/iampat/cloudy-neigh/objectstore",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_google_cloud_go_storage//:storage",
+        "@dev_gocloud//blob",
+        "@dev_gocloud//blob/fileblob",
+        "@dev_gocloud//blob/gcsblob",
+        "@dev_gocloud//blob/memblob",
+        "@dev_gocloud//gcerrors",
+    ],
+)
+
+go_test(
+    name = "objectstore_test",
+    srcs = [
+        "bench_test.go",
+        "disk_test.go",
+        "gcs_test.go",
+        "open_test.go",
+        "store_test.go",
+    ],
+    deps = [":objectstore"],
+)

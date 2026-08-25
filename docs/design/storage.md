@@ -540,36 +540,105 @@ type Object struct {
 	Size       int64
 }
 
-type Store interface {
-	Get(ctx context.Context, key string) (io.ReadCloser, error)
-	GetWithGeneration(ctx context.Context, key string) (io.ReadCloser, string, error)
-	Put(ctx context.Context, key string, r io.Reader) (string, error)
-	PutIfAbsent(ctx context.Context, key string, r io.Reader) (string, error)
-	PutIfGenerationMatch(ctx context.Context, key string, r io.Reader, generation string) (string, error)
-	List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error)
-	Delete(ctx context.Context, key string) error
+type Store struct{ ... }
+
+// Condition states what the live object must satisfy for a write to apply.
+// The zero Condition, like a nil *Condition, writes unconditionally.
+type Condition struct {
+	Absent          bool
+	GenerationMatch string
+}
+
+func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, string, error)
+func (s *Store) Put(ctx context.Context, key string, r io.Reader, cond *Condition) (string, error)
+func (s *Store) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error)
+func (s *Store) Delete(ctx context.Context, key string) error
+func (s *Store) Close() error
+```
+
+`Store` is a struct, and one implementation holds the whole surface. An
+unexported `bucket` interface holds the operations that a backend cannot share.
+
+```go
+type bucket interface {
+	lock() (unlock func())
+	writeOptions(ctx context.Context, key string, cond *Condition) (*blob.WriterOptions, func() (string, error), error)
+	generation(r *blob.Reader) (string, error)
+	listGeneration(o *blob.ListObject) string
 }
 ```
 
+`Get` always reports the generation of the bytes it returns, and `Put` takes
+one `*Condition` rather than a method per precondition. Both keep the exported
+surface to a single spelling of each operation, so a new precondition is a
+field on `Condition` instead of another method on `Store`.
+
+`Open` opens every scheme through one `blob.OpenBucket` call on the gocloud
+URL mux, which the driver imports feed. One switch then pairs the scheme with
+its `bucket` implementation. A scheme the switch does not name fails, so an
+imported driver cannot silently route to the wrong conditional-write
+semantics.
+
+Every backend reaches storage through `gocloud.dev/blob`, which carries each
+difference except the generation token. It offers a portable `IfNotExist` on a
+write and no portable compare-and-swap. A `GenerationMatch` condition reaches
+the native handle through `As`. That one hole defines the `bucket` interface,
+and a new backend implements the four methods and adds its scheme to the
+switch in `Open`.
+
+The memory and disk backends share one implementation. Its generation is
+derived from `(ModTime, Size)`, which every reader and list entry already
+carries, so `Get` and `List` take no lock on any backend -- the token rides
+the read itself, the same shape as GCS. Mutations serialize on one in-process
+mutex, which makes each precondition check atomic; the driver's own
+`IfNotExist` is not used, because `fileblob` implements it as a stat before a
+rename that interleaves, and a losing write clobbers the winner's attribute
+sidecar. Every `Open` of one directory (symlink aliases included) shares
+one mutex, so two handles on a bucket cannot race each other. A disk bucket
+shared across OS processes is out of scope; production runs on GCS, and the
+local backends serve tests and development.
+
+Token uniqueness on the local backends assumes the wall clock advances
+between successive writes to one key. A write costs more than the clock tick
+on the supported filesystems (memory, APFS, ext4), and the mutex serializes
+writers, so the assumption holds there; filesystems with second-granularity
+timestamps are out of scope.
+
+A token stored in blob metadata was considered and rejected. It would remove
+the clock assumption, because `Put` could mint a unique token in the fileblob
+attributes sidecar. But neither `blob.Reader` nor `blob.ListObject` carries
+metadata, so `Get` and `List` would pay one extra attributes read per object.
+The mutex also stays, because a precondition check against a stored token is
+still a read before a write. The `(ModTime, Size)` token is the exact string
+fileblob returns as its `ETag`, and it rides every read and list entry for
+free.
+
+`Close` takes no context because no implementation does network I/O in it.
+
 `Generation` is an opaque token. A caller compares it only for equality and
-passes it back unmodified. Each backend picks its own encoding: GCS renders
-its `int64` generation as decimal, and the local backends render a counter.
-A future S3 backend would use the `ETag`. Every `Put` variant returns the
-token of its write. A conditional write changes the token, identical bytes
-included, on every backend except S3. `PutIfGenerationMatch` rejects an empty
-token. `PutIfAbsent` is the one way to write a key that must be absent.
+passes it back unmodified to the store that minted it. Each backend picks its
+own encoding: GCS renders its `int64` generation as decimal, and the local
+backends render `(ModTime, Size)` as two hex fields -- ETag-shaped, the same
+family a future S3 backend would use. Every `Put` returns the token of its
+write. A conditional write changes the token, identical bytes included, on
+every backend except S3. A `Condition` that sets both fields is a caller
+bug and returns a plain error rather than `ErrPreconditionFailed`, so a caller
+retrying on precondition failure cannot spin on it. The zero `Condition`
+writes unconditionally, the same as nil. A `GenerationMatch`
+token the backend could not have minted is the same kind of bug and errors the
+same way on every backend.
 
-`PutIfAbsent` maps to `if-generation-match=0` on GCS and to `If-None-Match: *`
-on S3. It reports `ErrPreconditionFailed` when the key already exists. Both the
-LogStream append and the `BRANCH` operation depend on it.
+`Condition{Absent: true}` is the one way to write a key that must be absent. It
+maps to `if-generation-match=0` on GCS and to `If-None-Match: *` on S3, and
+reports `ErrPreconditionFailed` when the key already exists. Both the LogStream
+append and the `BRANCH` operation depend on it.
 
-`PutIfAbsent` also removes the `Exists` call from the blob upload path. A blob is
+It also removes the `Exists` call from the blob upload path. A blob is
 content-addressed, so a key that exists already holds the same bytes. The writer
 treats `ErrPreconditionFailed` as success and pays one round trip, not two.
 
 `List` returns objects in lexicographic key order, starting after `startAfter`.
-It guarantees `Key` and `Size`. It fills `Generation` only when the backend's
-listing supplies it, which GCS does and the local backends do not. Only the
+It guarantees `Key`, `Size`, and `Generation` on every backend. Only the
 cold-start tail search and operator tooling call it. The steady-state read,
 append, and commit loops issue zero list calls.
 
@@ -682,27 +751,27 @@ stable hash that the manifest id needs.
 ```text
 kvfs.Store
 ├── Get(branch, path)
-│   ├── kvfs.BranchReader.Head      ──► objectstore.GetWithGeneration  refs/heads/<branch>
-│   ├── kvfs.BranchReader.Manifest  ──► objectstore.Get                manifests/<m0>/<m1>/<id>
-│   └── kvfs.BlobStore.Get          ──► objectstore.Get                objects/<h0>/<h1>/<hash>
+│   ├── kvfs.BranchReader.Head      ──► objectstore.Get                   refs/heads/<branch>
+│   ├── kvfs.BranchReader.Manifest  ──► objectstore.Get                   manifests/<m0>/<m1>/<id>
+│   └── kvfs.BlobStore.Get          ──► objectstore.Get                   objects/<h0>/<h1>/<hash>
 │
 ├── Put(branch, path, data) / Delete(branch, path)
-│   ├── kvfs.BlobStore.Put          ──► objectstore.PutIfAbsent        objects/<h0>/<h1>/<hash>
-│   └── logstream.Appender.Append   ──► objectstore.PutIfAbsent        wal/<branch>/<seq>.recordio
+│   ├── kvfs.BlobStore.Put          ──► objectstore.Put(Absent)           objects/<h0>/<h1>/<hash>
+│   └── logstream.Appender.Append   ──► objectstore.Put(Absent)           wal/<branch>/<seq>.recordio
 │
 ├── Branch(newBranch, parentBranch)
-│   ├── kvfs.BranchReader.Head      ──► objectstore.GetWithGeneration  refs/heads/<parent>
-│   └──                                 objectstore.PutIfAbsent        refs/heads/<new>
+│   ├── kvfs.BranchReader.Head      ──► objectstore.Get                   refs/heads/<parent>
+│   └──                                 objectstore.Put(Absent)           refs/heads/<new>
 │
 └── GetBlob / PutBlob
-    └── kvfs.BlobStore              ──► objectstore                    objects/<h0>/<h1>/<hash>
+    └── kvfs.BlobStore              ──► objectstore                       objects/<h0>/<h1>/<hash>
 
 kvfs.Committer.Commit(branch)                        (background, one per branch)
-├── kvfs.BranchReader.Head/Manifest ──► objectstore.Get                refs + manifest
-├── logstream.Reader.Read(seq+1…)   ──► objectstore.Get                wal/<branch>/<seq>.recordio
+├── kvfs.BranchReader.Head/Manifest ──► objectstore.Get                   refs + manifest
+├── logstream.Reader.Read(seq+1…)   ──► objectstore.Get                   wal/<branch>/<seq>.recordio
 ├── fold KVMutation records into Manifest.Entries
-├── write the new manifest          ──► objectstore.Put                manifests/<m0>/<m1>/<id>
-└── advance the ref                 ──► objectstore.PutIfGenerationMatch  refs/heads/<branch>
+├── write the new manifest          ──► objectstore.Put                   manifests/<m0>/<m1>/<id>
+└── advance the ref                 ──► objectstore.Put(GenerationMatch)  refs/heads/<branch>
 ```
 
 The write path never reads a manifest. The read path never touches the log. Only
@@ -819,7 +888,7 @@ message Manifest {
 | Dimension | Threshold Where Base Architecture Breaks | Root Bottleneck Cause | V2 Mitigating Strategy |
 | :--- | :--- | :--- | :--- |
 | **Total Keys per Branch** | $\gt 100,000$ items | Flat manifest download & parse serialization overhead ($O(N)$ write cost) | LSM SSTable Chunked Range Manifests ([Appendix A](#appendix-a-lsm--sstable-metadata-scaling-strategy-v2-roadmap)) |
-| **Concurrent Writes (Direct Mode)** | $\gt 10\text{--}20\text{ writes/sec}$ on a single branch | Conditional write collisions (`if-generation-match`) & thundering herd | WAL staging tier with asynchronous batch consolidation |
+| **Concurrent Writes (Direct Mode)** | $\gt 3\text{ writes/sec}$ on a single branch | GCS caps mutations of one object. A measurement from a us-west1 VM against a us-west1 bucket sustained 2.7 mutations/sec on one key, and a faster loop got HTTP 429. | WAL staging tier with asynchronous batch consolidation |
 | **Concurrent Writes (WAL Mode)** | $\gt 500\text{--}1,000\text{ writes/sec}$ on a single stream | Direct client conditional create congestion on sequence numbers | `WALWriter Service` gateway micro-batching into RecordIO streams |
 | **Cloud Storage API Limits** | $\gt 3,500\text{--}5,500\text{ req/sec}$ on root prefixes | Hotspotting on `objects/`, `manifests/`, or `wal/` prefixes | 2-byte deterministic hash prefixes (`objects/a3/f1/...`) |
 

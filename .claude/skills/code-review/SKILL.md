@@ -38,7 +38,8 @@ preamble.
 
 - A new third-party dependency needs agreement first. Flag any `go.mod` addition
   that was not discussed, including test-only ones.
-- Prefer the standard library, assertions included.
+- Prefer the standard library. In tests, `testify` is permitted when it
+  makes an assertion more readable than the stdlib form.
 - Never take a dependency to avoid writing five lines.
 
 ## 3. Errors
@@ -71,6 +72,9 @@ Where a storage engine actually breaks. Look hardest here.
 ## 5. Tests
 
 - Never `time.Sleep` to order events — use channels, `sync.WaitGroup`, or polling.
+- Never `time.Now` for uniqueness or ordering. Use `t.Name()` for a key
+  prefix and a counter for a nonce. The clock is permitted only to measure a
+  reported rate.
 - Never assert from inside a goroutine. An assertion that fires after the test
   returns panics the whole binary. Send the error to a buffered channel and assert
   on the test goroutine.
@@ -90,6 +94,11 @@ The default is no comment. Two kinds earn a place: a workaround with the upstrea
 issue that forces it, and an invariant a reader would otherwise violate. Flag
 every other comment for deletion. A doc comment on an exported name is not
 exempt. Go convention alone does not justify one.
+
+A comment that earns its place is at most two sentences. Flag a longer one:
+it holds rationale, and rationale lives in the design note. Flag any comment
+that restates a design note. The note is the one source, and the copy in the
+code goes stale.
 
 Flag a comment that:
 
@@ -111,13 +120,20 @@ If a better name removes the need for the comment, give the name. No metaphor
 and no counterfactual. Plain sentences. Several short ones beat one built from
 stacked clauses.
 
-## 7. Naming
+## 7. Zero values
+
+- Make the zero value useful (Go proverb). Flag a type whose zero value
+  errors or panics where a sensible default exists.
+- Flag an API that needs a nil pointer to express the default when the zero
+  value of the type can carry it.
+
+## 8. Naming
 
 - No `Get` prefix on getters, no `Impl` suffix.
 - No stutter: `Status` in package `index`, not `IndexStatus`.
 - `TestFoo`, not `Test_Foo`.
 
-## 8. Build files
+## 9. Build files
 
 - `BUILD.bazel` files are gazelle output. Regenerate them. Do not hand-edit.
 - A `go.mod` change must arrive with the regenerated `MODULE.bazel`,
