@@ -79,7 +79,7 @@ func (d *local) live(ctx context.Context, key string) (string, error) {
 
 func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (*blob.WriterOptions, func() (string, error), error) {
 	for now := time.Now().UnixNano(); now <= d.l.lastMod; now = time.Now().UnixNano() {
-		time.Sleep(10 * time.Microsecond)
+		time.Sleep(time.Millisecond)
 	}
 	d.l.lastMod = time.Now().UnixNano()
 	switch {
@@ -104,5 +104,16 @@ func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (
 			return nil, nil, errPrecondition(key)
 		}
 	}
-	return nil, func() (string, error) { return d.live(ctx, key) }, nil
+	return nil, func() (string, error) {
+		live, err := d.live(ctx, key)
+		if err != nil {
+			return "", err
+		}
+		if mod, _, ok := strings.Cut(live, "-"); ok {
+			if m, err := strconv.ParseInt(mod, 16, 64); err == nil && m > d.l.lastMod {
+				d.l.lastMod = m
+			}
+		}
+		return live, nil
+	}, nil
 }
