@@ -8,13 +8,19 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"gocloud.dev/blob"
 )
 
+type diskLock struct {
+	mu      sync.Mutex
+	lastMod int64
+}
+
 var diskMus sync.Map
 
-func diskMu(dir string) (*sync.Mutex, error) {
+func diskMu(dir string) (*diskLock, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
@@ -22,18 +28,18 @@ func diskMu(dir string) (*sync.Mutex, error) {
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
 	}
-	mu, _ := diskMus.LoadOrStore(abs, &sync.Mutex{})
-	return mu.(*sync.Mutex), nil
+	mu, _ := diskMus.LoadOrStore(abs, &diskLock{})
+	return mu.(*diskLock), nil
 }
 
 type local struct {
-	b  *blob.Bucket
-	mu *sync.Mutex
+	b *blob.Bucket
+	l *diskLock
 }
 
 func (d *local) lock() func() {
-	d.mu.Lock()
-	return d.mu.Unlock
+	d.l.mu.Lock()
+	return d.l.mu.Unlock
 }
 
 func localGeneration(modTime int64, size int64) string {
@@ -72,6 +78,10 @@ func (d *local) live(ctx context.Context, key string) (string, error) {
 }
 
 func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (*blob.WriterOptions, func() (string, error), error) {
+	for now := time.Now().UnixNano(); now <= d.l.lastMod; now = time.Now().UnixNano() {
+		time.Sleep(10 * time.Microsecond)
+	}
+	d.l.lastMod = time.Now().UnixNano()
 	switch {
 	case cond == nil:
 	case cond.Absent:
