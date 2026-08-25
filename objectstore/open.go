@@ -17,6 +17,14 @@ func Open(ctx context.Context, rawURL string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	if u.Scheme == "file" {
+		q := u.Query()
+		if !q.Has("metadata") {
+			q.Set("metadata", "skip")
+			u.RawQuery = q.Encode()
+			rawURL = u.String()
+		}
+	}
 	b, err := blob.OpenBucket(ctx, rawURL)
 	if err != nil {
 		return nil, err
