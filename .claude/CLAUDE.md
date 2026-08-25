@@ -40,43 +40,31 @@ The last one stages the generated protobuf code in the source tree. A tool that
 reads source cannot load that package otherwise, and fails on every package that
 imports it. Delete the copies when the tool finishes.
 
+## Language guidelines
+
+Before the first edit in a language — new code or a refactor — read its
+guideline file. Code review reads the same files, so you write to the rules
+you are reviewed against.
+
+- Go (`*.go`, `go.mod`): `docs/guidelines/go.md`
+- Bazel (`BUILD.bazel`, `MODULE.bazel`, `.bazelrc`): `docs/guidelines/bazel.md`
+
+Python, JavaScript, and Protobuf get a file here when their first source file
+lands.
+
 ## Gotchas & conventions
 
-- No new third-party Go dependencies unless we agree first — prefer stdlib.
-  Exception: `github.com/stretchr/testify` is pre-agreed for tests. Use it
-  when it makes a test more readable than the stdlib form.
 - Generated code is not ours. Protoc output lives in `bazel-bin` and never
   reaches the repository. It stays outside review, outside lint, and outside the
   comment rules.
-- A function that does I/O, or calls one that does, takes `context.Context` as
-  its first parameter and passes it down. Check `ctx.Err()` where there is work
-  worth abandoning: once per item in a batch, and once more before a commit.
-  Never add a context that no implementation reads. `cas.Store` takes none,
-  because `os.Rename` and `File.Sync` do not observe one.
-- An external test package tests a package: `package index_test` for
-  `package index`. The test then proves the exported API is enough. Use an
-  internal test only to reach something unexported, and say why in the commit.
-- Structured logging via stdlib `log/slog`; prefer returning errors over
-  fatal-level logging.
-- Never `time.Sleep` to synchronize a test — poll or use channels.
-- A benchmark loop is `for b.Loop()`, never `for i := 0; i < b.N; i++`.
-  Setup goes before the loop and cleanup after it, with no `ResetTimer`.
-- Never `time.Now` for uniqueness in a test. Use `t.Name()` for a key prefix
-  and a counter for a nonce, and delete what an earlier run left. The clock
-  is permitted only to measure a reported rate.
-- Make the zero value useful (Go proverb). The zero value of a type is the
-  documented default, not an error. Reject only a state the contract has no
-  meaning for.
-- Explicit beats clever. Prefer the obvious solution a reader can follow without
-  reconstructing your reasoning, even when a terser one exists.
 - Default to no comment. Two kinds earn a place: a workaround with the upstream
   issue that forces it, and an invariant a reader would otherwise violate. Write
   nothing else, doc comments on exported names included. A comment that earns
   its place is at most two sentences. Do not restate a design note in code.
   The note holds the rationale, and the copy goes stale. Go convention alone
   does not justify a doc comment. Delete a comment that paraphrases the
-  identifier, restates the signature, explains a pattern the reader knows, gives
-  the reason for an obvious choice, or names the caller. Applies to config and
+  identifier, restates the signature, or explains a pattern the reader knows.
+  Delete one that gives the reason for an obvious choice, or names the caller. Applies to config and
   build files (`.bazelrc`, `MODULE.bazel`, `BUILD.bazel`, workflows) as much as
   to Go.
 - Flag open design questions with `CONSIDER(ali):` comments.
@@ -91,7 +79,7 @@ imports it. Delete the copies when the tool finishes.
   only when it changes what the reader does next. To explain structure or
   flow, prefer a small sketch — a file tree, a call tree, pseudocode, or a
   diff — over prose.
-- Design notes: Markdown in `docs/design/`; update them alongside the code they
+- Design notes: Markdown in `docs/design/`. Update them alongside the code they
   describe.
 - A branch name always starts with `ali/`. The type of the change goes in the PR
   title instead, as `feat:`, `fix:`, `chore:`, or `docs:`.
@@ -110,5 +98,6 @@ imports it. Delete the copies when the tool finishes.
 
 For planning a new feature or design, use the `plan-feature` skill. For any
 documentation or technical prose — `docs/`, READMEs, PR descriptions — use the
-`design-note` skill. Before you present a design as done, use the `jeff-dean`
-skill to get an external review from `agy`.
+`design-note` skill. To review code, a diff, or a PR, use the `code-review`
+skill. Before you present a design as done, use the `jeff-dean` skill to get an
+external review from `agy`.
