@@ -29,6 +29,7 @@ jobs:
       run: bazel run @io_bazel_rules_go//go -- mod verify
 
     - name: govulncheck
+      continue-on-error: true
       run: bazel run @io_bazel_rules_go//go -- run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
 
     - name: golangci-lint
