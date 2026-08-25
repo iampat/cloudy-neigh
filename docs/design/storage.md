@@ -586,17 +586,15 @@ the native handle through `As`. That one hole defines the `bucket` interface,
 and a new backend implements the four methods and adds its scheme to the
 switch in `Open`.
 
-The memory and disk backends share one implementation. Its generation is
-derived from `(ModTime, Size)`, which every reader and list entry already
-carries, so `Get` and `List` take no lock on any backend -- the token rides
-the read itself, the same shape as GCS. Mutations serialize on one in-process
-mutex, which makes each precondition check atomic; the driver's own
-`IfNotExist` is not used, because `fileblob` implements it as a stat before a
-rename that interleaves, and a losing write clobbers the winner's attribute
-sidecar. Every `Open` of one directory (symlink aliases included) shares
-one mutex, so two handles on a bucket cannot race each other. A disk bucket
-shared across OS processes is out of scope; production runs on GCS, and the
-local backends serve tests and development.
+The memory and disk backends share one implementation. Its generation derives
+from `(ModTime, Size)`, which every reader and list entry carries. `Get` and
+`List` take no lock on any backend -- the token rides the read itself, the
+same shape as GCS. Mutations serialize on a lock to make each precondition
+check atomic. The disk backend acquires an exclusive file lock (`flock`) on a
+`.lock` file in the bucket root during mutations, which coordinates writers
+across processes. The memory backend uses an in-process mutex. The driver
+`IfNotExist` option is not used, because `fileblob` checks existence with a
+stat before a rename that interleaves.
 
 Token uniqueness on the local backends assumes the wall clock advances
 between successive writes to one key. A write costs more than the clock tick
