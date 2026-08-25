@@ -4,16 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"gocloud.dev/blob"
 )
 
 type diskLock struct {
+	dir     string
 	mu      sync.Mutex
 	lastMod int64
 }
@@ -28,8 +31,8 @@ func diskMu(dir string) (*diskLock, error) {
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
 	}
-	mu, _ := diskMus.LoadOrStore(abs, &diskLock{})
-	return mu.(*diskLock), nil
+	val, _ := diskMus.LoadOrStore(abs, &diskLock{dir: abs})
+	return val.(*diskLock), nil
 }
 
 type local struct {
@@ -39,6 +42,18 @@ type local struct {
 
 func (d *local) lock() func() {
 	d.l.mu.Lock()
+	if d.l.dir != "" {
+		if f, err := os.Open(d.l.dir); err == nil {
+			if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err == nil {
+				return func() {
+					_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+					_ = f.Close()
+					d.l.mu.Unlock()
+				}
+			}
+			_ = f.Close()
+		}
+	}
 	return d.l.mu.Unlock
 }
 
@@ -78,7 +93,15 @@ func (d *local) live(ctx context.Context, key string) (string, error) {
 }
 
 func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (*blob.WriterOptions, func() (string, error), error) {
-	for now := time.Now().UnixNano(); now <= d.l.lastMod; now = time.Now().UnixNano() {
+	prevLive, _ := d.live(ctx, key)
+	if prevLive != "" {
+		if mod, _, ok := strings.Cut(prevLive, "-"); ok {
+			if m, err := strconv.ParseInt(mod, 16, 64); err == nil && m > d.l.lastMod {
+				d.l.lastMod = m
+			}
+		}
+	}
+	for now := time.Now().UnixNano(); now <= d.l.lastMod+int64(2*time.Millisecond); now = time.Now().UnixNano() {
 		time.Sleep(time.Millisecond)
 	}
 	d.l.lastMod = time.Now().UnixNano()
@@ -96,11 +119,7 @@ func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (
 		if !validLocalGeneration(cond.GenerationMatch) {
 			return nil, nil, fmt.Errorf("objectstore: key %q: malformed generation %q", key, cond.GenerationMatch)
 		}
-		live, err := d.live(ctx, key)
-		if err != nil {
-			return nil, nil, err
-		}
-		if live != cond.GenerationMatch {
+		if prevLive != cond.GenerationMatch {
 			return nil, nil, errPrecondition(key)
 		}
 	}
