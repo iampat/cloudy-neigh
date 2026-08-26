@@ -1,16 +1,19 @@
 ---
 name: retro
-description: Review the recent session history for corrections Ali repeated, then update .claude/lessons.md. Ali triggers this skill. Never start it on your own.
+description: Review the recent session history for corrections Ali repeated, then fold each one into the rule file that owns it. Ali triggers this skill and approves every edit. Never start it on your own.
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
 # Retro
 
-Find what Ali had to say more than once. Write it down, so he does not say it
-again.
+Find what Ali had to say more than once. Put the rule where it belongs, so he
+does not say it again.
 
 Ali triggers this skill. Never fire it on your own, and never fold it into
 another task.
+
+The pass changes the rule files, so it needs his approval. Steps 1 to 5 read
+and plan. Step 6 asks. Step 7 edits.
 
 ## 1. Read the history
 
@@ -73,39 +76,56 @@ last date, and the one quote that shows it best.
 Count by the cases you collected in step 2. Do not count with grep. A typo
 breaks the count the same way it breaks the search.
 
-## 4. Classify each finding
+## 4. Give each finding a home
 
-Check the candidate against the rules that already exist:
-`.claude/CLAUDE.md`, `docs/guidelines/*.md`, `.claude/skills/*/SKILL.md` and
-`~/.claude/CLAUDE.md`.
+A rule lives in one file. The file decides when the rule reaches you.
+
+Read the rules that exist first: `.claude/CLAUDE.md`, `docs/guidelines/*.md`,
+`.claude/skills/*/SKILL.md` and `~/.claude/CLAUDE.md`.
+
+| The finding is about | Home |
+| --- | --- |
+| A rule for one language | `docs/guidelines/<language>.md` |
+| How one named skill runs | that skill's `SKILL.md` |
+| The repo workflow, or a rule two skills need | `.claude/CLAUDE.md` |
+| How Ali and I work, with no home above | `.claude/lessons.md` |
+
+`lessons.md` is the last choice, not the first. It is the holding area for what
+no rule file covers. A finding with a home goes home.
+
+Then check what the finding does to the rule that exists:
 
 | Case | Action |
 | --- | --- |
-| No rule covers it | Add it to `.claude/lessons.md` |
-| A rule covers it, and I broke it again | Add it, marked as a repeat offence |
-| A rule covers it, and every case falls outside the window | Drop it |
+| No rule covers it | Write the rule in its home |
+| A rule covers it, and the rule is vague | Sharpen that rule where it lives |
+| A rule covers it, and it is right | Add a `lessons.md` entry, and change nothing else |
+| A rule covers it, and every case falls outside the window | Drop the finding |
 
-A repeat offence stays in lessons.md. The rule is not wrong. The rule does not
-reach the moment of the mistake, and the short entry does.
+The third row is the repeat offence. The rule is not wrong. The rule does not
+reach the moment of the mistake, and a short entry read at task start does.
 
-## 5. Maintain `.claude/lessons.md`
+## 5. Keep the rules DRY
 
-The file is read at the start of every task, so its length is a tax. Prune
-before you add.
+The pass adds text to files I read every session. Left alone, it grows into
+two rules that disagree.
 
+- **One rule, one file.** Never state a rule twice. When you write it in its
+  home, delete every copy elsewhere, `lessons.md` included.
+- **Factor up.** A rule that two or more skills need moves to `.claude/CLAUDE.md`.
+  Each skill drops its copy and depends on the one in CLAUDE.md.
+- **Supersede.** Before you add a rule, find the rule it replaces. Delete that
+  one in the same edit. Do not leave the weaker version behind.
 - **Merge.** Two entries that ask for the same action become one entry.
-- **Sharpen.** New evidence rewrites the entry it belongs to. Never append a
-  second entry for the same lesson.
-- **Promote.** An entry that holds for three passes belongs in `.claude/CLAUDE.md`
-  or in a guideline file. Move it there, and delete it here. Report the move.
-- **Retire.** Delete an entry with no evidence in the last two windows.
-- **Cap.** Twenty entries. Over the cap, delete the entry with the oldest last
-  date.
+- **Retire.** Delete a `lessons.md` entry with no evidence in the last two
+  windows.
+- **Cap.** Twenty entries in `lessons.md`. Over the cap, delete the entry with
+  the oldest last date.
 
-Never duplicate a rule that already lives in CLAUDE.md or a guideline file. A
-duplicate rule drifts from its copy, and then two rules disagree.
+The skill may edit itself. A finding about how this pass runs belongs in this
+file.
 
-### Entry format
+### `lessons.md` entry format
 
 ```markdown
 ### <the rule, as an imperative>
@@ -117,12 +137,41 @@ duplicate rule drifts from its copy, and then two rules disagree.
 Five lines. No paragraph, no rationale beyond the quote. The quote is the
 rationale.
 
-## 6. Report
+## 6. Ask before you edit
 
-Give Ali the pass result:
+Print the plan and wait. Ali approves it before any file changes.
 
-- What you added, with the evidence count.
-- What you merged, promoted or retired, and why.
-- The entry count before and after.
+For each finding give one block:
+
+```
+<the rule, as an imperative>      <N asks, first date to last date>
+  home:  <file>
+  edit:  add | sharpen | delete | move from <file>
+  text:  <the exact lines you will write>
+```
+
+Then the prune list: every entry you will merge, retire or drop, with the
+reason in four words.
+
+More than five findings makes that plan too long to read. Then ask in two
+stages. Stage one is a table: the rule, the count, the home and the edit.
+Stage two is the exact text, for the rows Ali approved.
+
+Ali may change a home, reject a finding or rewrite the text. Apply his answer,
+not your plan. Never edit a file before he answers.
+
+The skill edits only these files: `.claude/CLAUDE.md`, `.claude/lessons.md`,
+`docs/guidelines/*.md` and `.claude/skills/*/SKILL.md`. It never touches source
+code, a design note or a file outside the repository.
+
+## 7. Apply and report
+
+After Ali approves, make the edits, then report:
+
+- Each rule you wrote, and the file it went to.
+- Each rule you deleted, moved or superseded, and the file it left.
+- The `lessons.md` entry count, before and after.
+
+Run `.claude/skills/design-note/lint.sh` on every file you changed.
 
 Then stop. Do not act on the findings in the same turn.
