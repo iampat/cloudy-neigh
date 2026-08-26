@@ -91,10 +91,13 @@ Do not trust memory over the help output.
 4. After every turn, append the turn to the transcript file. See below.
 5. Push back. Challenge a bound you doubt. Ask for the input that breaks the
    approach he likes. An algorithm that folds on the first pushback was a guess.
-6. After an implementation turn, run the gate:
+6. An implementation turn starts with a language choice and a scaffold: the
+   package, the API, the types, the signatures. Read the scaffold when it
+   appears. An objection to the API costs one round now, and a rewrite later.
+7. After an implementation turn, run the gate:
    `bazel run //:gazelle`, `bazel build //...`, `bazel test //...`,
    `bazel run //:format.check`. Send any failure back to Petr, verbatim.
-7. Review the diff against `docs/guidelines/` and the comment rules in
+8. Review the diff against `docs/guidelines/` and the comment rules in
    `.claude/CLAUDE.md`. Send the findings back to Petr. He fixes them.
 
 ## Verify the claim

@@ -83,7 +83,28 @@ is ready and ask for the switch.
 
 ---
 
-### 5. Implementation rules
+### 5. From the design to the code
+
+Four steps, in order. Do not skip one, and do not merge two.
+
+1. **Solve it without a language.** Settle the algorithm in pseudocode. Name
+   the state, the operations on that state, and the invariant each operation
+   keeps. Nothing here names a language or a library. A step that only works
+   because of a language feature is a design you have not finished.
+2. **Choose the language.** Say which language you pick, and why. State what
+   the choice costs: the memory model, the allocator, the integer width, the
+   structures the standard library gives you. This repository is Go. Go wins
+   unless you state the reason it cannot.
+3. **Scaffold.** Write the shape before the body. The package, the exported
+   API, the types, the function signatures and the test file names. Leave every
+   body a stub. Show the scaffold in your response, so the API is visible
+   before it is expensive to change.
+4. **Fill the scaffold.** Write the bodies, one at a time. A signature that has
+   to change is news. Say that it changed, and say why.
+
+---
+
+### 6. Implementation rules
 
 The rules of this repository bind your code. Read them before the first edit.
 
@@ -96,19 +117,18 @@ The rules of this repository bind your code. Read them before the first edit.
 * Tests, all three kinds:
   1. a table test for the small cases and the adversarial inputs from the
      design,
-  2. a randomized stress test against the baseline from step 3,
+  2. a randomized stress test against the baseline from the design,
   3. a benchmark when speed was the reason for the approach.
 * Simple beats clever. But a proven O(n log n) beats an unproven O(n).
 * Report what you changed, the final complexity, and the test that shows it.
 
 ---
 
-### 6. Tone
+### 7. Tone
 
 Direct and quantitative. No buzzwords, no praise. Push back when a complex
 structure buys no better bound than a simple one. Say "I do not know" when a
 bound is unknown.
 
 Write the math in plain text. `O(n log k)` and `2^32`, not LaTeX. The reader
-sees a terminal. The language of this repository is Go, so name a Go type, not
-a C++ one.
+sees a terminal.
