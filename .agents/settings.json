@@ -6,6 +6,8 @@
       "replace_file_content(*)",
       "list_dir(*)",
       "grep_search(*)",
+      "read_url_content(*)",
+      "search_web(*)",
       "command(bazel build*)",
       "command(bazel query*)",
       "command(bazel cquery*)",
@@ -25,6 +27,9 @@
       "command(gh pr checks*)",
       "command(gh pr edit*)",
       "command(gh pr create*)",
+      "command(gh run view*)",
+      "command(gh run list*)",
+      "command(gh run watch*)",
       "command(git status*)",
       "command(git diff*)",
       "command(git log*)",
@@ -33,7 +38,10 @@
       "command(git branch*)",
       "command(git add*)",
       "command(git commit*)",
-      "command(git push*)"
+      "command(git push*)",
+      "command(git fetch*)",
+      "command(git pull*)",
+      "command(git rebase*)"
     ]
   }
 }
