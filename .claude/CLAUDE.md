@@ -94,6 +94,16 @@ not trust memory over the help output.
   to the background, which is normal. Read the output file it names.
 - Write the prompt to a file first, then call `agy`. Two steps pass the
   permission classifier, and one compound command does not.
+- Redirect the output to a file with `> out.json 2>&1`. Never pipe agy into
+  `tail`, `head` or any filter. A turn that runs Bazel leaves a server daemon,
+  the daemon inherits the pipe, and the pipe never reaches end of file. The
+  filter then waits forever and the response dies in its buffer.
+- `agy --continue -p "<reply>"` resumes the most recent conversation. It
+  recovers a thread whose `conversation_id` was lost.
+- A hung call needs a diagnosis, not a wait. `pgrep -f "agy -p"` also matches
+  the wrapper shell, so it reports a process that is already gone. Look for the
+  real binary with `ps -ax -o pid,ppid,command | grep "[a]gy"`, and find what
+  holds the pipe with `lsof`.
 - Run agy in another directory with `env -C <dir> agy ...`. A `cd` does not
   persist between tool calls, and a worktree needs the working directory.
 - An empty `response` with an error on stderr is a failure. Stop and report the
