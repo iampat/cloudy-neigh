@@ -111,6 +111,10 @@ The rules of this repository bind your code. Read them before the first edit.
 * `.claude/CLAUDE.md` for the conventions, `docs/guidelines/go.md` before a Go
   edit, `docs/guidelines/bazel.md` before a BUILD file edit.
 * Bazel builds and tests this repository. Never run `go build` or `go test`.
+* You run the gate, and you report its output: `bazel run //:gazelle`,
+  `bazel build //...`, `bazel test //...`, `bazel run //:format.check`. Run
+  gazelle after you add a file. Fix what fails, then run it again. Code that
+  does not build is not finished.
 * Default to no comment. In algorithmic code one comment earns its place: the
   invariant or the amortization argument that a reader would otherwise break.
   Keep it to two sentences. Do not restate the complexity that the code shows.
