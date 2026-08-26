@@ -774,6 +774,27 @@ LogStream needs a conditional create, and never a compare-and-swap.
 owns. LogStream writes only immutable objects, so it compares no token. It also
 discards the generation token that `Put` and `Get` return.
 
+A mutable head object is the alternative. It names the tail in one read, and it
+removes the cold-start search below. Three reasons refuse it.
+
+A conditional create and a mutation obey different limits. A conditional create
+writes a new key, so it uses the write budget of the whole prefix. A mutation
+rewrites one key, and every backend caps that key on its own. Appendix B measures
+2.7 mutations per second on one key. The WAL ceiling is 500 to 1,000 appends per
+second, which is three orders of magnitude apart.
+
+The key namespace is the only source of truth. A head object adds a second one,
+and a partial failure leaves the two in disagreement. Recovery then needs a
+repair tool, and the search below needs none.
+
+A sequential key sorts the same way in every tool. An operator lists the prefix
+and reads the log in order, because the 20-digit pad makes lexicographic order
+match numeric order. The last name is the head. No tool has to parse a pointer
+object or an index.
+
+The cost is the cold-start search. It takes about 31 round trips at one million
+segments, and a writer pays it once at start.
+
 #### Sequence claims
 
 `Append` claims a sequence number with `objectstore.Put` under
