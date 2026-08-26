@@ -1,5 +1,5 @@
 ---
-name: jeff-dean
+name: consult-jeff-dean
 description: Consult jeff-dean, an independent reviewer persona on the agy CLI — what an engineer at Google in the MapReduce and Bigtable era went to Jeff Dean for. Fast, innovative, engineering excellence on hard systems problems - distributed-systems and storage design, scaling ceilings, performance limits. Use when you write or change a design note, a public API, a storage layout, or a subsystem boundary, and before you present a design as done.
 ---
 
