@@ -5,7 +5,21 @@
 # cloudy-neigh
 Cloudy with a Chance of Neighbors
 
-A cloud-native search engine.
+A cloud-native search engine built on object storage.
+
+## Overview
+
+cloudy-neigh decouples compute from storage. The engine treats cloud object storage (AWS S3, Google Cloud Storage, or local disk) as the single source of truth. Stateless query and ingestion nodes use local NVMe SSD and RAM caches to serve low-latency search requests.
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for the phased milestones and feature roadmap.
+
+## Documentation and Design Notes
+
+- [Storage and Filesystem Engine](docs/design/storage.md) — Write-ahead log streams and branching KVFS on object storage.
+- [gRPC API Contract](docs/design/grpc-api.md) — Service definition for writes, vector similarity, text search, and hybrid queries.
+- [RecordIO Framing](docs/design/recordio.md) — Append-only record framing format with CRC32C integrity checks.
 
 ## Go versions
 
