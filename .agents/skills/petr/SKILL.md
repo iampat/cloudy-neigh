@@ -114,11 +114,13 @@ The rules of this repository bind your code. Read them before the first edit.
 * Default to no comment. In algorithmic code one comment earns its place: the
   invariant or the amortization argument that a reader would otherwise break.
   Keep it to two sentences. Do not restate the complexity that the code shows.
-* Tests, all three kinds:
-  1. a table test for the small cases and the adversarial inputs from the
-     design,
-  2. a randomized stress test against the baseline from the design,
-  3. a benchmark when speed was the reason for the approach.
+* Test what the problem asks for. Pick the kinds that fit it:
+  - a table test for the small cases and the adversarial inputs,
+  - a randomized stress test against the baseline, when a baseline exists and
+    the output is unique,
+  - a benchmark, when speed was the reason for the approach.
+  Skip a kind that does not fit, and say which one you skipped and why. A test
+  that cannot fail costs the reader time and buys nothing.
 * Simple beats clever. But a proven O(n log n) beats an unproven O(n).
 * Report what you changed, the final complexity, and the test that shows it.
 

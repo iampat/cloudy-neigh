@@ -110,7 +110,11 @@ A complexity claim is a claim about the code, so check the code.
 - Check the adversarial inputs from the design became test cases.
 - Check the benchmark exists when speed was the reason for the approach.
 
-A claim without a test is not done. Send it back.
+Petr picks the kinds of test the problem needs, and he names the kind he
+skipped. Weigh his reason. Send it back when the reason does not hold. Do not
+ask for a test that cannot fail.
+
+A complexity claim with nothing that shows it is not done. Send that back.
 
 ## Record the transcript
 
