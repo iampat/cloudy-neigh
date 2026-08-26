@@ -76,17 +76,14 @@ func benchStore(b *testing.B, open func(b *testing.B) *objectstore.Store) {
 	})
 	b.Run("Put(GenerationMatch)", func(b *testing.B) {
 		s := open(b)
-		i := 0
+		key := prefix + "cas"
+		gen, err := s.Put(ctx, key, bytes.NewReader(payload), nil)
+		if err != nil {
+			b.Fatal(err)
+		}
 		for b.Loop() {
-			b.StopTimer()
-			i++
-			key := fmt.Sprintf("%scas/%d", prefix, i)
-			gen, err := s.Put(ctx, key, bytes.NewReader(payload), nil)
+			gen, err = s.Put(ctx, key, bytes.NewReader(payload), &objectstore.Condition{GenerationMatch: gen})
 			if err != nil {
-				b.Fatal(err)
-			}
-			b.StartTimer()
-			if _, err := s.Put(ctx, key, bytes.NewReader(payload), &objectstore.Condition{GenerationMatch: gen}); err != nil {
 				b.Fatal(err)
 			}
 		}
