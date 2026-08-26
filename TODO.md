@@ -1,5 +1,9 @@
 # TODO
 
+- [ ] Refactor the storage layer.
+  - [ ] Replace the cloud SDK with a shim around GCS. Use the atomic-file
+        package from Tailscale.
+  - [ ] Revisit the ObjectStore API.
 - [ ] Remove the `golang.org/x/tools` override in `MODULE.bazel`. rules_go
       0.62.0 pins v0.34.0, which reads export data version 2 at most. Drop the
       override when rules_go pins v0.44.0 or later.
