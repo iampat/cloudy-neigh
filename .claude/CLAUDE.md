@@ -3,6 +3,12 @@
 A cloud-native search engine in Go. Distributed-systems and storage-engine work:
 durability, consistency, and failure modes matter more than feature velocity.
 
+## Lessons
+
+Read `.claude/lessons.md` before your first action in a task. It holds the
+corrections Ali repeated, and each entry names the action to take. The `retro`
+skill maintains that file, and Ali triggers the skill.
+
 ## Build — Bazel only
 
 Never invoke `go build`/`go test` or run scripts directly. Go through Bazel so
