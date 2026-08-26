@@ -605,17 +605,17 @@ The memory and disk backends share one implementation. Its generation derives
 from `(ModTime, Size)`, which every reader and list entry carries. `Get` and
 `List` take no lock on any backend -- the token rides the read itself, the
 same shape as GCS. Mutations serialize on a lock to make each precondition
-check atomic. The disk backend acquires an exclusive file lock (`flock`) on a
-`.lock` file in the bucket root during mutations, which coordinates writers
+check atomic. The disk backend acquires an exclusive file lock (`flock`) on
+the bucket directory descriptor during mutations, which coordinates writers
 across processes. The memory backend uses an in-process mutex. The driver
 `IfNotExist` option is not used, because `fileblob` checks existence with a
 stat before a rename that interleaves.
 
 Token uniqueness on the local backends assumes the wall clock advances
 between successive writes to one key. A write costs more than the clock tick
-on the supported filesystems (memory, APFS, ext4), and the mutex serializes
-writers, so the assumption holds there; filesystems with second-granularity
-timestamps are out of scope.
+on the supported filesystems (memory, APFS, ext4). The mutex serializes writers,
+so the assumption holds there. Filesystems with second-granularity timestamps
+are out of scope.
 
 A token stored in blob metadata was considered and rejected. It would remove
 the clock assumption, because `Put` could mint a unique token in the fileblob
