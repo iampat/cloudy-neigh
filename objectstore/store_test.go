@@ -39,11 +39,10 @@ func put(t *testing.T, s *objectstore.Store, key, value string) string {
 	return gen
 }
 
-// raceAbsentPut races writers over Put(Absent) on one key, alternating over
-// stores, and demands exactly one winner.
 func raceAbsentPut(t *testing.T, stores []*objectstore.Store, key string, writers int) {
 	t.Helper()
 	var wins, losses atomic.Int32
+	errCh := make(chan error, writers)
 	var wg sync.WaitGroup
 	for i := 0; i < writers; i++ {
 		s := stores[i%len(stores)]
@@ -57,11 +56,15 @@ func raceAbsentPut(t *testing.T, stores []*objectstore.Store, key string, writer
 			case errors.Is(err, objectstore.ErrPreconditionFailed):
 				losses.Add(1)
 			default:
-				t.Errorf("Put(Absent): %v", err)
+				errCh <- fmt.Errorf("Put(Absent): %w", err)
 			}
 		}(i)
 	}
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
 	if wins.Load() != 1 || losses.Load() != int32(writers-1) {
 		t.Fatalf("wins=%d losses=%d, want 1 and %d", wins.Load(), losses.Load(), writers-1)
 	}
@@ -154,6 +157,7 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		k := prefix(t, s) + "ctr"
 		put(t, s, k, "0")
 		var wg sync.WaitGroup
+		errCh := make(chan error, cfg.casWriters)
 		for i := 0; i < cfg.casWriters; i++ {
 			wg.Add(1)
 			go func() {
@@ -162,18 +166,18 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 					for {
 						r, gen, err := s.Get(ctx, k)
 						if err != nil {
-							t.Errorf("Get: %v", err)
+							errCh <- fmt.Errorf("Get: %w", err)
 							return
 						}
 						data, err := io.ReadAll(r)
 						r.Close()
 						if err != nil {
-							t.Error(err)
+							errCh <- err
 							return
 						}
 						v, err := strconv.Atoi(string(data))
 						if err != nil {
-							t.Errorf("counter payload %q", data)
+							errCh <- fmt.Errorf("counter payload %q", data)
 							return
 						}
 						_, err = s.Put(ctx, k, strings.NewReader(strconv.Itoa(v+1)), &objectstore.Condition{GenerationMatch: gen})
@@ -181,7 +185,7 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 							break
 						}
 						if !errors.Is(err, objectstore.ErrPreconditionFailed) {
-							t.Errorf("Put(GenerationMatch): %v", err)
+							errCh <- fmt.Errorf("Put(GenerationMatch): %w", err)
 							return
 						}
 					}
@@ -189,6 +193,10 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 			}()
 		}
 		wg.Wait()
+		close(errCh)
+		for err := range errCh {
+			t.Fatal(err)
+		}
 		r, _, err := s.Get(ctx, k)
 		if err != nil {
 			t.Fatal(err)
