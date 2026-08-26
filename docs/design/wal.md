@@ -45,6 +45,8 @@ message queue, an event log, or the write-ahead log of another engine.
 - A writer nonce inside a segment. A writer could then recognize its own
   segment after an ambiguous failure, which
   [Delivery guarantee](#delivery-guarantee) explains.
+- Group commit. One batcher per stream would gather the records of many
+  goroutines into one segment, which removes the per-process append cap.
 - Read-ahead across segments, so a replay overlaps the network with the fold.
 - A `Head` call in `objectstore`, so the tail search stops paying list pricing.
 - A `min_active_seq` watermark, if an operator ever truncates an old prefix.
@@ -94,9 +96,15 @@ number is the file name. No container message inside the segment repeats them.
 Nothing shards the `wal/` prefix by hash, unlike `objects/` and `manifests/`.
 Sequential keys are the point of the layout, and a hash prefix would destroy the
 order that the tail search and every operator depend on.
-`CONSIDER(ali):` a monotonic key is the classic hotspot shape on S3 and GCS.
-Appendix B of [storage.md](storage.md) names `wal/` as a candidate and offers no
-mitigation for it.
+
+A monotonic key is the classic hotspot shape, and it does not bind here. The
+stream name sits inside the prefix, so two streams partition apart. One stream
+stops at 500 to 1,000 appends per second, because writers contend for the next
+number. A backend prefix serves 3,500 requests per second. The contention limit
+is the lower one, so the prefix limit is never the binding constraint.
+
+A backend that has not yet partitioned a new prefix can still refuse a burst
+while it scales. No measurement here confirms the margin.
 
 ## Use of the object store
 
@@ -141,20 +149,37 @@ durable when the call returns without an error, and at no earlier moment.
 
 ```text
 Append(stream, records):
+    reject an empty batch, an invalid stream name, and a canceled context
     encode the batch into one buffer
-    seq = lastKnown[stream] + 1
-    conflicts = 0
-    loop:
-        err = Put(key(stream, seq), buffer, Condition{Absent: true})
-        err is nil                ──▶  lastKnown[stream] = seq;  return seq
-        not ErrPreconditionFailed ──▶  return err
 
-        conflicts = conflicts + 1
-        conflicts < 3             ──▶  seq = seq + 1
-        otherwise                 ──▶  seq = max(seq + 1, Tail(stream) + 1)
-                                       conflicts = 0
+    take the lock of this stream, and hold it to the end
+    lastKnown == 0  ──▶  lastKnown = Tail(stream)
+
+    seq    = lastKnown + 1
+    runway = 3
+    tries  = 0
+
+    loop:
+        check the context
+        err = Put(key(stream, seq), buffer, Condition{Absent: true})
+        err is nil                 ──▶  lastKnown = seq;  return seq
+        not ErrPreconditionFailed  ──▶  return err
+
+        tries = tries + 1
+        tries < runway             ──▶  seq = seq + 1
+        exists(seq + 16) is false  ──▶  seq = seq + 1;  tries = 0
+        otherwise                  ──▶  head, probes = gallop(seq + 16)
+                                        seq    = head + 1
+                                        runway = probes
+                                        tries  = 0
         wait a short random time, then continue
 ```
+
+A cold counter reads `Tail` before the first attempt. Without that read, a writer
+targets sequence 1. An operator that purged an old prefix leaves sequence 1
+absent. The conditional create then succeeds, and it writes today's records under
+the lowest number in the stream. That tears a hole through the whole purged
+range, and it breaks every later search.
 
 A writer targets a free number, or a number that a precondition failure proved
 taken. A failure of any other kind returns an error and moves nothing.
@@ -178,13 +203,42 @@ steps then costs one round trip for each segment the writer missed. A writer tha
 is 4,000 segments behind cannot reach the head inside a normal request deadline.
 Every call thus fails, and the writer never catches up.
 
-Three consecutive precondition failures trigger a `Tail` call, which re-anchors
-`lastKnown` in one search. The jump is safe, because `Tail` reports a real head.
+A repeated search is the wrong cure, and it makes the disease worse. A search
+costs many round trips, and the stream advances during every one of them. A
+writer that searches, and then allows itself only three linear attempts, finds
+those three numbers already taken and searches again. The loop never ends. The
+runway must stay proportional to the cost of the search that preceded it.
+
+Two conflicts are thus different problems, and one probe tells them apart.
+
+**Head contention.** Several writers race at the tip of the stream. The loser is
+zero segments behind, so a search would find what a single `+1` step finds. The
+gate probe at `seq + 16` reports absent, and the writer keeps marching.
+
+**Drift.** The writer is far behind. The gate probe at `seq + 16` reports
+present, and a linear walk cannot close the distance.
+
+A gallop closes a drift. It starts from a number that is known to exist, so it
+needs no list page:
+
+```text
+gallop(lo):                       lo exists
+    d = 1
+    while exists(lo + d):  d = d * 2
+    binary search (lo + d/2, lo + d] for the last number that exists
+```
+
+The gallop costs about `2 log2(delta)` probes in the real distance, and `Tail`
+costs about `2 log2(N)` in the length of the stream. A writer 3 segments behind
+pays 4 probes, and a writer a million behind pays about 40.
 
 A short random delay follows each precondition failure. Two writers that collide
 also fail at the same moment. A loop with no delay keeps them in step, and they
 collide again on the next number. The delay is an implementation constant, and it
 promises a caller nothing.
+
+`CONSIDER(ali):` the gate distance of 16 is a guess. Measure a contended stream,
+and set it from the segments that a writer misses during one gallop.
 
 ## Delivery guarantee
 
@@ -325,14 +379,32 @@ methods.
 One `Log` serves many streams. The stream name is a call argument, not
 constructor state.
 
+A stream name holds one or more characters from `[a-zA-Z0-9_-]`. A slash breaks
+the key parse of the tail search, which reads the sequence number from the last
+path component. An empty name and a relative component are the same class of
+error, and `Append` rejects all three at the boundary.
+
 `Append` writes one segment object and returns the sequence number it claimed.
 The whole batch lands in that one object. A caller that needs a record boundary
 for recovery appends that record alone.
 
+`Append` runs one call at a time for one stream. Two goroutines of one process
+would otherwise read the same counter, upload the same number, and lose one of
+the two uploads. Ten goroutines cost 55 uploads to commit 10 batches, so the
+serialization removes waste rather than adding delay. Two streams still append at
+the same time.
+
+That caps one process near one append per round trip on one stream, which is
+about 33 per second. A deployment reaches the ceiling in the limits below with
+more processes. Group commit removes the cap, and Future work holds it.
+
 `Read` returns every record of one segment. It reports `ErrEndOfStream` when the
-segment does not exist, which means the reader reached the head. A returned
-record is an independent copy, because the RecordIO scanner lends a buffer that
-it reuses.
+segment does not exist, which means the reader reached the head.
+
+Every record of one `Read` shares one backing array. A caller that keeps one
+record thus keeps the whole segment in memory. The alternative is one allocation
+for each record, and a replay of 10,000 segments of 100 records makes a million
+of them.
 
 `Tail` reports the highest written sequence number. A writer calls it on start
 and then counts in memory. It calls `Tail` again only when that counter goes
@@ -362,11 +434,16 @@ write produces a segment that nothing can read back.
 
 Every number here comes from Appendix B of [storage.md](storage.md).
 
-| Dimension                        | Threshold           | Cause                                       |
-| -------------------------------- | ------------------- | ------------------------------------------- |
-| Appends per second, one stream   | 500 to 1,000        | conditional-create contention on the number |
-| Requests per second, one prefix  | 3,500 to 5,500      | backend prefix limits                       |
-| Segments per stream              | no measured bound   | retention is permanent, and GC is a non-goal |
+| Dimension                                 | Threshold         | Cause                                        |
+| ----------------------------------------- | ----------------- | -------------------------------------------- |
+| Appends per second, one stream, all writers | 500 to 1,000      | conditional-create contention on the number  |
+| Appends per second, one stream, one process | about 33          | one append at a time, at one round trip each |
+| Requests per second, one prefix           | 3,500 to 5,500    | backend prefix limits                        |
+| Segments per stream                       | no measured bound | retention is permanent, and GC is a non-goal |
+
+The first row counts every writer of a stream. One process reaches the second row
+and no more, because it serializes its own appends. Only many processes reach the
+first row.
 
 A local backend is much slower. `objectstore/local.go` holds a bucket-wide lock
 and waits for the wall clock to advance on every write. So `mem://` and `file://`
@@ -375,9 +452,9 @@ code, and no benchmark confirms it yet.
 
 ## Open questions
 
-`CONSIDER(ali):` the `wal/` prefix keeps monotonic keys, which is the hotspot
-shape that Appendix B names and does not mitigate. Measure a real prefix before
-choosing between a sub-prefix by epoch and no change.
+`CONSIDER(ali):` the gate distance of 16 and the runway both come from reasoning,
+not from a measurement. Run a contended stream, and set each one from the
+segments a writer misses during one gallop.
 
 `CONSIDER(ali):` `LogStreamService` in [storage.md](storage.md) §7 carries one
 record per `AppendRequest` and exposes no `Tail` call. The Go API takes a batch.
