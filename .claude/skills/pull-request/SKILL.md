@@ -11,3 +11,5 @@ allowed-tools: Bash
 - Never name a model or an agent as a co-author. Do not add a
   `Co-Authored-By:` trailer for a model or an agent.
 - Keep the PR description to 300 characters or less.
+- After you change a file on a branch that has a pull request, commit, push,
+  and update the description in the same turn. Do not wait to be asked.

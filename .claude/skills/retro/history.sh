@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Print the messages Ali typed in this repo's sessions, newest window first.
+# Print the messages the user typed in this repo's sessions, inside the window.
 # Usage: history.sh [weeks]   (default 4)
 set -euo pipefail
 
