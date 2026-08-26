@@ -1,0 +1,139 @@
+---
+name: consult-petr
+description: Consult petr, an algorithm persona on the agy CLI — a competitive programming champion and algorithm designer. Use for a hard algorithmic or data-structure problem. The naive solution is too slow, the complexity bound decides the design, or a hot path needs the right structure. Petr designs and writes the code. You supervise.
+---
+
+# Algorithm work with petr
+
+`agy` is a separate agent CLI with its own models. `petr` is its algorithm
+persona. Petr designs the algorithm, proves it, and writes the code.
+
+**You do not implement inside this skill.** Not the algorithm, not the tests,
+not the fix for a broken build. Your job is different, and it is listed below.
+An edit by you breaks the loop, because Petr then owns code he did not write.
+
+## Your job
+
+- Frame the problem and carry the bounds.
+- Relay the user's questions and answers, verbatim in both directions.
+- Run the build, the tests and the format check.
+- Verify the claimed complexity against the code Petr wrote.
+- Send every failure and every finding back to Petr in the same conversation.
+- Keep the transcript, and report to the user.
+
+Running `bazel run //:gazelle` is a command, not an edit. It stays yours.
+
+## Two modes
+
+Every prompt to Petr starts with a `MODE:` line.
+
+- `MODE: design` — Petr analyses, proves and plans. He writes no file. Use this
+  for a discussion, a data-structure choice, or a complexity question.
+- `MODE: implement` — Petr writes the code and the tests.
+
+Start in design mode. Move to implement only when the user says so. Never send
+`MODE: implement` on your own initiative.
+
+## What the prompt carries
+
+Unlike a review, this work needs context. A missing bound costs a round trip.
+
+Always carry the bounds you know: n, the value range, the query rate, the
+memory ceiling and the latency target. Add the failure the code must survive.
+Name the files Petr must read.
+
+State the constraint, not the solution you prefer. Your framing steers the
+approach, and the approach is what you came for.
+
+When the user invoked the skill, pass the user's problem statement verbatim.
+Add the bounds under it, marked as your own addition.
+
+## Expect a dialogue
+
+Petr interrogates a spec with missing bounds, and he ends a turn with
+questions. Do not expect the whole design in one shot.
+
+- The user invoked the skill: relay the questions to the user, and wait. Do not
+  answer in the user's place. Send the answers verbatim.
+- You fired the skill: answer from facts in the repository. Answer only what is
+  certain. Say so when a number is an estimate. "I do not know" beats a
+  confident error.
+
+## How agy runs
+
+The facts below come from `agy help`. When a call fails, run `agy help` again.
+Do not trust memory over the help output.
+
+- `agy -p "<prompt>"` runs one prompt and prints the response. The prompt is an
+  argument, not stdin. The default timeout is five minutes, and
+  `--print-timeout` overrides it. An implementation turn needs more. Pass
+  `--print-timeout 20m`.
+- `--output-format json` adds a `conversation_id` field to the response.
+  `agy --conversation <id> -p "<reply>"` continues that conversation with its
+  context.
+- Headless mode cannot prompt for a tool permission. Pass
+  `--dangerously-skip-permissions` on every call, so Petr can read and write
+  files himself.
+- An empty `response` with an error on stderr is a failure. Stop and report the
+  command and the error to the user, verbatim. Do not retry, and do not work
+  around it.
+
+## Procedure
+
+1. Write the prompt to a temporary file with the Write tool. Start the file with
+   the `MODE:` line. Do not build the file and call `agy` in one compound
+   command. The permission classifier blocks that shape, and two separate steps
+   pass.
+2. Run `agy -p "/petr $(cat <file>)" --output-format json
+   --dangerously-skip-permissions`. Record the `conversation_id`.
+3. Answer round by round with `agy --conversation <id> -p "<reply>"
+   --dangerously-skip-permissions`.
+4. After every turn, append the turn to the transcript file. See below.
+5. Push back. Challenge a bound you doubt. Ask for the input that breaks the
+   approach he likes. An algorithm that folds on the first pushback was a guess.
+6. After an implementation turn, run the gate:
+   `bazel run //:gazelle`, `bazel build //...`, `bazel test //...`,
+   `bazel run //:format.check`. Send any failure back to Petr, verbatim.
+7. Review the diff against `docs/guidelines/` and the comment rules in
+   `.claude/CLAUDE.md`. Send the findings back to Petr. He fixes them.
+
+## Verify the claim
+
+A complexity claim is a claim about the code, so check the code.
+
+- Re-derive the bound from the loops and the recursion. A claimed O(n log n)
+  with a linear scan inside the loop is O(n² log n).
+- Check the stress test compares against the baseline, not against itself.
+- Check the adversarial inputs from the design became test cases.
+- Check the benchmark exists when speed was the reason for the approach.
+
+A claim without a test is not done. Send it back.
+
+## Record the transcript
+
+Keep a verbatim transcript of the whole conversation. The user reads it to see
+how the design went.
+
+- One markdown file per conversation: `docs/reviews/<date>-<topic>.md`.
+- Start the file with the `conversation_id`.
+- After every turn, append the prompt you sent and the response you received.
+  Copy both verbatim. Do not summarize, do not trim.
+- Mark each half with a heading: `## prompt` and `## response`.
+
+## When to ask
+
+- The naive solution is too slow, and the bound decides the design.
+- A data structure choice shapes a subsystem: index layout, posting list merge,
+  ranking, compression, cache eviction.
+- A hot path where the constant factor decides the latency target.
+- A correctness argument that needs a proof, not a test.
+
+Do not ask for plumbing, glue code, configuration, or a problem the standard
+library already answers.
+
+## Report to the user
+
+Give the chosen approach, its complexity, the alternatives Petr rejected and
+his reason, and the state of the build gate. Name what you sent back and why.
+Mark an unresolved disagreement as a `CONSIDER(ali):` in the code or the design
+note.
