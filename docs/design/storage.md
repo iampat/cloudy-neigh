@@ -11,10 +11,12 @@ The system is structured in two decoupled, composable layers:
 
 ### 1.2 Functional Requirements
 * **Generic LogStream Layer**:
-  * Unconditional and conditional appends of opaque binary records.
+  * Conditional appends of opaque binary records. An unconditional append would overwrite the segment of another writer.
   * Strictly contiguous 64-bit sequence numbers (`00000000000000000001.recordio`).
   * Self-delimiting RecordIO framing with masked CRC32C integrity checks. See [RecordIO](recordio.md).
+  * At-least-once delivery. A caller that needs exactly-once makes its own operations idempotent.
   * Reusable independently as a distributed message queue, event sourcing log, or database WAL.
+  * See [LogStream](wal.md) for the object layout, the append protocol, and the API of this layer.
 * **Key-Value Filesystem Layer (KVFS)**:
   * Atomic `PUT`, `GET`, and `DELETE` operations for arbitrary UTF-8 paths.
   * Zero-copy, $O(1)$ branching rooted at any branch snapshot.
@@ -57,7 +59,7 @@ The system is structured in two decoupled, composable layers:
                       ▼                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │               Layer 1: Generic LogStream Primitive (WAL / Queue)            │
-│               • Opaque binary records: (Headers map + Payload bytes)        │
+│               • Opaque binary records: payload bytes                        │
 │               • Contiguous sequential chunks: <020d_seq>.recordio           │
 │               • Atomic conditional append via if-generation-match=0         │
 └─────────────────────────────────────┬───────────────────────────────────────┘
@@ -140,7 +142,7 @@ Client                          GCS / S3 Storage
 2. Read `refs/heads/<branch>` to get current manifest ID `M_old` and object generation `Gen_old`.
 3. Fetch and parse `manifests/<m0>/<m1>/<M_old>`.
 4. Update in-memory map: `M_new_entries = M_old_entries.set(path, blob_hash)`.
-5. Compute `M_new_id` with the stable hash from Section 5.3. Write `manifests/<m0>/<m1>/<M_new_id>`.
+5. Compute `M_new_id` with the stable hash from Section 5.2. Write `manifests/<m0>/<m1>/<M_new_id>`.
 6. Update `refs/heads/<branch>` to `M_new_id` using condition `if-generation-match = Gen_old`.
 7. If precondition fails, back off and retry from Step 2.
 
@@ -261,28 +263,7 @@ Complete ───────────────────────�
 
 All core data structures and serialized messages are defined using language-agnostic Protocol Buffers.
 
-### 5.1 Layer 1: LogStream Schemas (`logstream/v1/logstream.proto`)
-
-```protobuf
-syntax = "proto3";
-
-package logstream.v1;
-
-// LogRecord represents a single, self-contained record in the log stream.
-message LogRecord {
-  // Optional key-value metadata headers (e.g., "writer_id", "timestamp", "content_type").
-  map<string, string> headers = 1;
-
-  // Opaque application payload bytes (completely payload-agnostic).
-  bytes payload = 2;
-}
-```
-
-A `.recordio` file is the segment. The object key carries the sequence number,
-and the prefix carries the stream name, so no container message repeats them.
-The RecordIO framing delimits the N records inside the file.
-
-### 5.2 Layer 2: KVFS Schemas (`kvfs/v1/kvfs.proto`)
+### 5.1 Layer 2: KVFS Schemas (`kvfs/v1/kvfs.proto`)
 
 ```protobuf
 syntax = "proto3";
@@ -296,7 +277,7 @@ enum OperationType {
   OPERATION_TYPE_DELETE = 2;
 }
 
-// KVMutation is the payload serialized into Layer 1 LogRecord.payload.
+// KVMutation is the payload serialized into a Layer 1 record.
 message KVMutation {
   OperationType op = 1;
   string path = 2;             // UTF-8 relative key path (e.g., "docs/a.txt")
@@ -325,7 +306,7 @@ message BranchHead {
 }
 ```
 
-### 5.3 Manifest Identity
+### 5.2 Manifest Identity
 
 `manifest_id` must be a stable hash of the manifest content. The same manifest
 must always produce the same id.
@@ -379,7 +360,7 @@ encoding is not chosen yet.
     │
     ├── 1. Read current Ref & Manifest ────► refs/heads/main -> Manifest M1 (last_wal_seq: 10)
     ├── 2. Direct GET Next WAL Segment ────► Get("wal/main/00000000000000000011.recordio")
-    ├── 3. Decode LogRecords & KVMutations
+    ├── 3. Decode records & KVMutations
     ├── 4. Fold mutations into map ────────► Manifest M2 (last_wal_seq: 11)
     ├── 5. Write new Manifest ─────────────► Write manifests/<m0>/<m1>/M2
     └── 6. Conditional Advance Branch Ref ─► Write refs/heads/main -> "M2" (if-generation-match=G1)
@@ -421,7 +402,6 @@ syntax = "proto3";
 
 package storage.v1;
 
-import "logstream/v1/logstream.proto";
 import "kvfs/v1/kvfs.proto";
 
 // LogStreamService provides append and read primitives for the generic log layer.
@@ -433,7 +413,7 @@ service LogStreamService {
 
 message AppendRequest {
   string stream_name = 1;
-  logstream.v1.LogRecord record = 2;
+  bytes record = 2;
 }
 
 message AppendResponse {
@@ -446,7 +426,7 @@ message ReadRequest {
 }
 
 message ReadResponse {
-  logstream.v1.LogRecord record = 1;
+  bytes record = 1;
 }
 
 message ReadBatchRequest {
@@ -456,7 +436,7 @@ message ReadBatchRequest {
 }
 
 message ReadBatchResponse {
-  repeated logstream.v1.LogRecord records = 1;
+  repeated bytes records = 1;
   uint64 next_sequence_number = 2;
 }
 
@@ -528,6 +508,9 @@ message PutBlobResponse {
   string blob_hash = 1; // SHA-256 content hash of the uploaded payload
 }
 ```
+
+No server implements `LogStreamService` today. It carries one record per
+`AppendRequest`, and the Go API of [LogStream](wal.md) takes a batch.
 
 ---
 
@@ -660,38 +643,26 @@ append, and commit loops issue zero list calls.
 ```go
 package logstream
 
-import (
-	"context"
-	"errors"
-)
+type Record []byte
 
-var ErrEndOfStream = errors.New("logstream: end of stream")
+type Log struct{ ... }
 
-type Record struct {
-	Headers map[string]string
-	Payload []byte
-}
+func New(store *objectstore.Store, opts ...Option) *Log
 
-type Appender interface {
-	Append(ctx context.Context, stream string, records []Record) (uint64, error)
-}
-
-type Reader interface {
-	Read(ctx context.Context, stream string, seq uint64) ([]Record, error)
-	// CONSIDER(ali): the cold-start search strategy is not settled.
-	Tail(ctx context.Context, stream string) (uint64, error)
-}
+func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint64, error)
+func (l *Log) Read(ctx context.Context, stream string, seq uint64) ([]Record, error)
+func (l *Log) Tail(ctx context.Context, stream string) (uint64, error)
 ```
 
-`Append` writes one segment file and returns the sequence number it claimed. The
-whole batch lands in that one file. A caller that needs a record boundary for
-recovery appends that record alone.
+`Append` writes one segment object and returns the sequence number it claimed.
+`Read` returns every record of one segment. `Tail` reports the head of a stream.
 
-`Read` returns every record of one segment. It reports `ErrEndOfStream` when the
-segment does not exist, which means the reader reached the head.
+LogStream uses a conditional create, and never a compare-and-swap. Every object
+it writes stays immutable, so `refs/heads/<branch>` in Section 8.3 remains the
+only mutable object in the system.
 
-`Tail` reports the highest written sequence number. A writer calls it once on
-start and then counts in memory.
+[LogStream](wal.md) holds the layer: the object layout, the append protocol, the
+tail search, the delivery guarantee, and the recovery rules.
 
 ### 8.3 Layer 2: KVFS (`kvfs`)
 
@@ -756,7 +727,7 @@ segments above `Manifest.LastWALSeq`, writes the new manifest, and advances the
 ref. It returns without an error and with zero mutations when the branch has no
 pending segment.
 
-`Manifest.Entries` is a Go map, and a map has no order. Section 5.3 covers the
+`Manifest.Entries` is a Go map, and a map has no order. Section 5.2 covers the
 stable hash that the manifest id needs.
 
 ### 8.4 Call Tree
@@ -770,7 +741,7 @@ kvfs.Store
 │
 ├── Put(branch, path, data) / Delete(branch, path)
 │   ├── kvfs.BlobStore.Put          ──► objectstore.Put(Absent)           objects/<h0>/<h1>/<hash>
-│   └── logstream.Appender.Append   ──► objectstore.Put(Absent)           wal/<branch>/<seq>.recordio
+│   └── logstream.Log.Append        ──► objectstore.Put(Absent)           wal/<branch>/<seq>.recordio
 │
 ├── Branch(newBranch, parentBranch)
 │   ├── kvfs.BranchReader.Head      ──► objectstore.Get                   refs/heads/<parent>
@@ -781,7 +752,7 @@ kvfs.Store
 
 kvfs.Committer.Commit(branch)                        (background, one per branch)
 ├── kvfs.BranchReader.Head/Manifest ──► objectstore.Get                   refs + manifest
-├── logstream.Reader.Read(seq+1…)   ──► objectstore.Get                   wal/<branch>/<seq>.recordio
+├── logstream.Log.Read(seq+1…)      ──► objectstore.Get                   wal/<branch>/<seq>.recordio
 ├── fold KVMutation records into Manifest.Entries
 ├── write the new manifest          ──► objectstore.Put                   manifests/<m0>/<m1>/<id>
 └── advance the ref                 ──► objectstore.Put(GenerationMatch)  refs/heads/<branch>
@@ -816,6 +787,7 @@ Phase 2 (Congestion Mitigation) Dedicated WALWriter Gateway Service      • 1,0
 | Scenario | Behavior / Resolution |
 | :--- | :--- |
 | **Concurrent Append Collision** | If two writers target sequence $N$, one succeeds with `if-generation-match=0`. The other receives `412 Conflict`, increments to $N+1$, and retries. |
+| **Ambiguous Append Acknowledgement** | A `Put` commits sequence $N$ and loses its reply. The retry reads `412 Conflict` on the writer's own segment, so the batch lands again at $N+1$. LogStream is at-least-once, and [LogStream](wal.md) leaves deduplication to the caller. |
 | **Committer Crash / Re-execution** | Manifest tracks `last_wal_seq`. The committer resumes by requesting `last_wal_seq + 1`, guaranteeing complete idempotency and zero ghost overwrites. |
 | **Cross-Branch Isolation** | Streams and branches are partitioned under distinct prefixes (`wal/<branch>/`, `refs/heads/<branch>`), eliminating cross-branch contention. |
 | **Read-After-Write Consistency** | V1 provides committed snapshot isolation (reads reflect the latest committed branch manifest). [Appendix C](#appendix-c-read-your-own-writes-placeholder) sketches a read-your-own-writes (RYOW) extension. Nothing is committed. |
