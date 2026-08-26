@@ -30,11 +30,6 @@ func mask(crc uint32) uint32 {
 	return ((crc >> 15) | (crc << 17)) + maskDelta
 }
 
-func unmask(masked uint32) uint32 {
-	rot := masked - maskDelta
-	return (rot >> 17) | (rot << 15)
-}
-
 func computeMaskedCRC(data []byte) uint32 {
 	return mask(crc32.Checksum(data, castagnoliTable))
 }
