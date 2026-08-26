@@ -26,6 +26,21 @@ The system is structured in two decoupled, composable layers:
 ### 1.3 Non-Goals
 * **Garbage Collection (GC)**: Cleaning up unreferenced historical blobs, manifests, or log segments is out of scope for the initial implementation. Historical logs are retained permanently for deterministic replays, auditability, and index backfilling.
 
+### 1.4 Future Work
+* **Tiered Local Read Cache (Memory and Disk)**:
+  * Cache immutable content-addressed objects and log segments in local memory and local disk.
+  * Immutable objects never change, so local cached copies require no cache invalidation protocol or time-to-live expiration.
+  * Local cache hits reduce read latency from $20\text{--}60\text{ ms}$ on cloud storage to under $0.5\text{ ms}$.
+* **Single-Flight Request Coalescing**:
+  * Deduplicate concurrent remote reads for the same cold blob or segment across worker threads.
+  * Send one remote request to object storage when concurrent readers miss on the same object.
+* **Asynchronous Read-Ahead**:
+  * Prefetch the next log segment in the background during sequential log scans and replays.
+  * Overlap network download with record processing to hide network latency.
+* **Hierarchical Merkle Manifests**:
+  * Partition large manifests into a tree of content-addressed chunk nodes when a branch exceeds 100,000 keys.
+  * Download only the tree nodes that contain the requested keys instead of the full manifest.
+
 ---
 
 ## 2. Layered Architecture & Storage Layout
