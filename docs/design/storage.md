@@ -11,9 +11,10 @@ The system is structured in two decoupled, composable layers:
 
 ### 1.2 Functional Requirements
 * **Generic LogStream Layer**:
-  * Unconditional and conditional appends of opaque binary records.
+  * Conditional appends of opaque binary records. An unconditional append would overwrite the segment of another writer.
   * Strictly contiguous 64-bit sequence numbers (`00000000000000000001.recordio`).
   * Self-delimiting RecordIO framing with masked CRC32C integrity checks. See [RecordIO](recordio.md).
+  * At-least-once delivery. A caller that needs exactly-once makes its own operations idempotent. See Section 8.2.
   * Reusable independently as a distributed message queue, event sourcing log, or database WAL.
 * **Key-Value Filesystem Layer (KVFS)**:
   * Atomic `PUT`, `GET`, and `DELETE` operations for arbitrary UTF-8 paths.
@@ -714,6 +715,41 @@ segment does not exist, which means the reader reached the head.
 and then counts in memory. It calls `Tail` again only when that counter goes
 stale.
 
+#### Delivery guarantee
+
+LogStream guarantees at-least-once delivery. A caller that needs exactly-once
+makes its own operations idempotent. LogStream never removes a duplicate.
+
+An acknowledgement can be lost. A `Put` commits the object, and the reply never
+reaches the writer. The writer holds an error, and it cannot tell whether its own
+segment landed. The next attempt reads a precondition failure on that number,
+treats the number as taken, and writes the same batch under the next number.
+
+```text
+writer                          object store
+  │── Put seq=42, Absent ───────▶│  commits 42
+  │        ╳ reply lost ─────────│
+  │── Put seq=42, Absent ───────▶│
+  │◀──── precondition failed ────│  42 exists, and the writer owns it
+  │── Put seq=43, Absent ───────▶│  the same batch, a second time
+```
+
+The retry does not have to come from the caller. The GCS client retries a write
+that carries a precondition, so the whole exchange fits inside one
+`objectstore.Put` call.
+
+Immutability does not prevent this. It prevents a torn segment, an overwritten
+segment, and two writers inside one object. Here the log holds two intact
+segments that carry the same records.
+
+A sequence number names a segment. It is not a deduplication key, and a reader
+cannot detect a repeat from the number alone.
+
+KVFS needs nothing more, because a `KVMutation` folded twice gives the same
+manifest entry. A caller with a non-idempotent operation, such as a counter
+increment, puts a transaction identifier in its payload and rejects a repeat on
+replay.
+
 #### Record format
 
 A record is an opaque byte slice. The RecordIO frame holds the caller bytes with
@@ -790,17 +826,6 @@ A short random delay follows each precondition failure. Two writers that collide
 also fail at the same moment. A loop with no delay keeps them in step, and they
 collide again on the next number. The delay is an implementation constant, and it
 promises a caller nothing.
-
-#### Delivery guarantee
-
-`Append` is at-least-once. A `Put` that commits the object and then loses its
-response leaves the caller with an error and no sequence number. The same batch
-lands again under the next number when the caller retries.
-
-A sequence number thus names a segment. It is not a deduplication key. KVFS
-tolerates a duplicate, because a `KVMutation` folded twice gives the same manifest
-entry. A caller with a non-idempotent operation puts a transaction identifier in
-its own payload.
 
 #### Cold-start tail search
 
@@ -990,6 +1015,7 @@ Phase 2 (Congestion Mitigation) Dedicated WALWriter Gateway Service      • 1,0
 | Scenario | Behavior / Resolution |
 | :--- | :--- |
 | **Concurrent Append Collision** | If two writers target sequence $N$, one succeeds with `if-generation-match=0`. The other receives `412 Conflict`, increments to $N+1$, and retries. |
+| **Ambiguous Append Acknowledgement** | A `Put` commits sequence $N$ and loses its reply. The retry reads `412 Conflict` on the writer's own segment, so the batch lands again at $N+1$. LogStream is at-least-once, and Section 8.2 leaves deduplication to the caller. |
 | **Committer Crash / Re-execution** | Manifest tracks `last_wal_seq`. The committer resumes by requesting `last_wal_seq + 1`, guaranteeing complete idempotency and zero ghost overwrites. |
 | **Cross-Branch Isolation** | Streams and branches are partitioned under distinct prefixes (`wal/<branch>/`, `refs/heads/<branch>`), eliminating cross-branch contention. |
 | **Read-After-Write Consistency** | V1 provides committed snapshot isolation (reads reflect the latest committed branch manifest). [Appendix C](#appendix-c-read-your-own-writes-placeholder) sketches a read-your-own-writes (RYOW) extension. Nothing is committed. |
