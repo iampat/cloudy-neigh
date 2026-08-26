@@ -40,8 +40,7 @@ message queue, an event log, or the write-ahead log of another engine.
 
 ## Future work
 
-- The `LogRecord` envelope of [storage.md](storage.md) §5.1, when a caller needs
-  a header.
+- A record envelope that carries headers, when a caller needs one.
 - A writer nonce inside a segment. A writer could then recognize its own
   segment after an ambiguous failure, which
   [Delivery guarantee](#delivery-guarantee) explains.
@@ -429,11 +428,11 @@ that can never succeed.
 A record is an opaque byte slice. The RecordIO frame holds the caller bytes with
 no envelope around them.
 
-[storage.md](storage.md) §5.1 defines `logstream.v1.LogRecord`, which adds a
-header map. No caller needs a header today, because KVFS puts a `KVMutation` in
-the payload. The envelope costs a protobuf dependency in the lowest reusable
-layer, so it waits for the first caller that needs a header. It arrives as a new
-format version.
+An envelope would carry headers, such as a writer name or a content type. No
+caller needs one today, because KVFS puts a `KVMutation` in the payload. An
+envelope also costs a protobuf dependency in the lowest reusable layer. It thus
+waits for the first caller that needs a header, and it arrives as a new format
+version.
 
 `Append` rejects a record larger than `WithMaxRecordSize`.
 `recordio.WriteRecord` enforces no limit, and every reader does, so an unchecked

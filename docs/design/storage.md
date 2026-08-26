@@ -59,7 +59,7 @@ The system is structured in two decoupled, composable layers:
                       ▼                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │               Layer 1: Generic LogStream Primitive (WAL / Queue)            │
-│               • Opaque binary records: (Headers map + Payload bytes)        │
+│               • Opaque binary records: payload bytes                        │
 │               • Contiguous sequential chunks: <020d_seq>.recordio           │
 │               • Atomic conditional append via if-generation-match=0         │
 └─────────────────────────────────────┬───────────────────────────────────────┘
@@ -142,7 +142,7 @@ Client                          GCS / S3 Storage
 2. Read `refs/heads/<branch>` to get current manifest ID `M_old` and object generation `Gen_old`.
 3. Fetch and parse `manifests/<m0>/<m1>/<M_old>`.
 4. Update in-memory map: `M_new_entries = M_old_entries.set(path, blob_hash)`.
-5. Compute `M_new_id` with the stable hash from Section 5.3. Write `manifests/<m0>/<m1>/<M_new_id>`.
+5. Compute `M_new_id` with the stable hash from Section 5.2. Write `manifests/<m0>/<m1>/<M_new_id>`.
 6. Update `refs/heads/<branch>` to `M_new_id` using condition `if-generation-match = Gen_old`.
 7. If precondition fails, back off and retry from Step 2.
 
@@ -263,32 +263,7 @@ Complete ───────────────────────�
 
 All core data structures and serialized messages are defined using language-agnostic Protocol Buffers.
 
-### 5.1 Layer 1: LogStream Schemas (`logstream/v1/logstream.proto`)
-
-```protobuf
-syntax = "proto3";
-
-package logstream.v1;
-
-// LogRecord represents a single, self-contained record in the log stream.
-message LogRecord {
-  // Optional key-value metadata headers (e.g., "writer_id", "timestamp", "content_type").
-  map<string, string> headers = 1;
-
-  // Opaque application payload bytes (completely payload-agnostic).
-  bytes payload = 2;
-}
-```
-
-A `.recordio` file is the segment. The object key carries the sequence number,
-and the prefix carries the stream name, so no container message repeats them.
-The RecordIO framing delimits the N records inside the file.
-
-Version 1 does not use this message. A frame holds the caller payload with no
-envelope around it, which [LogStream](wal.md) states. `LogRecord` arrives as a
-new format version, when a caller needs a header.
-
-### 5.2 Layer 2: KVFS Schemas (`kvfs/v1/kvfs.proto`)
+### 5.1 Layer 2: KVFS Schemas (`kvfs/v1/kvfs.proto`)
 
 ```protobuf
 syntax = "proto3";
@@ -302,7 +277,7 @@ enum OperationType {
   OPERATION_TYPE_DELETE = 2;
 }
 
-// KVMutation is the payload serialized into Layer 1 LogRecord.payload.
+// KVMutation is the payload serialized into a Layer 1 record.
 message KVMutation {
   OperationType op = 1;
   string path = 2;             // UTF-8 relative key path (e.g., "docs/a.txt")
@@ -331,7 +306,7 @@ message BranchHead {
 }
 ```
 
-### 5.3 Manifest Identity
+### 5.2 Manifest Identity
 
 `manifest_id` must be a stable hash of the manifest content. The same manifest
 must always produce the same id.
@@ -385,7 +360,7 @@ encoding is not chosen yet.
     │
     ├── 1. Read current Ref & Manifest ────► refs/heads/main -> Manifest M1 (last_wal_seq: 10)
     ├── 2. Direct GET Next WAL Segment ────► Get("wal/main/00000000000000000011.recordio")
-    ├── 3. Decode LogRecords & KVMutations
+    ├── 3. Decode records & KVMutations
     ├── 4. Fold mutations into map ────────► Manifest M2 (last_wal_seq: 11)
     ├── 5. Write new Manifest ─────────────► Write manifests/<m0>/<m1>/M2
     └── 6. Conditional Advance Branch Ref ─► Write refs/heads/main -> "M2" (if-generation-match=G1)
@@ -427,7 +402,6 @@ syntax = "proto3";
 
 package storage.v1;
 
-import "logstream/v1/logstream.proto";
 import "kvfs/v1/kvfs.proto";
 
 // LogStreamService provides append and read primitives for the generic log layer.
@@ -439,7 +413,7 @@ service LogStreamService {
 
 message AppendRequest {
   string stream_name = 1;
-  logstream.v1.LogRecord record = 2;
+  bytes record = 2;
 }
 
 message AppendResponse {
@@ -452,7 +426,7 @@ message ReadRequest {
 }
 
 message ReadResponse {
-  logstream.v1.LogRecord record = 1;
+  bytes record = 1;
 }
 
 message ReadBatchRequest {
@@ -462,7 +436,7 @@ message ReadBatchRequest {
 }
 
 message ReadBatchResponse {
-  repeated logstream.v1.LogRecord records = 1;
+  repeated bytes records = 1;
   uint64 next_sequence_number = 2;
 }
 
@@ -753,7 +727,7 @@ segments above `Manifest.LastWALSeq`, writes the new manifest, and advances the
 ref. It returns without an error and with zero mutations when the branch has no
 pending segment.
 
-`Manifest.Entries` is a Go map, and a map has no order. Section 5.3 covers the
+`Manifest.Entries` is a Go map, and a map has no order. Section 5.2 covers the
 stable hash that the manifest id needs.
 
 ### 8.4 Call Tree
