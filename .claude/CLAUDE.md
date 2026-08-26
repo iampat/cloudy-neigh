@@ -114,4 +114,6 @@ For planning a new feature or design, use the `plan-feature` skill. For any
 documentation or technical prose — `docs/`, READMEs, PR descriptions — use the
 `design-note` skill. To review code, a diff, or a PR, use the `code-review`
 skill. Before you present a design as done, use the `consult-jeff-dean` skill to get an
-external review from `agy`.
+external review from `agy`. For a hard algorithmic or data-structure problem,
+use the `consult-petr` skill. Petr designs and writes that code, and you
+supervise.
