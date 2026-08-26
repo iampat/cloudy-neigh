@@ -92,6 +92,9 @@ lands.
   diff — over prose.
 - Design notes: Markdown in `docs/design/`. Update them alongside the code they
   describe.
+- Every change reaches `main` through a pull request. Never commit on `main`,
+  and never push to `origin/main`. Start a branch first, even for a one-line
+  Markdown edit.
 - A branch name always starts with `ali/`. The type of the change goes in the PR
   title instead, as `feat:`, `fix:`, `chore:`, or `docs:`.
 - Report the URL when you open a PR, then stop. Do not wait for the checks and
