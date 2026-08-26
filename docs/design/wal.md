@@ -170,7 +170,7 @@ Append(stream, records):
         exists(seq + 16) is false  ──▶  seq = seq + 1;  tries = 0
         otherwise                  ──▶  head, probes = gallop(seq + 16)
                                         seq    = head + 1
-                                        runway = probes
+                                        runway = max(3, 2 * probes)
                                         tries  = 0
         wait a short random time, then continue
 ```
@@ -222,15 +222,27 @@ A gallop closes a drift. It starts from a number that is known to exist, so it
 needs no list page:
 
 ```text
-gallop(lo):                       lo exists
-    d = 1
+gallop(lo):                          lo is known to exist
+    exists(lo + 1) is false  ──▶     return lo
+    d = 2
     while exists(lo + d):  d = d * 2
-    binary search (lo + d/2, lo + d] for the last number that exists
+                                     lo + d/2 exists, and lo + d does not
+    binary search that range for the last number that exists
 ```
 
-The gallop costs about `2 log2(delta)` probes in the real distance, and `Tail`
-costs about `2 log2(N)` in the length of the stream. A writer 3 segments behind
-pays 4 probes, and a writer a million behind pays about 40.
+The gallop doubles an **offset** from `lo`. It never doubles the sequence number
+itself. Take a stream at one million segments, with a head five above `lo`. A
+doubled sequence number searches the range up to two million. That costs 20
+probes to find a number 5 away.
+
+The gallop costs about `2 log2(delta)` probes in the real distance. A writer 3
+segments behind pays 4 probes, and a writer a million behind pays about 40.
+
+The runway is twice the probe count, and never less than 3. A gallop that returns
+after one probe would otherwise leave a runway of one. The next collision would
+then send the writer straight back to the gate. The stream also advances once per
+active writer during every probe. A runway equal to the probe count is thus too
+short whenever more than one writer is active.
 
 A short random delay follows each precondition failure. Two writers that collide
 also fail at the same moment. A loop with no delay keeps them in step, and they
@@ -284,18 +296,11 @@ Tail(stream):
     objs = List("wal/<stream>/", "", listLimit)
     len(objs) == 0         ──▶  return 0
     len(objs) < listLimit  ──▶  return seq(last key of objs)
-
-    lo = seq(last key of objs)
-    hi = lo * 2
-    while exists(hi):
-        lo = hi
-        hi = hi * 2
-    while hi - lo > 1:
-        mid = lo + (hi - lo) / 2
-        exists(mid)  ──▶  lo = mid
-        otherwise    ──▶  hi = mid
-    return lo
+    return gallop(seq(last key of objs))
 ```
+
+`Tail` reuses the gallop above. The list page supplies a number that is known to
+exist, and the gallop searches from there.
 
 `listLimit` defaults to 1000, which matches the page size of the supported
 backends. One `List` call thus answers every stream of less than 1000 segments,
@@ -394,8 +399,15 @@ the two uploads. Ten goroutines cost 55 uploads to commit 10 batches, so the
 serialization removes waste rather than adding delay. Two streams still append at
 the same time.
 
+A caller that waits for its turn still observes its context. A cold start inside
+the lock runs a tail search, and a stalled backend holds the lock for seconds. A
+lock that ignores cancellation keeps every queued goroutine in place through that
+stall. Each one then wakes to a context that expired long before.
+
 That caps one process near one append per round trip on one stream, which is
-about 33 per second. A deployment reaches the ceiling in the limits below with
+about 33 per second. The cap counts calls to `Append`, and each call carries a
+whole batch. A caller that appends 100 records per call thus reaches 3,300
+records per second. A deployment reaches the ceiling in the limits below with
 more processes. Group commit removes the cap, and Future work holds it.
 
 `Read` returns every record of one segment. It reports `ErrEndOfStream` when the
@@ -436,10 +448,13 @@ Every number here comes from Appendix B of [storage.md](storage.md).
 
 | Dimension                                 | Threshold         | Cause                                        |
 | ----------------------------------------- | ----------------- | -------------------------------------------- |
-| Appends per second, one stream, all writers | 500 to 1,000      | conditional-create contention on the number  |
-| Appends per second, one stream, one process | about 33          | one append at a time, at one round trip each |
+| Segments per second, one stream, all writers | 500 to 1,000     | conditional-create contention on the number  |
+| Segments per second, one stream, one process | about 33         | one append at a time, at one round trip each |
 | Requests per second, one prefix           | 3,500 to 5,500    | backend prefix limits                        |
 | Segments per stream                       | no measured bound | retention is permanent, and GC is a non-goal |
+
+Every row counts segments, and one segment carries a whole batch. Record
+throughput is the segment rate times the batch size.
 
 The first row counts every writer of a stream. One process reaches the second row
 and no more, because it serializes its own appends. Only many processes reach the
@@ -455,6 +470,11 @@ code, and no benchmark confirms it yet.
 `CONSIDER(ali):` the gate distance of 16 and the runway both come from reasoning,
 not from a measurement. Run a contended stream, and set each one from the
 segments a writer misses during one gallop.
+
+`CONSIDER(ali):` a rollout starts many processes at once, and each one runs a
+tail search on its first append. Ten processes issue a few hundred list calls in
+one burst, and a backend throttles a list earlier than a read. Measure a rollout
+before adding a delay or a stored hint.
 
 `CONSIDER(ali):` `LogStreamService` in [storage.md](storage.md) §7 carries one
 record per `AppendRequest` and exposes no `Tail` call. The Go API takes a batch.
