@@ -535,8 +535,8 @@ message PutBlobResponse {
 }
 ```
 
-`LogStreamService` disagrees with the Go API on two points, which the open
-questions of [LogStream](wal.md) record. No server implements the service today.
+No server implements `LogStreamService` today. It carries one record per
+`AppendRequest`, and the Go API of [LogStream](wal.md) takes a batch.
 
 ---
 

@@ -249,9 +249,6 @@ also fail at the same moment. A loop with no delay keeps them in step, and they
 collide again on the next number. The delay is an implementation constant, and it
 promises a caller nothing.
 
-`CONSIDER(ali):` the gate distance of 16 is a guess. Measure a contended stream,
-and set it from the segments that a writer misses during one gallop.
-
 ## Delivery guarantee
 
 LogStream guarantees at-least-once delivery. A caller that needs exactly-once
@@ -470,12 +467,3 @@ code, and no benchmark confirms it yet.
 `CONSIDER(ali):` the gate distance of 16 and the runway both come from reasoning,
 not from a measurement. Run a contended stream, and set each one from the
 segments a writer misses during one gallop.
-
-`CONSIDER(ali):` a rollout starts many processes at once, and each one runs a
-tail search on its first append. Ten processes issue a few hundred list calls in
-one burst, and a backend throttles a list earlier than a read. Measure a rollout
-before adding a delay or a stored hint.
-
-`CONSIDER(ali):` `LogStreamService` in [storage.md](storage.md) §7 carries one
-record per `AppendRequest` and exposes no `Tail` call. The Go API takes a batch.
-Settle both when a server implements that service.
