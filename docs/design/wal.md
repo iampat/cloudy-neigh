@@ -237,6 +237,11 @@ probes to find a number 5 away.
 The gallop costs about `2 log2(delta)` probes in the real distance. A writer 3
 segments behind pays 4 probes, and a writer a million behind pays about 40.
 
+The binary search is hand-written because standard library search functions do
+not fit. `sort.Search` carries no context and returns no error, so a failed probe
+cannot terminate the search early. It also operates on signed `int`, which cannot
+represent the upper half of the 64-bit sequence domain.
+
 The runway is twice the probe count, and never less than 3. A gallop that returns
 after one probe would otherwise leave a runway of one. The next collision would
 then send the writer straight back to the gate. The stream also advances once per

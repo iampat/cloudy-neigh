@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "logstream",
+    srcs = ["log.go"],
+    importpath = "github.com/iampat/cloudy-neigh/logstream",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//objectstore",
+        "//recordio",
+    ],
+)
+
+go_test(
+    name = "logstream_test",
+    srcs = [
+        "gallop_internal_test.go",
+        "gcs_test.go",
+        "log_test.go",
+    ],
+    embed = [":logstream"],
+    deps = [
+        "//objectstore",
+        "//recordio",
+    ],
+)
