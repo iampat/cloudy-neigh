@@ -58,29 +58,13 @@ implementation invites defense of sunk cost.
 
 ## How agy runs
 
-The facts below come from `agy help` and from probes on 2026-08-13. When a
-call fails, run `agy help` again. Do not trust memory over the help output.
-
-- `agy -p "<prompt>"` runs one prompt and prints the response. The prompt is
-  an argument, not stdin. The default timeout is five minutes, and
-  `--print-timeout` overrides it.
-- `--output-format json` adds a `conversation_id` field to the response.
-  `agy --conversation <id> -p "<reply>"` continues that conversation with its
-  context.
-- Headless mode cannot prompt for a tool permission. Pass
-  `--dangerously-skip-permissions` on every call, so the reviewer can read
-  files itself.
-- An empty `response` with an error on stderr is a failure. Stop and report
-  the command and the error to the user, verbatim. Do not retry, and do not
-  work around it.
+`.claude/CLAUDE.md` holds the agy facts. Read them before the first call.
 
 ## Procedure
 
 1. Write the prompt to a temporary file with the Write tool. For the user's
    invocation, that file holds the user's prompt, verbatim. For your own, it
-   holds your question and the limited context. Do not build the file and
-   call `agy` in one compound command. The permission classifier blocks that
-   shape, and two separate steps pass.
+   holds your question and the limited context.
 2. Run `agy -p "/jeff-dean $(cat <file>)" --output-format json
    --dangerously-skip-permissions`. Record the `conversation_id`.
 3. Answer the reviewer's questions round by round with
