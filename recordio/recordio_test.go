@@ -254,7 +254,6 @@ func TestReaderBufferLimitsAndRetry(t *testing.T) {
 			t.Errorf("needed length = %d, want %d", needed, len(payload1))
 		}
 
-		// Retrying with correctly sized buffer must succeed and not read corrupt payload
 		largeDst := make([]byte, needed)
 		n, err := reader.ReadRecord(largeDst)
 		if err != nil {
@@ -264,7 +263,6 @@ func TestReaderBufferLimitsAndRetry(t *testing.T) {
 			t.Errorf("Retry payload = %q, want %q", largeDst[:n], payload1)
 		}
 
-		// Second record should read normally
 		n, err = reader.ReadRecord(largeDst)
 		if err != nil {
 			t.Fatalf("Read second record failed: %v", err)
@@ -349,17 +347,26 @@ func TestScannerSkip(t *testing.T) {
 		if !scanner.Skip() {
 			t.Fatalf("Skip beta failed: %v", scanner.Err())
 		}
+		if len(scanner.Record()) != 0 {
+			t.Errorf("Record after Skip = %q, want empty", scanner.Record())
+		}
 		if !scanner.Scan() || !bytes.Equal(scanner.Record(), testData[2]) {
 			t.Fatalf("Scan gamma failed: %v", scanner.Err())
 		}
 		if !scanner.Skip() {
 			t.Fatalf("Skip delta failed: %v", scanner.Err())
 		}
+		if len(scanner.Record()) != 0 {
+			t.Errorf("Record after Skip = %q, want empty", scanner.Record())
+		}
 		if !scanner.Scan() || !bytes.Equal(scanner.Record(), testData[4]) {
 			t.Fatalf("Scan epsilon failed: %v", scanner.Err())
 		}
 		if scanner.Scan() {
 			t.Errorf("Scan at EOF returned true")
+		}
+		if len(scanner.Record()) != 0 {
+			t.Errorf("Record at EOF = %q, want empty", scanner.Record())
 		}
 		if scanner.Err() != nil {
 			t.Errorf("Scanner err at clean EOF: %v", scanner.Err())
@@ -428,7 +435,6 @@ func TestWALRecoveryTornWrite(t *testing.T) {
 				t.Fatalf("cut=%d: Scan record 1 failed: %v", cut, scanner.Err())
 			}
 
-			// Skipping record 2 must detect torn write even when using seeker
 			if scanner.Skip() {
 				t.Fatalf("cut=%d: Skip record 2 succeeded on truncated data", cut)
 			}
@@ -455,7 +461,6 @@ func TestCorruptionDetection(t *testing.T) {
 
 	t.Run("HeaderCRCCorruption", func(t *testing.T) {
 		corrupted := append([]byte(nil), baseBytes...)
-		// Flip bit in header CRC (bytes 8..11 of second record)
 		corrupted[firstEndOffset+9] ^= 0x01
 
 		scanner := recordio.NewScanner(bytes.NewReader(corrupted))
@@ -475,7 +480,6 @@ func TestCorruptionDetection(t *testing.T) {
 
 	t.Run("PayloadDataCRCCorruption", func(t *testing.T) {
 		corrupted := append([]byte(nil), baseBytes...)
-		// Flip bit in payload of second record (offset + 12 is first byte of payload)
 		corrupted[firstEndOffset+13] ^= 0x01
 
 		scanner := recordio.NewScanner(bytes.NewReader(corrupted))
@@ -495,7 +499,6 @@ func TestCorruptionDetection(t *testing.T) {
 
 	t.Run("FooterCRCCorruption", func(t *testing.T) {
 		corrupted := append([]byte(nil), baseBytes...)
-		// Flip bit in footer CRC (last 4 bytes)
 		corrupted[len(corrupted)-2] ^= 0x01
 
 		scanner := recordio.NewScanner(bytes.NewReader(corrupted))
@@ -634,7 +637,6 @@ func FuzzScanner(f *testing.F) {
 	f.Add([]byte("short"))
 	f.Add(bytes.Repeat([]byte{0xff}, 32))
 
-	// Seed with valid record
 	var buf bytes.Buffer
 	writer := recordio.NewWriter(&buf)
 	_, _, _ = writer.WriteRecord([]byte("fuzz-seed-record"))
@@ -646,9 +648,7 @@ func FuzzScanner(f *testing.F) {
 		var lastOffset int64
 		for scanner.Scan() {
 			rec := scanner.Record()
-			if rec == nil && scanner.Err() == nil {
-				// empty slice is valid, nil is acceptable if length was 0
-			}
+			_ = rec
 			offset := scanner.Offset()
 			if offset < lastOffset {
 				t.Fatalf("offset decreased: %d < %d", offset, lastOffset)

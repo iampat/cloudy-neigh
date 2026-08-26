@@ -66,6 +66,7 @@ func NewScanner(r io.Reader, opts ...ScannerOption) *Scanner {
 }
 
 func (s *Scanner) readHeader() (uint64, bool) {
+	s.recordLen = 0
 	readHdr, err := io.ReadFull(s.br, s.header[:])
 	if err != nil {
 		if readHdr == 0 && (errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)) {

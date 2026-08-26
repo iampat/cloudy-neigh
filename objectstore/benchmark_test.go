@@ -12,8 +12,6 @@ import (
 	"github.com/iampat/cloudy-neigh/objectstore"
 )
 
-// A live bucket keeps objects between runs, so delete what an earlier run
-// left under the prefix.
 func clearPrefix(b *testing.B, s *objectstore.Store, prefix string) {
 	b.Helper()
 	ctx := context.Background()
@@ -34,9 +32,6 @@ func benchStore(b *testing.B, open func(b *testing.B) *objectstore.Store) {
 	prefix := b.Name() + "/"
 	clearPrefix(b, open(b), prefix)
 
-	// Every mutation benchmark uses a distinct key per iteration. GCS caps
-	// mutations of one object at about one per second, so reusing a key
-	// measures that limit instead of the write latency.
 	b.Run("Put", func(b *testing.B) {
 		s := open(b)
 		i := 0
@@ -90,8 +85,6 @@ func benchStore(b *testing.B, open func(b *testing.B) *objectstore.Store) {
 	})
 }
 
-// The sustained mutation rate of one key is the rate a branch ref sees.
-// GCS answers about one mutation of the same object per second.
 func benchSameKeyRate(b *testing.B, open func(b *testing.B) *objectstore.Store) {
 	b.Run("SameKeyMutationRate", func(b *testing.B) {
 		s := open(b)

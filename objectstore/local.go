@@ -93,18 +93,10 @@ func (d *local) live(ctx context.Context, key string) (string, error) {
 }
 
 func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (*blob.WriterOptions, func() (string, error), error) {
-	prevLive, _ := d.live(ctx, key)
-	if prevLive != "" {
-		if mod, _, ok := strings.Cut(prevLive, "-"); ok {
-			if m, err := strconv.ParseInt(mod, 16, 64); err == nil && m > d.l.lastMod {
-				d.l.lastMod = m
-			}
-		}
+	prevLive, err := d.live(ctx, key)
+	if err != nil && !errors.Is(err, ErrPreconditionFailed) {
+		return nil, nil, err
 	}
-	for now := time.Now().UnixNano(); now <= d.l.lastMod+int64(2*time.Millisecond); now = time.Now().UnixNano() {
-		time.Sleep(time.Millisecond)
-	}
-	d.l.lastMod = time.Now().UnixNano()
 	switch {
 	case cond == nil:
 	case cond.Absent:
@@ -123,6 +115,17 @@ func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (
 			return nil, nil, errPrecondition(key)
 		}
 	}
+	if prevLive != "" {
+		if mod, _, ok := strings.Cut(prevLive, "-"); ok {
+			if m, err := strconv.ParseInt(mod, 16, 64); err == nil && m > d.l.lastMod {
+				d.l.lastMod = m
+			}
+		}
+	}
+	for now := time.Now().UnixNano(); now <= d.l.lastMod+int64(2*time.Millisecond); now = time.Now().UnixNano() {
+		time.Sleep(time.Millisecond)
+	}
+	d.l.lastMod = time.Now().UnixNano()
 	return nil, func() (string, error) {
 		live, err := d.live(ctx, key)
 		if err != nil {
