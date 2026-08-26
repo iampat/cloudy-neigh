@@ -72,8 +72,6 @@ func raceAbsentPut(t *testing.T, stores []*objectstore.Store, key string, writer
 
 func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg contractConfig) {
 	ctx := context.Background()
-	// A live bucket keeps objects between runs, so delete what an earlier
-	// run left under the prefix.
 	prefix := func(t *testing.T, s *objectstore.Store) string {
 		p := strings.ReplaceAll(t.Name(), "/", "_") + "/"
 		objs, err := s.List(ctx, p, "", 0)
@@ -246,8 +244,6 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		if err := s.Delete(ctx, k); !errors.Is(err, objectstore.ErrNotFound) {
 			t.Fatalf("Delete = %v, want ErrNotFound", err)
 		}
-		// A real token whose key has since been deleted: still a failed
-		// precondition, not a lookup error.
 		gen := put(t, s, k, "v")
 		if err := s.Delete(ctx, k); err != nil {
 			t.Fatal(err)
@@ -257,9 +253,6 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		}
 	})
 
-	// A token no backend could have minted is a caller bug, not contention,
-	// so it must not come back as ErrPreconditionFailed -- a caller retrying
-	// on that would spin forever.
 	t.Run("MalformedGeneration", func(t *testing.T) {
 		s := open(t)
 		k := prefix(t, s) + "k"
@@ -270,9 +263,6 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		}
 	})
 
-	// Both fields set is a caller bug, not a failed precondition, so it must
-	// not come back as ErrPreconditionFailed -- a caller retrying on that
-	// would spin forever.
 	t.Run("InvalidCondition", func(t *testing.T) {
 		for name, cond := range map[string]*objectstore.Condition{
 			"bothSet": {Absent: true, GenerationMatch: "12345"},

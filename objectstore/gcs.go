@@ -32,7 +32,7 @@ func (gcsBucket) listGeneration(o *blob.ListObject) string {
 	return strconv.FormatInt(oa.Generation, 10)
 }
 
-func (gcsBucket) writeOptions(_ context.Context, key string, cond *Condition) (*blob.WriterOptions, func() (string, error), error) {
+func (gcsBucket) writeOptions(ctx context.Context, key string, cond *Condition) (*blob.WriterOptions, func() (string, error), error) {
 	var sw *storage.Writer
 	capture := func(as func(any) bool) error {
 		if !as(&sw) {

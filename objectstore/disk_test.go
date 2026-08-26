@@ -10,9 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Two handles on one directory -- one of them through a symlink alias -- must
-// share the write mutex, or racing conditional writes fall through to
-// fileblob's stat-then-rename and produce several winners.
 func TestDiskSharedDirSerializes(t *testing.T) {
 	base := t.TempDir()
 	dir := base + "/bucket"
