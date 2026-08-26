@@ -12,13 +12,25 @@ The highest-value review finding is a deletion.
 - Drop a nil check on a value that was just assigned.
 - Do not export what nothing outside the package uses.
 - Inline a single-use constant or struct field assignment.
+- Inline a function with one caller.
 - No wrapper type, generic, or helper introduced for one caller.
+- Collapse two switches on the same value into one.
+- Fold two files that differ in one field into one file.
 - Do not assert what you can assume already works. Test the thing under test.
 
 ## Simplicity
 
 Explicit beats clever. Prefer the obvious solution a reader can follow without
 a reconstruction of your reasoning, even when a terser one exists.
+
+No hidden magic. Never add a silent default, a silent fallback, or a quiet
+directory creation. A missing input is the caller's error, and the error says
+what is missing.
+
+One implementation, never one per backend. Before you write the second
+backend, find the library's unified interface. Push the backend-specific code
+into the smallest hook the library offers, such as the `As` escape hatch in
+`gocloud.dev/blob`. A constructor per backend is the smell this rule prevents.
 
 ## Dependencies
 

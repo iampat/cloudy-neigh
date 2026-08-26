@@ -96,7 +96,8 @@ call fails, run `agy help` again. Do not trust memory over the help output.
 Keep a verbatim transcript of the whole conversation. The user reads it to
 learn how the review went.
 
-- One markdown file per conversation: `docs/reviews/<date>-<topic>.md`.
+- One markdown file per conversation: `docs/reviews/<date>-<topic>.md`. It
+  belongs to the pull request, and `.claude/CLAUDE.md` states its lifetime.
 - Start the file with the `conversation_id`.
 - After every turn, append the prompt you sent and the response you received.
   Copy both verbatim. Do not summarize, do not trim.

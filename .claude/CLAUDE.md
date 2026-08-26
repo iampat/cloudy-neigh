@@ -3,6 +3,13 @@
 A cloud-native search engine in Go. Distributed-systems and storage-engine work:
 durability, consistency, and failure modes matter more than feature velocity.
 
+## Lessons
+
+Read `.claude/lessons.md` before your first action in a task. It holds the
+corrections the user repeated that no other rule file covers, and each entry
+names the action to take. The `retro` skill maintains that file. The user
+triggers the skill and approves every edit it makes.
+
 ## Build — Bazel only
 
 Never invoke `go build`/`go test` or run scripts directly. Go through Bazel so
@@ -77,7 +84,7 @@ lands.
   identifier, restates the signature, or explains a pattern the reader knows.
   Delete one that gives the reason for an obvious choice, or names the caller. Applies to config and
   build files (`.bazelrc`, `MODULE.bazel`, `BUILD.bazel`, workflows) as much as
-  to Go.
+  to Go. Delete them before you show the code, not after review asks.
 - Flag open design questions with `CONSIDER(ali):` comments.
 - Write prose in ASD-STE100 Simplified Technical English: active voice, simple
   tenses, one idea per sentence, one term per concept. Maximum 20 words in an
@@ -109,6 +116,19 @@ lands.
   `.claude/skills/design-note/lint.sh <file>` on each changed document instead.
 - Before opening a PR: run `bazel mod tidy`. A `go.mod` change leaves
   `MODULE.bazel` stale, and a stale `use_repo` call breaks the build.
+- After a PR merges: go to `main`, rebase on `origin`, then delete the merged
+  branch local and remote. One turn, no questions.
+- Do not solve a problem we do not have. Leave out a limit, a constraint, or a
+  mitigation until the problem appears. Delete a `CONSIDER` that guards a case
+  nobody met.
+- Verify a claim before you write it. Read the help output, the source, or the
+  API before you state how a tool behaves. "I do not know" beats a confident
+  error.
+- A correction changes the rules, not only the file. When the user corrects a
+  class of mistake, fix the instance and update the guideline or the skill in
+  the same turn.
+- An agy review transcript lives in `docs/reviews/<date>-<topic>.md` for the
+  pull request only. `git rm` it before the merge.
 
 For planning a new feature or design, use the `plan-feature` skill. For any
 documentation or technical prose — `docs/`, READMEs, PR descriptions — use the

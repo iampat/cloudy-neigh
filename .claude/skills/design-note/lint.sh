@@ -28,6 +28,7 @@ for file in "$@"; do
     /^```/ { flush_para(); code = !code; next }
     code { next }
     /^#/ || /^[[:space:]]*\|/ || /^---/ { flush_para(); next }
+    /^[[:space:]]*>/ { flush_para(); next }
     /^[[:space:]]*$/ { flush_para(); next }
     /^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]/ { flush_para() }
     {
