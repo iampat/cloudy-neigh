@@ -4,17 +4,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"gocloud.dev/blob"
 )
 
+type diskLock struct {
+	dir     string
+	mu      sync.Mutex
+	lastMod int64
+}
+
 var diskMus sync.Map
 
-func diskMu(dir string) (*sync.Mutex, error) {
+func diskMu(dir string) (*diskLock, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
@@ -22,18 +31,30 @@ func diskMu(dir string) (*sync.Mutex, error) {
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
 	}
-	mu, _ := diskMus.LoadOrStore(abs, &sync.Mutex{})
-	return mu.(*sync.Mutex), nil
+	val, _ := diskMus.LoadOrStore(abs, &diskLock{dir: abs})
+	return val.(*diskLock), nil
 }
 
 type local struct {
-	b  *blob.Bucket
-	mu *sync.Mutex
+	b *blob.Bucket
+	l *diskLock
 }
 
 func (d *local) lock() func() {
-	d.mu.Lock()
-	return d.mu.Unlock
+	d.l.mu.Lock()
+	if d.l.dir != "" {
+		if f, err := os.Open(d.l.dir); err == nil {
+			if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err == nil {
+				return func() {
+					_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+					_ = f.Close()
+					d.l.mu.Unlock()
+				}
+			}
+			_ = f.Close()
+		}
+	}
+	return d.l.mu.Unlock
 }
 
 func localGeneration(modTime int64, size int64) string {
@@ -72,6 +93,18 @@ func (d *local) live(ctx context.Context, key string) (string, error) {
 }
 
 func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (*blob.WriterOptions, func() (string, error), error) {
+	prevLive, _ := d.live(ctx, key)
+	if prevLive != "" {
+		if mod, _, ok := strings.Cut(prevLive, "-"); ok {
+			if m, err := strconv.ParseInt(mod, 16, 64); err == nil && m > d.l.lastMod {
+				d.l.lastMod = m
+			}
+		}
+	}
+	for now := time.Now().UnixNano(); now <= d.l.lastMod+int64(2*time.Millisecond); now = time.Now().UnixNano() {
+		time.Sleep(time.Millisecond)
+	}
+	d.l.lastMod = time.Now().UnixNano()
 	switch {
 	case cond == nil:
 	case cond.Absent:
@@ -86,13 +119,20 @@ func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (
 		if !validLocalGeneration(cond.GenerationMatch) {
 			return nil, nil, fmt.Errorf("objectstore: key %q: malformed generation %q", key, cond.GenerationMatch)
 		}
-		live, err := d.live(ctx, key)
-		if err != nil {
-			return nil, nil, err
-		}
-		if live != cond.GenerationMatch {
+		if prevLive != cond.GenerationMatch {
 			return nil, nil, errPrecondition(key)
 		}
 	}
-	return nil, func() (string, error) { return d.live(ctx, key) }, nil
+	return nil, func() (string, error) {
+		live, err := d.live(ctx, key)
+		if err != nil {
+			return "", err
+		}
+		if mod, _, ok := strings.Cut(live, "-"); ok {
+			if m, err := strconv.ParseInt(mod, 16, 64); err == nil && m > d.l.lastMod {
+				d.l.lastMod = m
+			}
+		}
+		return live, nil
+	}, nil
 }

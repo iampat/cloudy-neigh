@@ -26,6 +26,21 @@ The system is structured in two decoupled, composable layers:
 ### 1.3 Non-Goals
 * **Garbage Collection (GC)**: Cleaning up unreferenced historical blobs, manifests, or log segments is out of scope for the initial implementation. Historical logs are retained permanently for deterministic replays, auditability, and index backfilling.
 
+### 1.4 Future Work
+* **Tiered Local Read Cache (Memory and Disk)**:
+  * Cache immutable content-addressed objects and log segments in local memory and local disk.
+  * Immutable objects never change, so local cached copies require no cache invalidation protocol or time-to-live expiration.
+  * Local cache hits reduce read latency from $20\text{--}60\text{ ms}$ on cloud storage to under $0.5\text{ ms}$.
+* **Single-Flight Request Coalescing**:
+  * Deduplicate concurrent remote reads for the same cold blob or segment across worker threads.
+  * Send one remote request to object storage when concurrent readers miss on the same object.
+* **Asynchronous Read-Ahead**:
+  * Prefetch the next log segment in the background during sequential log scans and replays.
+  * Overlap network download with record processing to hide network latency.
+* **Hierarchical Merkle Manifests**:
+  * Partition large manifests into a tree of content-addressed chunk nodes when a branch exceeds 100,000 keys.
+  * Download only the tree nodes that contain the requested keys instead of the full manifest.
+
 ---
 
 ## 2. Layered Architecture & Storage Layout
@@ -586,17 +601,15 @@ the native handle through `As`. That one hole defines the `bucket` interface,
 and a new backend implements the four methods and adds its scheme to the
 switch in `Open`.
 
-The memory and disk backends share one implementation. Its generation is
-derived from `(ModTime, Size)`, which every reader and list entry already
-carries, so `Get` and `List` take no lock on any backend -- the token rides
-the read itself, the same shape as GCS. Mutations serialize on one in-process
-mutex, which makes each precondition check atomic; the driver's own
-`IfNotExist` is not used, because `fileblob` implements it as a stat before a
-rename that interleaves, and a losing write clobbers the winner's attribute
-sidecar. Every `Open` of one directory (symlink aliases included) shares
-one mutex, so two handles on a bucket cannot race each other. A disk bucket
-shared across OS processes is out of scope; production runs on GCS, and the
-local backends serve tests and development.
+The memory and disk backends share one implementation. Its generation derives
+from `(ModTime, Size)`, which every reader and list entry carries. `Get` and
+`List` take no lock on any backend -- the token rides the read itself, the
+same shape as GCS. Mutations serialize on a lock to make each precondition
+check atomic. The disk backend acquires an exclusive file lock (`flock`) on a
+`.lock` file in the bucket root during mutations, which coordinates writers
+across processes. The memory backend uses an in-process mutex. The driver
+`IfNotExist` option is not used, because `fileblob` checks existence with a
+stat before a rename that interleaves.
 
 Token uniqueness on the local backends assumes the wall clock advances
 between successive writes to one key. A write costs more than the clock tick

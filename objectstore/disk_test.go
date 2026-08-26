@@ -42,3 +42,13 @@ func TestDiskReopen(t *testing.T) {
 	_, err = s.Put(ctx, "k", strings.NewReader("v2"), &objectstore.Condition{GenerationMatch: gen})
 	require.NoError(t, err, "CAS after reopen")
 }
+
+func TestDiskNoAttrsSidecar(t *testing.T) {
+	dir := t.TempDir() + "/bucket"
+	s := openURL(t, "file://"+dir+"?create_dir=true")
+	defer s.Close()
+	put(t, s, "k", "v1")
+
+	_, err := os.Stat(dir + "/k.attrs")
+	require.True(t, os.IsNotExist(err), "attrs sidecar must not be created")
+}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"sync"
 
 	"gocloud.dev/blob"
 	_ "gocloud.dev/blob/fileblob"
@@ -17,6 +16,14 @@ func Open(ctx context.Context, rawURL string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	if u.Scheme == "file" {
+		q := u.Query()
+		if !q.Has("metadata") {
+			q.Set("metadata", "skip")
+			u.RawQuery = q.Encode()
+			rawURL = u.String()
+		}
+	}
 	b, err := blob.OpenBucket(ctx, rawURL)
 	if err != nil {
 		return nil, err
@@ -25,14 +32,14 @@ func Open(ctx context.Context, rawURL string) (*Store, error) {
 	case "gs":
 		return &Store{b: b, bucket: gcsBucket{}}, nil
 	case "file":
-		mu, err := diskMu(u.Path)
+		lock, err := diskMu(u.Path)
 		if err != nil {
 			b.Close()
 			return nil, err
 		}
-		return &Store{b: b, bucket: &local{b: b, mu: mu}}, nil
+		return &Store{b: b, bucket: &local{b: b, l: lock}}, nil
 	case "mem":
-		return &Store{b: b, bucket: &local{b: b, mu: &sync.Mutex{}}}, nil
+		return &Store{b: b, bucket: &local{b: b, l: &diskLock{}}}, nil
 	default:
 		b.Close()
 		return nil, fmt.Errorf("objectstore: unsupported scheme %q in %q (supported: file, gs, mem)", u.Scheme, rawURL)
