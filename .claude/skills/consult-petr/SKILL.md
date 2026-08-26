@@ -61,31 +61,16 @@ questions. Do not expect the whole design in one shot.
 
 ## How agy runs
 
-The facts below come from `agy help`. When a call fails, run `agy help` again.
-Do not trust memory over the help output.
-
-- `agy -p "<prompt>"` runs one prompt and prints the response. The prompt is an
-  argument, not stdin. The default timeout is five minutes, and
-  `--print-timeout` overrides it. An implementation turn needs more. Pass
-  `--print-timeout 20m`.
-- `--output-format json` adds a `conversation_id` field to the response.
-  `agy --conversation <id> -p "<reply>"` continues that conversation with its
-  context.
-- Headless mode cannot prompt for a tool permission. Pass
-  `--dangerously-skip-permissions` on every call, so Petr can read and write
-  files himself.
-- An empty `response` with an error on stderr is a failure. Stop and report the
-  command and the error to the user, verbatim. Do not retry, and do not work
-  around it.
+`.claude/CLAUDE.md` holds the agy facts. Read them before the first call. An
+implementation turn writes code, so it needs `--print-timeout 20m`.
 
 ## Procedure
 
 1. Write the prompt to a temporary file with the Write tool. Start the file with
-   the `MODE:` line. Do not build the file and call `agy` in one compound
-   command. The permission classifier blocks that shape, and two separate steps
-   pass.
+   the `MODE:` line.
 2. Run `agy -p "/petr $(cat <file>)" --output-format json
-   --dangerously-skip-permissions`. Record the `conversation_id`.
+   --dangerously-skip-permissions --print-timeout 20m`. Record the
+   `conversation_id`.
 3. Answer round by round with `agy --conversation <id> -p "<reply>"
    --dangerously-skip-permissions`.
 4. After every turn, append the turn to the transcript file. See below.

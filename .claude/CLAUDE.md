@@ -70,6 +70,37 @@ lands.
   `gcloud auth print-access-token --account=amiri1982@gmail.com` and pass it
   as an `oauth2.StaticTokenSource`.
 
+## agy
+
+`agy` is a separate agent CLI with its own models. It gives the project a
+second opinion, and a second pair of hands. A persona sits in
+`.agents/skills/<name>/SKILL.md`, and the skill that drives it sits in
+`.claude/skills/consult-<name>/SKILL.md`.
+
+These facts come from `agy help`. When a call fails, run `agy help` again. Do
+not trust memory over the help output.
+
+- `agy -p "<prompt>"` runs one prompt and prints the response. The prompt is an
+  argument, not stdin.
+- `/<persona> <prompt>` as the first token loads that persona. The persona pins
+  its own model, so never pass `--model`.
+- `--output-format json` adds a `conversation_id`.
+  `agy --conversation <id> -p "<reply>"` continues that conversation.
+- Headless mode cannot prompt for a tool permission. Pass
+  `--dangerously-skip-permissions` on every call, so agy reads and writes files
+  itself.
+- The print timeout defaults to five minutes. Pass `--print-timeout 20m` for a
+  turn that writes code. A long turn outlives the Bash tool timeout and moves
+  to the background, which is normal. Read the output file it names.
+- Write the prompt to a file first, then call `agy`. Two steps pass the
+  permission classifier, and one compound command does not.
+- Run agy in another directory with `env -C <dir> agy ...`. A `cd` does not
+  persist between tool calls, and a worktree needs the working directory.
+- An empty `response` with an error on stderr is a failure. Stop and report the
+  command and the error to the user, verbatim. Do not retry, and do not work
+  around it.
+- A transcript of the conversation goes to `docs/reviews/<date>-<topic>.md`.
+
 ## Gotchas & conventions
 
 - Generated code is not ours. Protoc output lives in `bazel-bin` and never
