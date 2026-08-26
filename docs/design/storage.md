@@ -14,8 +14,9 @@ The system is structured in two decoupled, composable layers:
   * Conditional appends of opaque binary records. An unconditional append would overwrite the segment of another writer.
   * Strictly contiguous 64-bit sequence numbers (`00000000000000000001.recordio`).
   * Self-delimiting RecordIO framing with masked CRC32C integrity checks. See [RecordIO](recordio.md).
-  * At-least-once delivery. A caller that needs exactly-once makes its own operations idempotent. See Section 8.2.
+  * At-least-once delivery. A caller that needs exactly-once makes its own operations idempotent.
   * Reusable independently as a distributed message queue, event sourcing log, or database WAL.
+  * See [LogStream](wal.md) for the object layout, the append protocol, and the API of this layer.
 * **Key-Value Filesystem Layer (KVFS)**:
   * Atomic `PUT`, `GET`, and `DELETE` operations for arbitrary UTF-8 paths.
   * Zero-copy, $O(1)$ branching rooted at any branch snapshot.
@@ -284,8 +285,8 @@ and the prefix carries the stream name, so no container message repeats them.
 The RecordIO framing delimits the N records inside the file.
 
 Version 1 does not use this message. A frame holds the caller payload with no
-envelope around it, which Section 8.2 states. `LogRecord` arrives as a new format
-version, when a caller needs a header.
+envelope around it, which [LogStream](wal.md) states. `LogRecord` arrives as a
+new format version, when a caller needs a header.
 
 ### 5.2 Layer 2: KVFS Schemas (`kvfs/v1/kvfs.proto`)
 
@@ -534,13 +535,8 @@ message PutBlobResponse {
 }
 ```
 
-`LogStreamService` disagrees with Section 8.2 on two points. `AppendRequest`
-carries one record, and `Log.Append` takes a batch. The service also exposes no
-`Tail` call, so a gateway client cannot find the head of a stream.
-
-`CONSIDER(ali):` no server implements this service. Settle both points when one
-does, because the answer depends on whether the gateway owns the sequence
-counter.
+`LogStreamService` disagrees with the Go API on two points, which the open
+questions of [LogStream](wal.md) record. No server implements the service today.
 
 ---
 
@@ -673,20 +669,9 @@ append, and commit loops issue zero list calls.
 ```go
 package logstream
 
-import (
-	"context"
-	"errors"
-
-	"github.com/iampat/cloudy-neigh/objectstore"
-)
-
-var ErrEndOfStream = errors.New("logstream: end of stream")
-
 type Record []byte
 
 type Log struct{ ... }
-
-type Option func(*Log)
 
 func New(store *objectstore.Store, opts ...Option) *Log
 
@@ -695,223 +680,15 @@ func (l *Log) Read(ctx context.Context, stream string, seq uint64) ([]Record, er
 func (l *Log) Tail(ctx context.Context, stream string) (uint64, error)
 ```
 
-`Log` is a struct, and one implementation holds the whole surface. It follows
-`objectstore.Store` in Section 8.1, because an interface with one implementation
-selects nothing. A caller that needs a fake declares its own interface over the
-three methods.
-
-One `Log` serves many streams. The stream name is a call argument, not
-constructor state.
-
 `Append` writes one segment object and returns the sequence number it claimed.
-The whole batch lands in that one object. Every record of the batch shares that
-number, so the address of a record is the pair `(seq, index)`. A caller that
-needs a record boundary for recovery appends that record alone.
+`Read` returns every record of one segment. `Tail` reports the head of a stream.
 
-`Read` returns every record of one segment. It reports `ErrEndOfStream` when the
-segment does not exist, which means the reader reached the head.
+LogStream uses a conditional create, and never a compare-and-swap. Every object
+it writes stays immutable, so `refs/heads/<branch>` in Section 8.3 remains the
+only mutable object in the system.
 
-`Tail` reports the highest written sequence number. A writer calls it on start
-and then counts in memory. It calls `Tail` again only when that counter goes
-stale.
-
-#### Delivery guarantee
-
-LogStream guarantees at-least-once delivery. A caller that needs exactly-once
-makes its own operations idempotent. LogStream never removes a duplicate.
-
-An acknowledgement can be lost. A `Put` commits the object, and the reply never
-reaches the writer. The writer holds an error, and it cannot tell whether its own
-segment landed. The next attempt reads a precondition failure on that number,
-treats the number as taken, and writes the same batch under the next number.
-
-```text
-writer                          object store
-  │── Put seq=42, Absent ───────▶│  commits 42
-  │        ╳ reply lost ─────────│
-  │── Put seq=42, Absent ───────▶│
-  │◀──── precondition failed ────│  42 exists, and the writer owns it
-  │── Put seq=43, Absent ───────▶│  the same batch, a second time
-```
-
-The retry does not have to come from the caller. The GCS client retries a write
-that carries a precondition, so the whole exchange fits inside one
-`objectstore.Put` call.
-
-Immutability does not prevent this. It prevents a torn segment, an overwritten
-segment, and two writers inside one object. Here the log holds two intact
-segments that carry the same records.
-
-A sequence number names a segment. It is not a deduplication key, and a reader
-cannot detect a repeat from the number alone.
-
-KVFS needs nothing more, because a `KVMutation` folded twice gives the same
-manifest entry. A caller with a non-idempotent operation, such as a counter
-increment, puts a transaction identifier in its payload and rejects a repeat on
-replay.
-
-#### Record format
-
-A record is an opaque byte slice. The RecordIO frame holds the caller bytes with
-no envelope around them.
-
-Section 5.1 defines `logstream.v1.LogRecord`, which adds a header map. No caller
-needs a header today, because KVFS puts a `KVMutation` in the payload. The
-envelope costs a protobuf dependency in the lowest reusable layer, so it waits
-for the first caller that needs a header. It arrives as a new format version.
-
-#### Use of the object store
-
-LogStream needs a conditional create, and never a compare-and-swap.
-
-| Call                             | Purpose                             |
-| -------------------------------- | ----------------------------------- |
-| `Put` with `Condition{Absent}`   | claims the sequence number          |
-| `Get`                            | reads one segment                   |
-| `List`                           | the cold start alone, never a read  |
-
-`Condition{GenerationMatch}` serves `refs/heads/<branch>`, which Section 8.3
-owns. LogStream writes only immutable objects, so it compares no token. It also
-discards the generation token that `Put` and `Get` return.
-
-A mutable head object is the alternative. It names the tail in one read, and it
-removes the cold-start search below. Three reasons refuse it.
-
-A conditional create and a mutation obey different limits. A conditional create
-writes a new key, so it uses the write budget of the whole prefix. A mutation
-rewrites one key, and every backend caps that key on its own. Appendix B measures
-2.7 mutations per second on one key. The WAL ceiling is 500 to 1,000 appends per
-second, which is three orders of magnitude apart.
-
-The key namespace is the only source of truth. A head object adds a second one,
-and a partial failure leaves the two in disagreement. Recovery then needs a
-repair tool, and the search below needs none.
-
-A sequential key sorts the same way in every tool. An operator lists the prefix
-and reads the log in order, because the 20-digit pad makes lexicographic order
-match numeric order. The last name is the head. No tool has to parse a pointer
-object or an index.
-
-The cost is the cold-start search. It takes about 31 round trips at one million
-segments, and a writer pays it once at start.
-
-#### Sequence claims
-
-`Append` claims a sequence number with `objectstore.Put` under
-`Condition{Absent: true}`. That call is the linearization point. A record is
-durable when the call returns without an error, and at no earlier moment.
-
-```text
-Append(stream, records):
-    encode the batch into one buffer
-    seq = lastKnown[stream] + 1
-    conflicts = 0
-    loop:
-        err = Put(key(stream, seq), buffer, Condition{Absent: true})
-        err is nil                ──▶  lastKnown[stream] = seq;  return seq
-        not ErrPreconditionFailed ──▶  return err
-
-        conflicts = conflicts + 1
-        conflicts < 3             ──▶  seq = seq + 1
-        otherwise                 ──▶  seq = max(seq + 1, Tail(stream) + 1)
-                                       conflicts = 0
-        wait a short random time, then continue
-```
-
-A writer targets a free number, or a number that a precondition failure proved
-taken. A failure of any other kind returns an error and moves nothing.
-
-That rule holds the contiguity invariant. The live sequence numbers of a stream
-always form the range `1..T` with no hole. `Tail` depends on the invariant,
-because a binary search over a range with a hole reports the wrong head.
-
-The cost of a collision is one wasted upload. The loser of a race uploads the
-segment again under the next number. Appendix B puts the resulting ceiling at 500
-to 1,000 appends per second on one stream. Section 9 names the gateway that
-raises it.
-
-The retry loop ends when the context ends. It has no attempt limit, because each
-precondition failure proves that another writer made progress.
-
-#### Recovery from a stale counter
-
-`lastKnown` goes stale when another writer advances the stream. A walk of `+1`
-steps then costs one round trip for each segment the writer missed. A writer that
-is 4,000 segments behind cannot reach the head inside a normal request deadline.
-Every call thus fails, and the writer never catches up.
-
-Three consecutive precondition failures trigger a `Tail` call, which re-anchors
-`lastKnown` in one search. The jump is safe, because `Tail` reports a real head.
-
-A short random delay follows each precondition failure. Two writers that collide
-also fail at the same moment. A loop with no delay keeps them in step, and they
-collide again on the next number. The delay is an implementation constant, and it
-promises a caller nothing.
-
-#### Cold-start tail search
-
-`Tail` reads the first page of the stream prefix, then probes.
-
-```text
-Tail(stream):
-    objs = List("wal/<stream>/", "", listLimit)
-    len(objs) == 0         ──▶  return 0
-    len(objs) < listLimit  ──▶  return seq(last key of objs)
-
-    lo = seq(last key of objs)
-    hi = lo * 2
-    while exists(hi):
-        lo = hi
-        hi = hi * 2
-    while hi - lo > 1:
-        mid = lo + (hi - lo) / 2
-        exists(mid)  ──▶  lo = mid
-        otherwise    ──▶  hi = mid
-    return lo
-```
-
-`listLimit` defaults to 1000, which matches the page size of the supported
-backends. One `List` call thus answers every stream of less than 1000 segments,
-and that is the common case.
-
-`objectstore.List` filters `startAfter` on the client. A search that pages
-through the prefix thus reads every key from the start of the prefix on every
-call. Section 1.3 makes garbage collection a non-goal, so the segment count only
-grows. A repeated `List` walk is the wrong shape for that reason.
-
-Round trips against the segment count:
-
-| Segments  | A probe alone | One `List`, then a probe |
-| --------- | ------------- | ------------------------ |
-| 0         | 1             | 1                        |
-| 500       | 18            | 1                        |
-| 1,000     | 20            | 12                       |
-| 1,000,000 | 40            | 31                       |
-
-The binary search takes `lo` from the last key the `List` returned, and never
-from `listLimit`. The two agree only while segment 1 still exists. An operator
-lifecycle rule that deletes an old prefix breaks that equality, and the search
-then starts from a number that no object holds. The last returned key exists by
-construction, so it is always a valid lower bound.
-
-`exists(seq)` calls `List` with the full segment key as the prefix and a limit of
-1. The call returns one object or none, and it transfers no body. A `Get` probe
-would open the body of a large segment.
-
-A metadata read costs less than a list call on every cloud backend. `objectstore`
-has no such call today, and `Tail` runs once for each writer start, so the extra
-cost is small. A short-lived writer that appends once pays it on every run.
-`TODO.md` records the `Head` call as a requirement for the ObjectStore rework.
-
-#### Segment corruption
-
-A conditional `Put` lands whole or not at all. A partial frame in a segment thus
-means a damaged object, and never a torn tail.
-
-`Read` reports the RecordIO error and changes nothing. `recordio.ErrTornWrite`
-carries no recovery here, because an immutable object has no truncation step. The
-caller stops the replay, which is what `recordio.md` requires for mid-stream
-corruption.
+[LogStream](wal.md) holds the layer: the object layout, the append protocol, the
+tail search, the delivery guarantee, and the recovery rules.
 
 ### 8.3 Layer 2: KVFS (`kvfs`)
 
@@ -1036,7 +813,7 @@ Phase 2 (Congestion Mitigation) Dedicated WALWriter Gateway Service      • 1,0
 | Scenario | Behavior / Resolution |
 | :--- | :--- |
 | **Concurrent Append Collision** | If two writers target sequence $N$, one succeeds with `if-generation-match=0`. The other receives `412 Conflict`, increments to $N+1$, and retries. |
-| **Ambiguous Append Acknowledgement** | A `Put` commits sequence $N$ and loses its reply. The retry reads `412 Conflict` on the writer's own segment, so the batch lands again at $N+1$. LogStream is at-least-once, and Section 8.2 leaves deduplication to the caller. |
+| **Ambiguous Append Acknowledgement** | A `Put` commits sequence $N$ and loses its reply. The retry reads `412 Conflict` on the writer's own segment, so the batch lands again at $N+1$. LogStream is at-least-once, and [LogStream](wal.md) leaves deduplication to the caller. |
 | **Committer Crash / Re-execution** | Manifest tracks `last_wal_seq`. The committer resumes by requesting `last_wal_seq + 1`, guaranteeing complete idempotency and zero ghost overwrites. |
 | **Cross-Branch Isolation** | Streams and branches are partitioned under distinct prefixes (`wal/<branch>/`, `refs/heads/<branch>`), eliminating cross-branch contention. |
 | **Read-After-Write Consistency** | V1 provides committed snapshot isolation (reads reflect the latest committed branch manifest). [Appendix C](#appendix-c-read-your-own-writes-placeholder) sketches a read-your-own-writes (RYOW) extension. Nothing is committed. |

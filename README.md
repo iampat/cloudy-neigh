@@ -18,6 +18,7 @@ See [ROADMAP.md](ROADMAP.md) for the phased milestones and feature roadmap.
 ## Documentation and Design Notes
 
 - [Storage and Filesystem Engine](docs/design/storage.md) — Write-ahead log streams and branching KVFS on object storage.
+- [LogStream](docs/design/wal.md) — Append-only log on object storage, with no coordination service.
 - [gRPC API Contract](docs/design/grpc-api.md) — Service definition for writes, vector similarity, text search, and hybrid queries.
 - [RecordIO Framing](docs/design/recordio.md) — Append-only record framing format with CRC32C integrity checks.
 
