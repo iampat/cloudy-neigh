@@ -282,6 +282,10 @@ A `.recordio` file is the segment. The object key carries the sequence number,
 and the prefix carries the stream name, so no container message repeats them.
 The RecordIO framing delimits the N records inside the file.
 
+Version 1 does not use this message. A frame holds the caller payload with no
+envelope around it, which Section 8.2 states. `LogRecord` arrives as a new format
+version, when a caller needs a header.
+
 ### 5.2 Layer 2: KVFS Schemas (`kvfs/v1/kvfs.proto`)
 
 ```protobuf
@@ -529,6 +533,14 @@ message PutBlobResponse {
 }
 ```
 
+`LogStreamService` disagrees with Section 8.2 on two points. `AppendRequest`
+carries one record, and `Log.Append` takes a batch. The service also exposes no
+`Tail` call, so a gateway client cannot find the head of a stream.
+
+`CONSIDER(ali):` no server implements this service. Settle both points when one
+does, because the answer depends on whether the gateway owns the sequence
+counter.
+
 ---
 
 ## 8. Go Interfaces
@@ -663,35 +675,197 @@ package logstream
 import (
 	"context"
 	"errors"
+
+	"github.com/iampat/cloudy-neigh/objectstore"
 )
 
 var ErrEndOfStream = errors.New("logstream: end of stream")
 
-type Record struct {
-	Headers map[string]string
-	Payload []byte
-}
+type Record []byte
 
-type Appender interface {
-	Append(ctx context.Context, stream string, records []Record) (uint64, error)
-}
+type Log struct{ ... }
 
-type Reader interface {
-	Read(ctx context.Context, stream string, seq uint64) ([]Record, error)
-	// CONSIDER(ali): the cold-start search strategy is not settled.
-	Tail(ctx context.Context, stream string) (uint64, error)
-}
+type Option func(*Log)
+
+func New(store *objectstore.Store, opts ...Option) *Log
+
+func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint64, error)
+func (l *Log) Read(ctx context.Context, stream string, seq uint64) ([]Record, error)
+func (l *Log) Tail(ctx context.Context, stream string) (uint64, error)
 ```
 
-`Append` writes one segment file and returns the sequence number it claimed. The
-whole batch lands in that one file. A caller that needs a record boundary for
-recovery appends that record alone.
+`Log` is a struct, and one implementation holds the whole surface. It follows
+`objectstore.Store` in Section 8.1, because an interface with one implementation
+selects nothing. A caller that needs a fake declares its own interface over the
+three methods.
+
+One `Log` serves many streams. The stream name is a call argument, not
+constructor state.
+
+`Append` writes one segment object and returns the sequence number it claimed.
+The whole batch lands in that one object. Every record of the batch shares that
+number, so the address of a record is the pair `(seq, index)`. A caller that
+needs a record boundary for recovery appends that record alone.
 
 `Read` returns every record of one segment. It reports `ErrEndOfStream` when the
 segment does not exist, which means the reader reached the head.
 
-`Tail` reports the highest written sequence number. A writer calls it once on
-start and then counts in memory.
+`Tail` reports the highest written sequence number. A writer calls it on start
+and then counts in memory. It calls `Tail` again only when that counter goes
+stale.
+
+#### Record format
+
+A record is an opaque byte slice. The RecordIO frame holds the caller bytes with
+no envelope around them.
+
+Section 5.1 defines `logstream.v1.LogRecord`, which adds a header map. No caller
+needs a header today, because KVFS puts a `KVMutation` in the payload. The
+envelope costs a protobuf dependency in the lowest reusable layer, so it waits
+for the first caller that needs a header. It arrives as a new format version.
+
+#### Use of the object store
+
+LogStream needs a conditional create, and never a compare-and-swap.
+
+| Call                             | Purpose                             |
+| -------------------------------- | ----------------------------------- |
+| `Put` with `Condition{Absent}`   | claims the sequence number          |
+| `Get`                            | reads one segment                   |
+| `List`                           | the cold start alone, never a read  |
+
+`Condition{GenerationMatch}` serves `refs/heads/<branch>`, which Section 8.3
+owns. LogStream writes only immutable objects, so it compares no token. It also
+discards the generation token that `Put` and `Get` return.
+
+#### Sequence claims
+
+`Append` claims a sequence number with `objectstore.Put` under
+`Condition{Absent: true}`. That call is the linearization point. A record is
+durable when the call returns without an error, and at no earlier moment.
+
+```text
+Append(stream, records):
+    encode the batch into one buffer
+    seq = lastKnown[stream] + 1
+    conflicts = 0
+    loop:
+        err = Put(key(stream, seq), buffer, Condition{Absent: true})
+        err is nil                ──▶  lastKnown[stream] = seq;  return seq
+        not ErrPreconditionFailed ──▶  return err
+
+        conflicts = conflicts + 1
+        conflicts < 3             ──▶  seq = seq + 1
+        otherwise                 ──▶  seq = max(seq + 1, Tail(stream) + 1)
+                                       conflicts = 0
+        wait a short random time, then continue
+```
+
+A writer targets a free number, or a number that a precondition failure proved
+taken. A failure of any other kind returns an error and moves nothing.
+
+That rule holds the contiguity invariant. The live sequence numbers of a stream
+always form the range `1..T` with no hole. `Tail` depends on the invariant,
+because a binary search over a range with a hole reports the wrong head.
+
+The cost of a collision is one wasted upload. The loser of a race uploads the
+segment again under the next number. Appendix B puts the resulting ceiling at 500
+to 1,000 appends per second on one stream. Section 9 names the gateway that
+raises it.
+
+The retry loop ends when the context ends. It has no attempt limit, because each
+precondition failure proves that another writer made progress.
+
+#### Recovery from a stale counter
+
+`lastKnown` goes stale when another writer advances the stream. A walk of `+1`
+steps then costs one round trip for each segment the writer missed. A writer that
+is 4,000 segments behind cannot reach the head inside a normal request deadline.
+Every call thus fails, and the writer never catches up.
+
+Three consecutive precondition failures trigger a `Tail` call, which re-anchors
+`lastKnown` in one search. The jump is safe, because `Tail` reports a real head.
+
+A short random delay follows each precondition failure. Two writers that collide
+also fail at the same moment. A loop with no delay keeps them in step, and they
+collide again on the next number. The delay is an implementation constant, and it
+promises a caller nothing.
+
+#### Delivery guarantee
+
+`Append` is at-least-once. A `Put` that commits the object and then loses its
+response leaves the caller with an error and no sequence number. The same batch
+lands again under the next number when the caller retries.
+
+A sequence number thus names a segment. It is not a deduplication key. KVFS
+tolerates a duplicate, because a `KVMutation` folded twice gives the same manifest
+entry. A caller with a non-idempotent operation puts a transaction identifier in
+its own payload.
+
+#### Cold-start tail search
+
+`Tail` reads the first page of the stream prefix, then probes.
+
+```text
+Tail(stream):
+    objs = List("wal/<stream>/", "", listLimit)
+    len(objs) == 0         ──▶  return 0
+    len(objs) < listLimit  ──▶  return seq(last key of objs)
+
+    lo = seq(last key of objs)
+    hi = lo * 2
+    while exists(hi):
+        lo = hi
+        hi = hi * 2
+    while hi - lo > 1:
+        mid = lo + (hi - lo) / 2
+        exists(mid)  ──▶  lo = mid
+        otherwise    ──▶  hi = mid
+    return lo
+```
+
+`listLimit` defaults to 1000, which matches the page size of the supported
+backends. One `List` call thus answers every stream of less than 1000 segments,
+and that is the common case.
+
+`objectstore.List` filters `startAfter` on the client. A search that pages
+through the prefix thus reads every key from the start of the prefix on every
+call. Section 1.3 makes garbage collection a non-goal, so the segment count only
+grows. A repeated `List` walk is the wrong shape for that reason.
+
+Round trips against the segment count:
+
+| Segments  | A probe alone | One `List`, then a probe |
+| --------- | ------------- | ------------------------ |
+| 0         | 1             | 1                        |
+| 500       | 18            | 1                        |
+| 1,000     | 20            | 12                       |
+| 1,000,000 | 40            | 31                       |
+
+The binary search takes `lo` from the last key the `List` returned, and never
+from `listLimit`. The two agree only while segment 1 still exists. An operator
+lifecycle rule that deletes an old prefix breaks that equality, and the search
+then starts from a number that no object holds. The last returned key exists by
+construction, so it is always a valid lower bound.
+
+`exists(seq)` calls `List` with the full segment key as the prefix and a limit of
+1. The call returns one object or none, and it transfers no body. A `Get` probe
+would open the body of a large segment.
+
+A metadata read costs less than a list call on every cloud backend. `objectstore`
+has no such call today, and `Tail` runs once for each writer start, so the extra
+cost is small. A short-lived writer that appends once pays it on every run.
+`TODO.md` records the `Head` call as a requirement for the ObjectStore rework.
+
+#### Segment corruption
+
+A conditional `Put` lands whole or not at all. A partial frame in a segment thus
+means a damaged object, and never a torn tail.
+
+`Read` reports the RecordIO error and changes nothing. `recordio.ErrTornWrite`
+carries no recovery here, because an immutable object has no truncation step. The
+caller stops the replay, which is what `recordio.md` requires for mid-stream
+corruption.
 
 ### 8.3 Layer 2: KVFS (`kvfs`)
 
@@ -770,7 +944,7 @@ kvfs.Store
 │
 ├── Put(branch, path, data) / Delete(branch, path)
 │   ├── kvfs.BlobStore.Put          ──► objectstore.Put(Absent)           objects/<h0>/<h1>/<hash>
-│   └── logstream.Appender.Append   ──► objectstore.Put(Absent)           wal/<branch>/<seq>.recordio
+│   └── logstream.Log.Append        ──► objectstore.Put(Absent)           wal/<branch>/<seq>.recordio
 │
 ├── Branch(newBranch, parentBranch)
 │   ├── kvfs.BranchReader.Head      ──► objectstore.Get                   refs/heads/<parent>
@@ -781,7 +955,7 @@ kvfs.Store
 
 kvfs.Committer.Commit(branch)                        (background, one per branch)
 ├── kvfs.BranchReader.Head/Manifest ──► objectstore.Get                   refs + manifest
-├── logstream.Reader.Read(seq+1…)   ──► objectstore.Get                   wal/<branch>/<seq>.recordio
+├── logstream.Log.Read(seq+1…)      ──► objectstore.Get                   wal/<branch>/<seq>.recordio
 ├── fold KVMutation records into Manifest.Entries
 ├── write the new manifest          ──► objectstore.Put                   manifests/<m0>/<m1>/<id>
 └── advance the ref                 ──► objectstore.Put(GenerationMatch)  refs/heads/<branch>
