@@ -75,7 +75,7 @@ func (f *faultyReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func TestWriterReader_RoundTrip(t *testing.T) {
+func TestWriterReaderRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	writer := recordio.NewWriter(&buf)
 
@@ -133,7 +133,7 @@ func TestWriterReader_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestWriter_WriteRecordFrom(t *testing.T) {
+func TestWriterWriteRecordFrom(t *testing.T) {
 	t.Run("HappyPath", func(t *testing.T) {
 		var buf bytes.Buffer
 		writer := recordio.NewWriter(&buf)
@@ -184,7 +184,7 @@ func TestWriter_WriteRecordFrom(t *testing.T) {
 	})
 }
 
-func TestWriter_SyncAndClose(t *testing.T) {
+func TestWriterSyncAndClose(t *testing.T) {
 	mock := &mockSyncerCloser{}
 	writer := recordio.NewWriter(mock, recordio.WithWriterSyncOnFlush(true))
 
@@ -213,7 +213,7 @@ func TestWriter_SyncAndClose(t *testing.T) {
 	}
 }
 
-func TestWriter_SyncFailurePoison(t *testing.T) {
+func TestWriterSyncFailurePoison(t *testing.T) {
 	syncErr := errors.New("fsync failed: disk error")
 	mock := &mockSyncerCloser{err: syncErr}
 	writer := recordio.NewWriter(mock)
@@ -233,7 +233,7 @@ func TestWriter_SyncFailurePoison(t *testing.T) {
 	}
 }
 
-func TestReader_BufferLimitsAndRetry(t *testing.T) {
+func TestReaderBufferLimitsAndRetry(t *testing.T) {
 	var buf bytes.Buffer
 	writer := recordio.NewWriter(&buf)
 	payload1 := []byte("first-1234567890")
@@ -284,7 +284,7 @@ func TestReader_BufferLimitsAndRetry(t *testing.T) {
 	})
 }
 
-func TestScanner_ScanAndRecordCopy(t *testing.T) {
+func TestScannerScanAndRecordCopy(t *testing.T) {
 	var buf bytes.Buffer
 	writer := recordio.NewWriter(&buf)
 
@@ -331,7 +331,7 @@ func TestScanner_ScanAndRecordCopy(t *testing.T) {
 	}
 }
 
-func TestScanner_Skip(t *testing.T) {
+func TestScannerSkip(t *testing.T) {
 	testData := [][]byte{
 		[]byte("record-alpha"),
 		[]byte("record-beta-to-skip"),
@@ -384,7 +384,7 @@ func TestScanner_Skip(t *testing.T) {
 	})
 }
 
-func TestWALRecovery_TornWrite(t *testing.T) {
+func TestWALRecoveryTornWrite(t *testing.T) {
 	var buf bytes.Buffer
 	writer := recordio.NewWriter(&buf)
 
@@ -529,7 +529,7 @@ func TestRealIOErrorsPreserved(t *testing.T) {
 	}
 }
 
-func TestReader_TransientErrorPoisons(t *testing.T) {
+func TestReaderTransientErrorPoisons(t *testing.T) {
 	var buf bytes.Buffer
 	writer := recordio.NewWriter(&buf)
 	payload := bytes.Repeat([]byte("x"), 64)
@@ -662,23 +662,21 @@ func FuzzScanner(f *testing.F) {
 	})
 }
 
-func BenchmarkWriter_WriteRecord(b *testing.B) {
+func BenchmarkWriterWriteRecord(b *testing.B) {
 	record := make([]byte, 1024)
 	rand.Read(record)
-
+	writer := recordio.NewWriter(io.Discard, recordio.WithWriterBufferSize(64*1024))
 	b.ReportAllocs()
 	b.SetBytes(int64(len(record) + 16))
-	b.ResetTimer()
 
-	writer := recordio.NewWriter(io.Discard, recordio.WithWriterBufferSize(64*1024))
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, _, err := writer.WriteRecord(record); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
-func BenchmarkReader_ReadRecord(b *testing.B) {
+func BenchmarkReaderReadRecord(b *testing.B) {
 	record := make([]byte, 1024)
 	rand.Read(record)
 
@@ -691,27 +689,20 @@ func BenchmarkReader_ReadRecord(b *testing.B) {
 
 	raw := buf.Bytes()
 	dst := make([]byte, 2048)
-
 	b.ReportAllocs()
 	b.SetBytes(int64(len(record) + 16))
-	b.ResetTimer()
 
-	for i := 0; i < b.N; {
-		reader := recordio.NewReader(bytes.NewReader(raw))
-		for {
-			_, err := reader.ReadRecord(dst)
-			if err != nil {
-				break
-			}
-			i++
-			if i >= b.N {
-				break
-			}
+	reader := recordio.NewReader(bytes.NewReader(raw))
+	for b.Loop() {
+		_, err := reader.ReadRecord(dst)
+		if err != nil {
+			reader = recordio.NewReader(bytes.NewReader(raw))
+			_, _ = reader.ReadRecord(dst)
 		}
 	}
 }
 
-func BenchmarkScanner_Scan(b *testing.B) {
+func BenchmarkScannerScan(b *testing.B) {
 	record := make([]byte, 1024)
 	rand.Read(record)
 
@@ -723,19 +714,15 @@ func BenchmarkScanner_Scan(b *testing.B) {
 	_ = writer.Flush()
 
 	raw := buf.Bytes()
-
 	b.ReportAllocs()
 	b.SetBytes(int64(len(record) + 16))
-	b.ResetTimer()
 
-	for i := 0; i < b.N; {
-		scanner := recordio.NewScanner(bytes.NewReader(raw), recordio.WithScannerInitialBufferSize(2048))
-		for scanner.Scan() {
-			_ = scanner.Record()
-			i++
-			if i >= b.N {
-				break
-			}
+	scanner := recordio.NewScanner(bytes.NewReader(raw), recordio.WithScannerInitialBufferSize(2048))
+	for b.Loop() {
+		if !scanner.Scan() {
+			scanner = recordio.NewScanner(bytes.NewReader(raw), recordio.WithScannerInitialBufferSize(2048))
+			_ = scanner.Scan()
 		}
+		_ = scanner.Record()
 	}
 }

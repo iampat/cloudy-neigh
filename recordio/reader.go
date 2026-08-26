@@ -26,7 +26,6 @@ func WithReaderMaxRecordSize(max int64) ReaderOption {
 }
 
 type Reader struct {
-	r               io.Reader
 	br              *bufio.Reader
 	bufSize         int
 	offset          int64
@@ -38,7 +37,6 @@ type Reader struct {
 
 func NewReader(r io.Reader, opts ...ReaderOption) *Reader {
 	reader := &Reader{
-		r:             r,
 		bufSize:       DefaultBufferSize,
 		maxRecordSize: DefaultMaxRecordSize,
 	}

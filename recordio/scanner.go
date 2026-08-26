@@ -144,7 +144,6 @@ func (s *Scanner) Scan() bool {
 	return true
 }
 
-// The underlying memory is owned by the Scanner and is overwritten on the next Scan() call.
 func (s *Scanner) Record() []byte {
 	return s.buf[:s.recordLen]
 }
@@ -161,7 +160,6 @@ func (s *Scanner) LastValidOffset() int64 {
 	return s.lastValidOffset
 }
 
-// Skip advances past the next record without reading the payload or calculating DataCRC.
 func (s *Scanner) Skip() bool {
 	if s.err != nil {
 		return false
