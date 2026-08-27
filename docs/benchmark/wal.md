@@ -109,16 +109,34 @@ a bound must set a deadline.
 
 No writer starved. Not one writer in any run received one append or less.
 
-| writers | laptop Jain | laptop top share | VM Jain | VM top share |
-| --- | --- | --- | --- | --- |
-| 5 | 0.969 | 25.7% | 0.996 | 21.7% |
-| 10 | 0.980 | 12.4% | 0.996 | 11.1% |
-| 20 | 0.938 | 8.3% | 0.993 | 5.7% |
-| 50 | 0.898 | 4.0% | 0.988 | 2.5% |
-| 100 | 0.821 | 2.6% | 0.874 | 2.3% |
+The Jain index measures how evenly the appends split across the writers. Writer
+`i` lands `x` appends, and `n` writers share the stream.
 
-The busiest writer at 100 writers took 2.6% of the stream. The ideal share is
-1.0%. The VM stays close to a perfect split at every count.
+```
+        ( Σ xᵢ )²
+  J = ─────────────
+       n · Σ xᵢ²
+```
+
+The index runs from `1/n` to `1`. A value of `1` means every writer landed the
+same count. A value of `1/n` means one writer took the whole stream and the
+rest got nothing. The index does not depend on the total, so runs of different
+lengths compare directly.
+
+Read the index against its floor, not against zero. At 100 writers the floor is
+0.010, so 0.874 sits near the top of the range.
+
+| writers | floor `1/n` | laptop Jain | laptop top share | VM Jain | VM top share |
+| --- | --- | --- | --- | --- | --- |
+| 5 | 0.200 | 0.969 | 25.7% | 0.996 | 21.7% |
+| 10 | 0.100 | 0.980 | 12.4% | 0.996 | 11.1% |
+| 20 | 0.050 | 0.938 | 8.3% | 0.993 | 5.7% |
+| 50 | 0.020 | 0.898 | 4.0% | 0.988 | 2.5% |
+| 100 | 0.010 | 0.821 | 2.6% | 0.874 | 2.3% |
+
+The top share is the second view. It gives the share of the stream that the
+busiest writer took. The busiest writer at 100 writers took 2.6% against an
+ideal share of 1.0%. The VM stays close to a perfect split at every count.
 
 The laptop is fair but noisier. A long round trip widens the window in which
 one writer wins several rounds in a row.
