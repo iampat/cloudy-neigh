@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
-	"math/rand/v2"
 	"path"
 	"strconv"
 	"strings"
@@ -39,13 +39,7 @@ func WithMaxRecordSize(max int) Option {
 	}
 }
 
-func WithTailListLimit(limit int) Option {
-	return func(l *Log) {
-		if limit > 0 {
-			l.listLimit = limit
-		}
-	}
-}
+const tailListLimit = 1000
 
 type streamState struct {
 	ch        chan struct{}
@@ -56,7 +50,6 @@ type Log struct {
 	store         *objectstore.Store
 	prefix        string
 	maxRecordSize int
-	listLimit     int
 
 	streamsMu sync.Mutex
 	streams   map[string]*streamState
@@ -67,7 +60,6 @@ func New(store *objectstore.Store, opts ...Option) *Log {
 		store:         store,
 		prefix:        "wal",
 		maxRecordSize: recordio.DefaultMaxRecordSize,
-		listLimit:     1000,
 		streams:       make(map[string]*streamState),
 	}
 	for _, opt := range opts {
@@ -75,8 +67,6 @@ func New(store *objectstore.Store, opts ...Option) *Log {
 	}
 	return l
 }
-
-const gateDistance = 16
 
 func (l *Log) stream(name string) *streamState {
 	l.streamsMu.Lock()
@@ -138,6 +128,9 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 	seq := st.lastKnown + 1
 	runway := 3
 	tries := 0
+	first := seq
+	var collisions, jumpProbes int
+	start := time.Now()
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -147,48 +140,38 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), &objectstore.Condition{Absent: true})
 		if err == nil {
 			st.lastKnown = seq
+			slog.Debug("logstream append",
+				"stream", stream,
+				"seq", seq,
+				"first_try", first,
+				"collisions", collisions,
+				"jump_probes", jumpProbes,
+				"uploads", collisions+1,
+				"elapsed_ms", time.Since(start).Milliseconds())
 			return seq, nil
 		}
 		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
 			return 0, err
 		}
+		collisions++
 
 		tries++
 		if tries < runway {
 			seq++
 		} else {
-			if seq > math.MaxUint64-gateDistance {
-				return 0, errors.New("logstream: sequence number overflow")
+			probe := func(ctx context.Context, s uint64) (bool, error) {
+				return exists(ctx, l.store, segmentKey(l.prefix, stream, s))
 			}
-			gateKey := segmentKey(l.prefix, stream, seq+gateDistance)
-			ex, err := exists(ctx, l.store, gateKey)
+			head, probes, err := jump(ctx, seq, probe)
+			jumpProbes += probes
 			if err != nil {
 				return 0, err
 			}
-			if !ex {
-				seq++
-				tries = 0
-			} else {
-				probe := func(ctx context.Context, s uint64) (bool, error) {
-					return exists(ctx, l.store, segmentKey(l.prefix, stream, s))
-				}
-				head, probes, err := jump(ctx, seq+gateDistance, probe)
-				if err != nil {
-					return 0, err
-				}
-				seq = head + 1
-				runway = max(3, 2*probes)
-				tries = 0
-			}
+			seq = head + 1
+			runway = max(3, 2*probes)
+			tries = 0
 		}
 
-		delay := time.Duration(1+rand.IntN(15)) * time.Millisecond
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-timer.C:
-		}
 	}
 }
 
@@ -243,7 +226,7 @@ func (l *Log) Tail(ctx context.Context, stream string) (uint64, error) {
 	}
 
 	prefix := fmt.Sprintf("%s/%s/", l.prefix, stream)
-	objs, err := l.store.List(ctx, prefix, "", l.listLimit)
+	objs, err := l.store.List(ctx, prefix, "", tailListLimit)
 	if err != nil {
 		return 0, err
 	}
@@ -255,7 +238,7 @@ func (l *Log) Tail(ctx context.Context, stream string) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if len(objs) < l.listLimit {
+	if len(objs) < tailListLimit {
 		return lastSeq, nil
 	}
 
