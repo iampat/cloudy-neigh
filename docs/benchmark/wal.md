@@ -155,13 +155,3 @@ turns down.
 | Object writes per append, 100 writers | 71.5 | one wasted upload for each lost race |
 
 Every number in this table comes from the 600 s runs.
-
-## Open questions
-
-`CONSIDER(ali):` The retry loop has no attempt limit. A 489 s append is a
-timeout for any caller. The loop needs a bound, or `Append` needs a documented
-deadline requirement.
-
-`CONSIDER(ali):` A batch of records in one append amortises the round trip. The
-gateway in `docs/design/storage.md` §9 assumes this. No measurement covers the
-batch size yet.
