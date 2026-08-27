@@ -28,26 +28,25 @@ import (
 const headerSize = 20
 
 type event struct {
-	Type      string   `json:"type"`
-	Host      string   `json:"host,omitempty"`
-	URL       string   `json:"url,omitempty"`
-	MinSize   int      `json:"min_size,omitempty"`
-	MaxSize   int      `json:"max_size,omitempty"`
-	Writers   int      `json:"writers,omitempty"`
-	Streams   []string `json:"streams,omitempty"`
-	Seconds   float64  `json:"seconds,omitempty"`
-	DrainSecs float64  `json:"drain_secs,omitempty"`
-	Appends   int      `json:"appends,omitempty"`
-	Fails     int      `json:"fails,omitempty"`
-	Writer    uint32   `json:"w,omitempty"`
-	Record    uint64   `json:"r,omitempty"`
-	Seq       uint64   `json:"s,omitempty"`
-	Size      int      `json:"n,omitempty"`
-	Micros    int64    `json:"u,omitempty"`
-	Stream    int      `json:"t,omitempty"`
-	StartAt   int64    `json:"at,omitempty"`
-	Drain     bool     `json:"drain_append,omitempty"`
-	Err       string   `json:"err,omitempty"`
+	Type      string  `json:"type"`
+	Host      string  `json:"host,omitempty"`
+	URL       string  `json:"url,omitempty"`
+	MinSize   int     `json:"min_size,omitempty"`
+	MaxSize   int     `json:"max_size,omitempty"`
+	Writers   int     `json:"writers,omitempty"`
+	Stream    string  `json:"stream,omitempty"`
+	Seconds   float64 `json:"seconds,omitempty"`
+	DrainSecs float64 `json:"drain_secs,omitempty"`
+	Appends   int     `json:"appends,omitempty"`
+	Fails     int     `json:"fails,omitempty"`
+	Writer    uint32  `json:"w,omitempty"`
+	Record    uint64  `json:"r,omitempty"`
+	Seq       uint64  `json:"s,omitempty"`
+	Size      int     `json:"n,omitempty"`
+	Micros    int64   `json:"u,omitempty"`
+	StartAt   int64   `json:"at,omitempty"`
+	Drain     bool    `json:"drain_append,omitempty"`
+	Err       string  `json:"err,omitempty"`
 }
 
 type appendRecord struct {
@@ -56,7 +55,6 @@ type appendRecord struct {
 	seq     uint64
 	size    int
 	micros  int64
-	stream  int
 	startAt int64
 	drain   bool
 }
@@ -64,14 +62,13 @@ type appendRecord struct {
 type failureRecord struct {
 	writer uint32
 	record uint64
-	stream int
 	micros int64
 	err    string
 }
 
 type runResult struct {
 	writers  int
-	streams  []string
+	stream   string
 	seconds  float64
 	drain    float64
 	appends  []appendRecord
@@ -89,7 +86,6 @@ type config struct {
 	sanity   string
 	readers  int
 	prefix   string
-	streams  int
 	debugLog string
 }
 
@@ -102,10 +98,9 @@ func main() {
 	flag.IntVar(&c.minSize, "min", 1024, "smallest payload in bytes")
 	flag.IntVar(&c.maxSize, "max", 10240, "largest payload in bytes")
 	flag.StringVar(&c.out, "out", "", "path for the result JSONL")
-	flag.StringVar(&c.sanity, "sanity", "", "read a result JSONL and verify the streams instead of benchmarking")
+	flag.StringVar(&c.sanity, "sanity", "", "read a result JSONL and verify the stream of each run instead of benchmarking")
 	flag.IntVar(&c.readers, "readers", 64, "parallel segment readers for the sanity check")
 	flag.StringVar(&c.prefix, "prefix", "", "stream name prefix, so a rerun does not collide")
-	flag.IntVar(&c.streams, "streams", 1, "streams to spread the writers over, or 0 for one stream per writer")
 	flag.StringVar(&c.debugLog, "debuglog", "", "path for the logstream debug records, which count the uploads and the probes")
 	flag.Parse()
 
@@ -172,18 +167,16 @@ func run(c config) error {
 
 	probe := logstream.New(store)
 	for _, n := range counts {
-		names := streamNames(c.prefix, n, c.streams)
-		for _, name := range names {
-			tail, err := probe.Tail(ctx, name)
-			if err != nil {
-				return fmt.Errorf("tail %s: %w", name, err)
-			}
-			if tail != 0 {
-				return fmt.Errorf("stream %s already holds %d segments, pick another -prefix", name, tail)
-			}
+		name := streamName(c.prefix, n)
+		tail, err := probe.Tail(ctx, name)
+		if err != nil {
+			return fmt.Errorf("tail %s: %w", name, err)
 		}
-		fmt.Printf("run n=%d streams=%d for %s\n", n, len(names), c.duration)
-		r, err := benchmark(ctx, c.url, names, n, c.duration, c.minSize, c.maxSize)
+		if tail != 0 {
+			return fmt.Errorf("stream %s already holds %d segments, pick another -prefix", name, tail)
+		}
+		fmt.Printf("run n=%d stream=%s for %s\n", n, name, c.duration)
+		r, err := benchmark(ctx, c.url, name, n, c.duration, c.minSize, c.maxSize)
 		if err != nil {
 			return err
 		}
@@ -202,7 +195,7 @@ func run(c config) error {
 
 func writeRun(enc *json.Encoder, host string, r runResult) error {
 	err := enc.Encode(event{
-		Type: "run", Host: host, Writers: r.writers, Streams: r.streams,
+		Type: "run", Host: host, Writers: r.writers, Stream: r.stream,
 		Seconds: r.seconds, DrainSecs: r.drain,
 		Appends: len(r.appends), Fails: len(r.failures),
 	})
@@ -213,7 +206,7 @@ func writeRun(enc *json.Encoder, host string, r runResult) error {
 		err := enc.Encode(event{
 			Type: "append", Host: host, Writers: r.writers,
 			Writer: a.writer, Record: a.record, Seq: a.seq,
-			Size: a.size, Micros: a.micros, Stream: a.stream,
+			Size: a.size, Micros: a.micros,
 			StartAt: a.startAt, Drain: a.drain,
 		})
 		if err != nil {
@@ -223,7 +216,7 @@ func writeRun(enc *json.Encoder, host string, r runResult) error {
 	for _, f := range r.failures {
 		err := enc.Encode(event{
 			Type: "fail", Host: host, Writers: r.writers,
-			Writer: f.writer, Record: f.record, Stream: f.stream,
+			Writer: f.writer, Record: f.record,
 			Micros: f.micros, Err: f.err,
 		})
 		if err != nil {
@@ -251,15 +244,10 @@ func parseCounts(s string) ([]int, error) {
 	return counts, nil
 }
 
-func streamNames(prefix string, writers, streams int) []string {
-	if streams <= 0 || streams > writers {
-		streams = writers
-	}
-	names := make([]string, streams)
-	for i := range names {
-		names[i] = fmt.Sprintf("%sbench-n%d-s%d", prefix, writers, i)
-	}
-	return names
+// Every writer in a run shares one stream. That contention is what this
+// benchmark measures, so the stream count is not a knob.
+func streamName(prefix string, writers int) string {
+	return fmt.Sprintf("%sbench-n%d", prefix, writers)
 }
 
 // One record leaves the producer with its header already stamped, except for
@@ -269,7 +257,7 @@ type item struct {
 	buf []byte
 }
 
-func benchmark(ctx context.Context, url string, names []string, n int, d time.Duration, minSize, maxSize int) (runResult, error) {
+func benchmark(ctx context.Context, url, name string, n int, d time.Duration, minSize, maxSize int) (runResult, error) {
 	stores := make([]*objectstore.Store, n)
 	for i := range stores {
 		s, err := objectstore.Open(ctx, url)
@@ -319,20 +307,17 @@ func benchmark(ctx context.Context, url string, names []string, n int, d time.Du
 		id := i
 		g.Go(func() error {
 			log := logstream.New(stores[id])
-			streamIdx := id % len(names)
-			stream := names[streamIdx]
 			for it := range work {
 				binary.BigEndian.PutUint32(it.buf[16:20], uint32(id))
 
 				t0 := time.Now()
-				seq, err := log.Append(gctx, stream, []logstream.Record{it.buf})
+				seq, err := log.Append(gctx, name, []logstream.Record{it.buf})
 				elapsed := time.Since(t0)
 				startAt := t0.Sub(start).Microseconds()
 				if err != nil {
 					outcomes[id].failures = append(outcomes[id].failures, failureRecord{
 						writer: uint32(id),
 						record: it.id,
-						stream: streamIdx,
 						micros: elapsed.Microseconds(),
 						err:    err.Error(),
 					})
@@ -344,7 +329,6 @@ func benchmark(ctx context.Context, url string, names []string, n int, d time.Du
 					seq:     seq,
 					size:    len(it.buf),
 					micros:  elapsed.Microseconds(),
-					stream:  streamIdx,
 					startAt: startAt,
 					drain:   startAt+elapsed.Microseconds() > d.Microseconds(),
 				})
@@ -385,7 +369,7 @@ func benchmark(ctx context.Context, url string, names []string, n int, d time.Du
 	}
 
 	r := runResult{
-		writers: n, streams: names,
+		writers: n, stream: name,
 		seconds: time.Since(start).Seconds(),
 		drain:   time.Since(stopped).Seconds(),
 	}
@@ -444,8 +428,8 @@ func report(r runResult) {
 
 	window := r.seconds - r.drain
 	attempts := len(r.appends) + len(r.failures)
-	fmt.Printf("  n=%-3d streams=%-4d appends=%-7d %.1f/s  %.2f MiB/s  maxseq=%d\n",
-		r.writers, len(r.streams), len(steady), float64(len(steady))/window,
+	fmt.Printf("  n=%-3d appends=%-7d %.1f/s  %.2f MiB/s  maxseq=%d\n",
+		r.writers, len(steady), float64(len(steady))/window,
 		float64(bytesTotal)/window/(1<<20), maxSeq)
 	fmt.Printf("       window %.1fs + drain %.1fs (%d appends dropped)  fails=%d  error rate %.3f%%\n",
 		window, r.drain, drained, len(r.failures),
@@ -544,14 +528,14 @@ func runSanity(path string, readers int) error {
 		case "meta":
 			url = e.URL
 		case "run":
-			runs[e.Writers] = &runResult{writers: e.Writers, streams: e.Streams, seconds: e.Seconds}
+			runs[e.Writers] = &runResult{writers: e.Writers, stream: e.Stream, seconds: e.Seconds}
 		case "append":
 			r := runs[e.Writers]
 			if r == nil {
 				return fmt.Errorf("append for unknown run n=%d", e.Writers)
 			}
 			r.appends = append(r.appends, appendRecord{
-				writer: e.Writer, record: e.Record, seq: e.Seq, stream: e.Stream,
+				writer: e.Writer, record: e.Record, seq: e.Seq,
 			})
 		}
 	}
@@ -578,7 +562,7 @@ func runSanity(path string, readers int) error {
 
 	failed := false
 	for _, n := range order {
-		ok, err := checkRun(ctx, log, runs[n], readers)
+		ok, err := checkStream(ctx, log, runs[n], readers)
 		if err != nil {
 			return err
 		}
@@ -593,27 +577,9 @@ func runSanity(path string, readers int) error {
 	return nil
 }
 
-func checkRun(ctx context.Context, log *logstream.Log, r *runResult, readers int) (bool, error) {
-	ok := true
-	for idx, stream := range r.streams {
-		acked := 0
-		for _, a := range r.appends {
-			if a.stream == idx {
-				acked++
-			}
-		}
-		good, err := checkStream(ctx, log, r, idx, stream, acked, readers)
-		if err != nil {
-			return false, err
-		}
-		if !good {
-			ok = false
-		}
-	}
-	return ok, nil
-}
-
-func checkStream(ctx context.Context, log *logstream.Log, r *runResult, idx int, stream string, acked, readers int) (bool, error) {
+func checkStream(ctx context.Context, log *logstream.Log, r *runResult, readers int) (bool, error) {
+	stream := r.stream
+	acked := len(r.appends)
 	tail, err := log.Tail(ctx, stream)
 	if err != nil {
 		return false, fmt.Errorf("tail %s: %w", stream, err)
@@ -679,9 +645,6 @@ func checkStream(ctx context.Context, log *logstream.Log, r *runResult, idx int,
 
 	lost := 0
 	for _, a := range r.appends {
-		if a.stream != idx {
-			continue
-		}
 		if seen[a.record] == 0 {
 			lost++
 		}
