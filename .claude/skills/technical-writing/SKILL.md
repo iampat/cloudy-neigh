@@ -1,6 +1,6 @@
 ---
 name: technical-writing
-description: Write or update any documentation or technical prose — design notes, proposals, architecture notes, READMEs, PR descriptions, release notes. Use for all technical writing to keep the style and structure consistent.
+description: Write or update any documentation or technical prose: design notes, proposals, architecture notes, READMEs, PR descriptions, release notes. Use for all technical writing to keep the style and structure consistent.
 ---
 
 # Technical writing
@@ -65,26 +65,28 @@ connective tissue of an argument, and every claim then lands with equal weight.
 
 Rationale prose is still short. Three sentences per decision is usually enough.
 
-## Rhythm
+## Voice
 
-The rules bound a sentence. They do not set its length, and they never ask for
-the same length twice. A page of ten-word sentences reads like a parts list, so
-the reader stops hearing a person and starts skimming.
+Write the way Ali writes. Short, direct, plain English. Blunt on purpose.
 
-Vary the length. Put a long sentence next to a short one, because the short one
-lands harder after the long one. Keep the connectives that carry an argument:
-because, so, but, and then. A sentence that joins two ideas with one of those
-words is one idea about a relation, and the one-idea rule permits it.
+- Short sentences. Simple words. No jargon unless the idea needs it.
+- Say the point in the first sentence. No throat-clearing. No filler intro.
+- No corporate politeness. No hedging to sound safe.
+- Do not over-explain. One pass at an idea is enough.
+- No em dash. Use a comma, a full stop, or a colon.
+- Do not pad to sound professional. Clarity beats polish.
+- Use bullets and short paragraphs when they help the reader scan.
+
+Blunt is not rude. State the fact, name the cost, move on.
 
 Address the reader directly. "We run the tool against both systems" beats "the
-tool is run against both systems", and it beats a passive noun phrase every
-time.
+tool is run against both systems".
 
-Read the paragraph back before you keep it. When it sounds like a list of
-facts, join two of its sentences and cut a third.
+Short is the default. A longer sentence is fine when it carries one idea about
+a relation, and the connectives that carry an argument stay: because, so, but.
 
-Formality is not precision. A relaxed sentence that says one thing exactly is
-better prose and better engineering than a stiff one that says the same thing.
+Formality is not precision. A plain sentence that says one thing exactly beats
+a stiff one that says the same thing.
 
 ## Writing rules
 
@@ -110,6 +112,7 @@ strictly to normative prose and loosely to rationale prose.
 - Use "e.g." or "for example". Write "and so on", not "etc.".
 - Spell out an acronym at first use, then use the acronym.
 - Do not use jargon, idiom, or an informal expression.
+- Do not use an em dash. Use a comma, a full stop, or a colon.
 - State a trade-off in one sentence. Do not argue both sides at length.
 - Delete a sentence that repeats the sentence before it.
 
@@ -142,9 +145,8 @@ Every decision names its cost, and the alternative it beat, in the section that
 makes it. A choice with no cost is usually a choice that is not yet understood.
 
 Do not collect that reasoning into separate Alternatives, Prior art, or Failure
-modes sections. A reader who is looking at a decision should not have to find its
-rationale three screens away, and a note that answers the same question twice gets
-one of them out of date.
+modes sections. A reader at a decision must not hunt three screens away for its
+rationale. A note that answers the same question twice lets one copy go stale.
 
 An unresolved question is the exception worth marking. Use `CONSIDER(ali):` inline
 where the decision would go.
@@ -216,8 +218,8 @@ Match the view to the content:
   v2 ║░░░                                5.2 GiB
 ```
 
-Show a change to an existing shape as a diff on that shape — a file tree, a
-call tree, or pseudocode. A diff shows the delta without two full diagrams.
+Show a change to an existing shape as a diff on that shape: a file tree, a call
+tree, or pseudocode. A diff shows the delta without two full diagrams.
 
 ```diff
  wal/
@@ -278,7 +280,8 @@ The checklist below covers the judgment rules.
 - Every stated limit comes from a measurement.
 - No field name is a keyword in a target language.
 - Deleting any sentence loses something. No sentence explains the obvious.
-- The prose has rhythm. No paragraph runs on one sentence length.
+- The prose is short, direct and plain. No padding, no throat-clearing.
+- No em dash anywhere in the file.
 - Another system is named the way its own documentation names it.
 - Every diagram fits in 80 columns and sits next to the text it supports.
 - No Mermaid diagram survives without a simplification attempt first.

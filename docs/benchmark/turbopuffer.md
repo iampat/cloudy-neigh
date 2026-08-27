@@ -1,6 +1,6 @@
 # Proposal: benchmark cloudy-neigh with turbopuffer's tool
 
-**Status:** Draft — 2026-08-27 — v0
+**Status:** Draft, 2026-08-27, v0
 
 ## The idea
 
@@ -16,8 +16,8 @@ warm-up all committed to that repository.
 Only the wire stands between that tool and cloudy-neigh. It speaks
 turbopuffer's HTTP and JSON API, and we speak gRPC. So we propose to build an
 API compatible with their endpoints, then run `tpufbench` against cloudy-neigh
-unchanged. Same binary, same definitions, same datasets, same measurement —
-two engines.
+unchanged. Same binary, same definitions, same datasets, same measurement. Two
+engines.
 
 That compatible API runs in the process that already holds the engine, next to
 the gRPC service. Both systems then parse the same JSON bytes from the same

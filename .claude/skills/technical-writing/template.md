@@ -1,6 +1,6 @@
 # <What this note decides>
 
-**Status:** Draft — <YYYY-MM-DD>
+**Status:** Draft, <YYYY-MM-DD>
 
 ## Scope
 
