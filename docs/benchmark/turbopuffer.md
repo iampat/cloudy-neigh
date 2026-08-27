@@ -15,10 +15,6 @@ The tool talks to one thing: turbopuffer's HTTP and JSON API. Build that API on
 cloudy-neigh, and `tpufbench` runs against it unchanged. Same binary, same
 definitions, same datasets, same measurement. Two engines.
 
-The cost is a second API surface, scoped to what the benchmark definitions
-call. It never enters `docs/design/grpc-api.md`. It also buys a migration path,
-because a turbopuffer client can point at cloudy-neigh without a rewrite.
-
 ## Endpoints the benchmark needs
 
 Only one file in `tpuf-benchmark` knows the API, and it makes six calls. Every
