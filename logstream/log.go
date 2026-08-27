@@ -160,7 +160,7 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 			seq++
 		} else {
 			probe := func(ctx context.Context, s uint64) (bool, error) {
-				return exists(ctx, l.store, segmentKey(l.prefix, stream, s))
+				return l.store.Exists(ctx, segmentKey(l.prefix, stream, s))
 			}
 			head, probes, err := jump(ctx, seq, probe)
 			jumpProbes += probes
@@ -243,7 +243,7 @@ func (l *Log) Tail(ctx context.Context, stream string) (uint64, error) {
 	}
 
 	probe := func(ctx context.Context, s uint64) (bool, error) {
-		return exists(ctx, l.store, segmentKey(l.prefix, stream, s))
+		return l.store.Exists(ctx, segmentKey(l.prefix, stream, s))
 	}
 	head, _, err := jump(ctx, lastSeq, probe)
 	return head, err
@@ -318,10 +318,6 @@ func jump(ctx context.Context, lo uint64, probe func(context.Context, uint64) (b
 		}
 	}
 	return low, probes, nil
-}
-
-func exists(ctx context.Context, store *objectstore.Store, key string) (bool, error) {
-	return store.Exists(ctx, key)
 }
 
 func segmentKey(prefix, stream string, seq uint64) string {

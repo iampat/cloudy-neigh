@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math"
-	"strings"
 	"testing"
 	"time"
 
@@ -124,33 +123,5 @@ func TestAppendCancelWhileWaitingForLock(t *testing.T) {
 	_, err = log.Append(ctx, "lock-stream", []Record{[]byte("waiter")})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Append err = %v, want DeadlineExceeded", err)
-	}
-}
-
-func TestExists(t *testing.T) {
-	s, err := objectstore.Open(context.Background(), "mem://")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { s.Close() })
-
-	ctx := context.Background()
-	k := "wal/test/00000000000000000001.recordio"
-	ok, err := exists(ctx, s, k)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok {
-		t.Fatal("exists = true, want false")
-	}
-	if _, err := s.Put(ctx, k, strings.NewReader("val"), nil); err != nil {
-		t.Fatal(err)
-	}
-	ok, err = exists(ctx, s, k)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("exists = false, want true")
 	}
 }
