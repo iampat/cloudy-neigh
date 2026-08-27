@@ -11,16 +11,11 @@ retries one append costs.
 ## Method
 
 `cmd/walbench` runs one writer count at a time. All writers of a run append to
-one stream for 10 minutes.
+one stream for 10 minutes. Each record holds 1 KiB to 10 KiB of random bytes.
 
-| | |
-| --- | --- |
-| Bucket | `kentrolabs-ai-cloudy-neigh-bench-calm-otter-5127`, US-CENTRAL1 |
-| Remote | MacBook, outside the GCP region |
-| VM | `walbench-central` in GCP, e2-standard-4, us-central1-a, same region as the bucket |
-| Payload | 1 KiB to 10 KiB, random |
-| Window | 10 minutes for each writer count |
-| Writers | 1, 5, 10, 20, 50, 100 |
+Two machines ran the same matrix. The remote machine is a MacBook outside the
+GCP region. The VM is `walbench-central`, an e2-standard-4 in us-central1-a,
+the region of the bucket.
 
 ## Correctness
 
