@@ -1,142 +1,107 @@
-# Proposal: benchmark cloudy-neigh with the turbopuffer harness
+# Proposal: benchmark cloudy-neigh with turbopuffer's tool
 
 **Status:** Draft — 2026-08-27 — v0
 
-## Problem
+## The idea
 
-cloudy-neigh needs numbers a reader trusts. A benchmark we write ourselves
-proves little. We pick the data, the queries, and the load, so we pick the
-result.
+We want an apples-to-apples comparison against turbopuffer, and the cleanest
+way to get one is to stop writing our own benchmark. A benchmark we build
+ourselves picks its own data, its own queries and its own load, so it also
+picks its own winner.
 
-turbopuffer publishes `tpuf-benchmark`, the harness behind its public latency
-numbers. It is one Go binary under the MIT license. The datasets, the query
-shapes, the load, and the metric all sit in that repository. Those numbers are
-the reference our reader already knows.
+turbopuffer already published the tool behind its public latency numbers:
+[tpuf-benchmark](https://github.com/turbopuffer/tpuf-benchmark). It is one Go
+binary, MIT licensed, and everything that decides a result lives in that
+repository. The datasets, the query shapes, the request rate, the warm-up and
+the reporting are all committed there, so anyone can rerun what turbopuffer
+publishes.
 
-The harness speaks the turbopuffer HTTP API. cloudy-neigh speaks gRPC.
+The one thing standing between that tool and cloudy-neigh is the wire. It
+speaks turbopuffer's HTTP and JSON API, and we speak gRPC. So we propose to
+build an API compatible with their endpoints, and then run `tpufbench` against
+cloudy-neigh unchanged. Same binary, same TOML definitions, same datasets,
+same measurement — two engines.
 
-## Proposal
+We would serve that compatible API from the process that already holds the
+engine, next to the gRPC service. Both systems then parse the same JSON bytes
+sent by the same client, and whatever difference the numbers show belongs to
+the engine.
 
-cloudy-neigh serves a turbopuffer-compatible HTTP API. We then run `tpufbench`
-against it unchanged. One binary, one set of TOML definitions, and one set of
-datasets drive both systems.
+The alternative is to fork the tool and hand it a gRPC client. That is less
+work, and it quietly ruins the point. Each system would then face a different
+client and a different encoder. A translating gateway in a separate process has
+the same problem from the other side. It leaves the tool alone, but it taxes
+only our half of the comparison with an extra hop.
 
-The compatible API runs in the process that holds the engine, beside the gRPC
-service. It covers the six calls the harness makes, and nothing else.
+The cost is a second API surface. We keep it scoped to what the benchmark
+definitions call, and it never enters `docs/design/grpc-api.md`. It buys
+something beyond the numbers, though. A turbopuffer user can then point an
+existing client at cloudy-neigh and see what happens.
 
-Two alternatives lose the comparison.
+## Endpoints the benchmark needs
 
-- **Fork the harness and give it a gRPC client.** This is cheaper to build. Each
-  system then faces a different client and a different encoder, so we compare
-  two harnesses instead of two engines.
-- **Run a translating gateway in front of the engine.** The harness stays
-  intact. Our side alone pays one extra hop and one extra encode.
+Only one file in `tpuf-benchmark` knows the API, and it makes six calls. Every
+request carries an `authorization: Bearer <key>` header.
 
-In process, both systems parse the same JSON bytes from the same client. The
-engine is the difference that remains.
-
-The cost is a second API surface. It stays scoped to what the definitions call,
-and it never enters `docs/design/grpc-api.md`. It also buys a migration path,
-because a turbopuffer client can point at cloudy-neigh without a rewrite.
-
-## Non-goals
-
-- Recall and relevance. The harness measures latency, throughput, and ingest
-  time.
-- A price comparison.
-- A complete turbopuffer API. We serve what the definitions call.
-
-## The harness
-
-One run reads one TOML definition and walks five stages.
-
-```
-tpufbench run benchmarks/vector-knn-1m-hot.toml
-├── sanity      10 documents and one query, before any dataset download
-├── setup       render and bulk upsert the documents
-├── index wait  poll until the index reports up to date
-├── cache       warm it, purge it, or wait for a hit ratio
-└── measure     run every workload for the definition duration
-```
-
-A definition names the dataset, the document count, the document shape, and the
-workloads. A workload carries its own rate, worker count, and query template.
-Eleven definitions ship. They cover exact k-NN, ANN, BM25, hybrid search with
-reciprocal rank fusion, and one filtered aggregation from TPC-H query 6.
-Document counts run from 1 million to 1 billion.
-
-Data comes from Cohere Wikipedia embeddings, Cohere MSMarco passages, Yandex
-Deep1B, generated TPC-H lineitem rows, or a random generator. The harness
-downloads and caches each dataset on local disk.
-
-The reporter records the client-side latency of every request. It prints
-percentiles every 10 seconds, writes one CSV row per request, and writes a
-`report.json` at the end.
-
-The nightly workflow runs the harness on a GCE `c4a-standard-32-lssd` in
-`us-central1-c`. The client always runs in the region of the service.
-
-## What we must serve
-
-Only one file in the harness knows the API. It makes six calls, with one
-`authorization: Bearer <key>` header.
-
-| Call | Stage |
+| Call | What it does |
 | --- | --- |
-| `POST /v2/namespaces/{ns}` | setup upsert, and every measured write |
-| `POST /v2/namespaces/{ns}/query` | every measured query, and the size probe |
-| `DELETE /v2/namespaces/{ns}` | clear a namespace before a run |
-| `GET /v1/namespaces/{ns}/metadata` | index wait, byte and row totals |
-| `GET /v1/namespaces/{ns}/_debug/warm_cache` | cache stage |
-| `GET /v1/namespaces/{ns}/_debug/purge_cache` | cache stage |
+| `POST /v2/namespaces/{ns}` | writes documents, both the bulk load and the measured writes |
+| `POST /v2/namespaces/{ns}/query` | every measured query, plus a count probe before the run |
+| `DELETE /v2/namespaces/{ns}` | clears a namespace so a run starts clean |
+| `GET /v1/namespaces/{ns}/metadata` | row and byte totals, and the index status |
+| `GET /v1/namespaces/{ns}/_debug/warm_cache` | pulls a namespace into cache before measuring |
+| `GET /v1/namespaces/{ns}/_debug/purge_cache` | drops the cache for a cold run |
 
-Three of the responses change what we build.
+Three details in the responses shape what we build.
 
-- A query response carries a `performance` block. It holds the server time, the
-  cache hit ratio, and a cache temperature of `hot`, `warm`, or `cold`. The
-  reporter splits every percentile by that temperature, and any fourth value
-  crashes it.
-- The metadata response must reach an up-to-date index status. The index wait
-  never ends otherwise.
-- A 404 on the query path counts nothing and raises no error. A run against a
-  wrong namespace name looks healthy and measures nothing.
+A query response carries a `performance` block with the server time, a cache
+hit ratio and a cache temperature of `hot`, `warm` or `cold`. The reporter
+splits every percentile by that temperature, and it crashes on a fourth value.
+The metadata response has to report an up-to-date index at some point, because
+the run blocks until it does. And a 404 on the query path is silent: the run
+counts nothing, reports nothing and still looks healthy.
 
-## First target
+## Datasets and workloads
 
-Milestone 1 delivers write, exact k-NN, and attribute filters. That covers
-`vector-knn-1m-hot.toml` and `vector-knn-1m-cold.toml` end to end: 1 million
-documents, 1024 dimensions, exact k-NN, five minutes. Neither needs an ANN
-index or a text index.
+Eleven definitions ship with the tool. They pull from four real datasets plus
+a random generator, and they cover semantic search, lexical search, both at
+once, and a filtered aggregation.
 
-| Milestone | Definitions it unlocks |
+| Dataset | Source | Size in a run | Vectors | Retrieval | Metric |
+| --- | --- | --- | --- | --- | --- |
+| Cohere Wikipedia | Hugging Face, 7 languages | 1M, 10M | 1024-dim | semantic | cosine, exact k-NN and ANN |
+| Cohere MSMarco | Hugging Face passages and queries | 10M, 100M | 1024-dim, expanded to 2048 | lexical, semantic, hybrid | BM25, cosine, RRF fusion |
+| Deep1B | Yandex `base.1B.fbin` | 1B | 96-dim | semantic | cosine, ANN |
+| TPC-H lineitem SF10 | generated | 59,986,052 rows | none | scalar filters | sum aggregation, query 6 |
+| random | PCG generator | any | any width | query vectors only | matches the definition |
+
+A few things worth knowing about that table. MSMarco ships a query set with
+embeddings, so the text and hybrid runs search with real queries rather than
+noise. The Wikipedia runs seed real embeddings and then query with random
+vectors. The 2048-dimension runs take the same 1024-dim MSMarco vectors and
+repeat them to 2048, stored as `f16`.
+
+Every definition also sets a warm-up policy of its own. Some wait for a 100%
+cache hit ratio before the clock starts. The cold variants purge the cache
+first, or disable it on every query.
+
+The tool downloads and caches each dataset on local disk. The nightly runs
+happen on a GCE `c4a-standard-32-lssd` in `us-central1-c`, in the same region
+as the service, which is where we would run ours too.
+
+## Where we start
+
+Milestone 1 gives us writes, exact k-NN and attribute filters. That is already
+enough for `vector-knn-1m-hot.toml` and `vector-knn-1m-cold.toml`: a million
+documents, 1024 dimensions, exact k-NN, five minutes per run. Neither needs an
+ANN index or a text index, so they are the first parity numbers we can put on
+a page.
+
+| Milestone | What it unlocks |
 | --- | --- |
 | 1. Ingestion and exact retrieval | the two exact k-NN definitions |
-| 2. Tiered caching | the warm and cold split of every definition |
+| 2. Tiered caching | the warm and cold split across every definition |
 | 3. Lexical search | the three MSMarco text definitions |
 | 4. Hybrid search | the two hybrid definitions |
 | 5. ANN indexing | the ANN and 100 million document definitions |
 | 6. Aggregations | TPC-H query 6 |
-
-## Limits of the comparison
-
-The harness equalises the client, the dataset, the query stream, the load
-shape, and the metric. It cannot equalise the server.
-
-turbopuffer is a managed service. We know its client machine and its region. We
-do not know its node count, its node size, or its cache budget. Every
-cloudy-neigh result thus states our node shape, and the reader compares one
-known server against one unknown one.
-
-## Open
-
-`CONSIDER(ali):` Where does the compatible API live? A build tag keeps one
-binary and one deployment path. A separate `cmd/` binary keeps the production
-server clean of a compatibility layer.
-
-`CONSIDER(ali):` turbopuffer does not publish the hit ratio that separates
-`hot`, `warm`, and `cold`. Do we measure the thresholds from a run against the
-service, or do we report the combined percentile alone?
-
-`CONSIDER(ali):` Do we run the turbopuffer side ourselves, or cite its
-published nightly numbers? Our own run costs an API key and service usage, and
-it removes every question about the client and the date.

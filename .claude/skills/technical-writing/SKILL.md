@@ -65,6 +65,27 @@ connective tissue of an argument, and every claim then lands with equal weight.
 
 Rationale prose is still short. Three sentences per decision is usually enough.
 
+## Rhythm
+
+The rules bound a sentence. They do not set its length, and they never ask for
+the same length twice. A page of ten-word sentences reads like a parts list, so
+the reader stops hearing a person and starts skimming.
+
+Vary the length. Put a long sentence next to a short one, because the short one
+lands harder after the long one. Keep the connectives that carry an argument:
+because, so, but, and then. A sentence that joins two ideas with one of those
+words is one idea about a relation, and the one-idea rule permits it.
+
+Address the reader directly. "We run the tool against both systems" beats "the
+tool is run against both systems", and it beats a passive noun phrase every
+time.
+
+Read the paragraph back before you keep it. When it sounds like a list of
+facts, join two of its sentences and cut a third.
+
+Formality is not precision. A relaxed sentence that says one thing exactly is
+better prose and better engineering than a stiff one that says the same thing.
+
 ## Writing rules
 
 These rules follow ASD-STE100 Simplified Technical English, Issue 9. Apply them
@@ -105,6 +126,10 @@ A note that frames every decision against one reference system makes that system
 the spine of our architecture. It also implies that every choice the other system
 made was a live option for us, which is often false. A transport that dictates an
 answer is not a decision at all.
+
+Call another system's parts what its own documentation calls them. A word we
+invent for their tool reads as ours, and the reader then cannot find it in
+their repository.
 
 Cite another system in one sentence, where the decision sits, and only when it
 carries information we do not have. Published operating experience counts. A
@@ -253,6 +278,8 @@ The checklist below covers the judgment rules.
 - Every stated limit comes from a measurement.
 - No field name is a keyword in a target language.
 - Deleting any sentence loses something. No sentence explains the obvious.
+- The prose has rhythm. No paragraph runs on one sentence length.
+- Another system is named the way its own documentation names it.
 - Every diagram fits in 80 columns and sits next to the text it supports.
 - No Mermaid diagram survives without a simplification attempt first.
 - Every open question carries a `CONSIDER(ali):` marker.
