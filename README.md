@@ -17,18 +17,18 @@ See [ROADMAP.md](ROADMAP.md) for the phased milestones and feature roadmap.
 
 ## Documentation and Design Notes
 
-- [Storage and Filesystem Engine](docs/design/storage.md) — Write-ahead log streams and branching KVFS on object storage.
-- [LogStream](docs/design/wal.md) — Append-only log on object storage, with no coordination service.
-- [gRPC API Contract](docs/design/grpc-api.md) — Service definition for writes, vector similarity, text search, and hybrid queries.
-- [RecordIO Framing](docs/design/recordio.md) — Append-only record framing format with CRC32C integrity checks.
+- [Storage and Filesystem Engine](docs/design/storage.md): write-ahead log streams and branching KVFS on object storage.
+- [LogStream](docs/design/wal.md): append-only log on object storage, with no coordination service.
+- [gRPC API Contract](docs/design/grpc-api.md): service definition for writes, vector similarity, text search, and hybrid queries.
+- [RecordIO Framing](docs/design/recordio.md): append-only record framing format with CRC32C integrity checks.
 
 ## Go versions
 
-The first `go_sdk.download` in `MODULE.bazel` is the default; the rest are
-selectable as `bazel test --config=go1.27 //...`.
+The first `go_sdk.download` in `MODULE.bazel` is the default. Select the rest
+as `bazel test --config=go1.27 //...`.
 
 To bump a version:
 
-1. `MODULE.bazel` — set the version on `go_sdk.download`.
-2. `.bazelrc` — point the matching `build:go1.NN` config at it.
-3. `.github/workflows/ci.yaml` — only when adding or dropping a minor version.
+1. `MODULE.bazel`: set the version on `go_sdk.download`.
+2. `.bazelrc`: point the matching `build:go1.NN` config at it.
+3. `.github/workflows/ci.yaml`: only when adding or dropping a minor version.

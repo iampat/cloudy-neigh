@@ -1,6 +1,6 @@
 ---
 name: consult-petr
-description: Consult petr, an algorithm persona on the agy CLI — a competitive programming champion and algorithm designer. Use for a hard algorithmic or data-structure problem. The naive solution is too slow, the complexity bound decides the design, or a hot path needs the right structure. Petr designs and writes the code. You supervise.
+description: Consult petr, an algorithm persona on the agy CLI, a competitive programming champion and algorithm designer. Use for a hard algorithmic or data-structure problem. The naive solution is too slow, the complexity bound decides the design, or a hot path needs the right structure. Petr designs and writes the code. You supervise.
 ---
 
 # Algorithm work with petr
@@ -32,9 +32,9 @@ tested is a claim, and this skill exists because a claim needs a check.
 
 Every prompt to Petr starts with a `MODE:` line.
 
-- `MODE: design` — Petr analyses, proves and plans. He writes no file. Use this
+- `MODE: design`: Petr analyses, proves and plans. He writes no file. Use this
   for a discussion, a data-structure choice, or a complexity question.
-- `MODE: implement` — Petr writes the code and the tests.
+- `MODE: implement`: Petr writes the code and the tests.
 
 Start in design mode. Move to implement only when the user says so. Never send
 `MODE: implement` on your own initiative.

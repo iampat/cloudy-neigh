@@ -1,6 +1,6 @@
 # gRPC API
 
-**Status:** Draft — 2026-08-12 — v0
+**Status:** Draft, 2026-08-12, v0
 
 ## Problem
 

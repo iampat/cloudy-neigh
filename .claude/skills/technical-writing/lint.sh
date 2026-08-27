@@ -39,6 +39,8 @@ for file in "$@"; do
       lp = " " tolower(line) " "
       if (line ~ /;/)
         printf "%s:%d: semicolon: write two sentences\n", FILENAME, FNR
+      if (line ~ /—/)
+        printf "%s:%d: em dash: use a comma, a full stop, or a colon\n", FILENAME, FNR
       if (lp ~ /[^a-z](i\.e\.|etc\.)/)
         printf "%s:%d: Latin abbreviation: write it in English\n", FILENAME, FNR
       if (line ~ ("n" q "t|" q "re |" q "ll |" q "ve |[Ii]t" q "s|[Ll]et" q "s"))

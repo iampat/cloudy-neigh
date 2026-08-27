@@ -235,7 +235,7 @@ Operation Complete ────────────────────�
 
 ### 4.2 `GET` Latency & Concurrency Constraints
 
-* **Cold Uncached `GET` (Strict Dependency Chain — 3 RTTs / ~90ms)**:
+* **Cold Uncached `GET` (Strict Dependency Chain, 3 RTTs, ~90ms)**:
   Because file keys are arbitrary UTF-8 paths and raw data is content-addressed (`objects/<blob_hash>`), the client **cannot fetch metadata and data concurrently on a cold read**. It must resolve `Ref -> Manifest` before it can determine which object hash to fetch.
 
 ```text
@@ -253,7 +253,7 @@ Time (ms):   0ms      30ms      60ms      90ms
 Complete ─────────────────────────────────▼ ~90ms
 ```
 
-* **Warm Cached `GET` (Concurrent / Bypassed — 1 to 2 RTTs / ~30–60ms)**:
+* **Warm Cached `GET` (Concurrent / Bypassed, 1 to 2 RTTs, ~30 to 60ms)**:
   * **Manifest Caching (2 RTTs)**: Manifests are immutable and content-addressed. Caching manifests in memory eliminates Step 2, reducing the lookup to `Read Ref -> Read Object`.
   * **Branch Ref Leases / Short TTL (1 RTT)**: A client that caches the branch Ref locally issues a single direct read to `objects/<blob_hash>`.
 

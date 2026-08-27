@@ -1,21 +1,30 @@
 ---
-name: design-note
-description: Write or update any documentation or technical prose — design notes, architecture notes, READMEs, PR descriptions, release notes. Use for all technical writing to keep the style and structure consistent.
+name: technical-writing
+description: Write or update any documentation or technical prose: design notes, proposals, architecture notes, READMEs, PR descriptions, release notes. Use for all technical writing to keep the style and structure consistent.
 ---
 
-# Technical writing and design notes
+# Technical writing
 
-The writing rules and habits in this skill apply to all documentation and
-technical prose. The Structure section and the template apply to design notes
-in `docs/design/`.
+The rules in this skill apply to all documentation and technical prose. Every
+document has a reader who arrives with one question. Answer that question near
+the top.
 
-A design note records a decision and the reason for it. The reader arrives months
-later with one question. Answer that question near the top.
+Write Markdown. Markdown renders on GitHub, in an editor, and in a terminal. It
+also diffs one line at a time, so a reviewer can comment on a sentence. Do not
+write HTML. Generate HTML from the Markdown if a published site is needed later.
 
-Write Markdown in `docs/design/`. Markdown renders on GitHub, in an editor, and in
-a terminal. It also diffs one line at a time, so a reviewer can comment on a
-sentence. Do not write HTML. Generate HTML from the Markdown if a published site
-is needed later.
+## Order of work
+
+Judge the structure before you write a sentence. Structure follows the job of
+the document, and no fixed section list fits every job.
+
+1. Name the reader and the one question they arrive with.
+2. Choose the sections. Read the Structure section below for the menu and the
+   rules that always hold.
+3. Write the skeleton: the headings, and one line under each that says what it
+   will hold.
+4. Show the skeleton to the user for a new document. Fill it after they agree.
+5. Fill one section at a time. Run the lint and the checklist at the end.
 
 ## Assume a working software engineer
 
@@ -42,7 +51,7 @@ work out, the sentence was padding.
 
 ## Two kinds of prose
 
-A design note contains normative prose and rationale prose. They follow different
+A technical document contains normative prose and rationale prose. They follow different
 rules.
 
 Normative prose states what the system does. It covers the model, the message
@@ -55,6 +64,29 @@ argument needs one. A rule that forbids "because" and "which means" removes the
 connective tissue of an argument, and every claim then lands with equal weight.
 
 Rationale prose is still short. Three sentences per decision is usually enough.
+
+## Voice
+
+Write the way Ali writes. Short, direct, plain English. Blunt on purpose.
+
+- Short sentences. Simple words. No jargon unless the idea needs it.
+- Say the point in the first sentence. No throat-clearing. No filler intro.
+- No corporate politeness. No hedging to sound safe.
+- Do not over-explain. One pass at an idea is enough.
+- No em dash. Use a comma, a full stop, or a colon.
+- Do not pad to sound professional. Clarity beats polish.
+- Use bullets and short paragraphs when they help the reader scan.
+
+Blunt is not rude. State the fact, name the cost, move on.
+
+Address the reader directly. "We run the tool against both systems" beats "the
+tool is run against both systems".
+
+Short is the default. A longer sentence is fine when it carries one idea about
+a relation, and the connectives that carry an argument stay: because, so, but.
+
+Formality is not precision. A plain sentence that says one thing exactly beats
+a stiff one that says the same thing.
 
 ## Writing rules
 
@@ -80,6 +112,7 @@ strictly to normative prose and loosely to rationale prose.
 - Use "e.g." or "for example". Write "and so on", not "etc.".
 - Spell out an acronym at first use, then use the acronym.
 - Do not use jargon, idiom, or an informal expression.
+- Do not use an em dash. Use a comma, a full stop, or a colon.
 - State a trade-off in one sentence. Do not argue both sides at length.
 - Delete a sentence that repeats the sentence before it.
 
@@ -97,6 +130,10 @@ the spine of our architecture. It also implies that every choice the other syste
 made was a live option for us, which is often false. A transport that dictates an
 answer is not a decision at all.
 
+Call another system's parts what its own documentation calls them. A word we
+invent for their tool reads as ours, and the reader then cannot find it in
+their repository.
+
 Cite another system in one sentence, where the decision sits, and only when it
 carries information we do not have. Published operating experience counts. A
 versioned name that marks a migration they could not perform counts. Do not open a
@@ -108,37 +145,42 @@ Every decision names its cost, and the alternative it beat, in the section that
 makes it. A choice with no cost is usually a choice that is not yet understood.
 
 Do not collect that reasoning into separate Alternatives, Prior art, or Failure
-modes sections. A reader who is looking at a decision should not have to find its
-rationale three screens away, and a note that answers the same question twice gets
-one of them out of date.
+modes sections. A reader at a decision must not hunt three screens away for its
+rationale. A note that answers the same question twice lets one copy go stale.
 
 An unresolved question is the exception worth marking. Use `CONSIDER(ali):` inline
 where the decision would go.
 
 ## Structure
 
-Use this order. Skip a section that has no content.
+Choose the sections for the document in front of you. The table is a menu, not
+an order and not a checklist. A section earns its place when it answers a
+question the reader has. Every section the reader does not need is padding.
 
-| Section     | Content                                               |
-| ----------- | ----------------------------------------------------- |
-| Status      | Draft, accepted, or superseded. The date.             |
-| Problem     | What the work must achieve. The constraints.          |
-| Goals       | What success looks like.                              |
-| Non-goals   | What sits outside the objective of the document.      |
-| Future work | What belongs here later, and what defers it.          |
-| Model       | The core objects and how they relate.                 |
-| Design      | One section per topic. Name the topic, not the answer.|
+| Section     | Content                                               | Earns a place when |
+| ----------- | ----------------------------------------------------- | --- |
+| Status      | Draft, accepted, or superseded. The date.             | The document records a decision that can change. |
+| Problem     | What the work must achieve. The constraints.          | The reader does not already feel the problem. |
+| Goals       | What success looks like.                              | Success is arguable. |
+| Non-goals   | What sits outside the objective of the document.      | A reader would otherwise expect the topic here. |
+| Future work | What belongs here later, and what defers it.          | The gap is visible and the reason is not. |
+| Model       | The core objects and how they relate.                 | Later sections need a shared vocabulary. |
+| Design      | One section per topic. Name the topic, not the answer.| The document decides more than one thing. |
+| Proposal    | What we do, in what order, and what it costs.         | The document asks for a decision, not a record of one. |
+
+A design note in `docs/design/` usually takes most of the menu. A README, a
+proposal, or a PR description usually takes three sections of its own naming.
+`template.md` in this skill directory holds one worked skeleton for a design
+note. Copy it when the shape fits, and write your own when it does not.
 
 A non-goal sits outside the objective of the document. It never enters the
 document. Future work is related and belongs here eventually. It waits because
-the document must stay manageable, or because the decision is too early.
+the document must stay manageable, or because the decision is too early. Keep
+the two apart when both appear. Future work shapes the document today, and a
+non-goal never will.
 
-A reader needs both lists. Future work shapes the messages today. A non-goal
-never will.
-
-Define a term before another section uses it. Name the core objects in the Model
-section. A reader who meets "namespace" in a request message must not
-reconstruct the term from context.
+Define a term before another section uses it. A reader who meets "namespace" in
+a request message must not reconstruct the term from context.
 
 A heading names a topic. Write "Identifiers", not "One identifier type, ordered by
 encoding". State the decision in the first sentence of the section. A reader scans
@@ -176,8 +218,8 @@ Match the view to the content:
   v2 ║░░░                                5.2 GiB
 ```
 
-Show a change to an existing shape as a diff on that shape — a file tree, a
-call tree, or pseudocode. A diff shows the delta without two full diagrams.
+Show a change to an existing shape as a diff on that shape: a file tree, a call
+tree, or pseudocode. A diff shows the delta without two full diagrams.
 
 ```diff
  wal/
@@ -199,12 +241,12 @@ simplify the design. Then split the diagram into one small diagram per
 decision. Use Mermaid only when the concept resists both. Treat a Mermaid
 diagram as a flag for design review.
 
-## Code in a design note
+## Code in a document
 
 Show a type or a message definition when the reader needs the exact shape. Keep
 the snippet to the fields under discussion. Cut the imports and the boilerplate.
 
-A design note is not a source file. Do not paste a whole file into it.
+A document is not a source file. Do not paste a whole file into it.
 
 ## A stated limit is a promise
 
@@ -219,7 +261,7 @@ rename a colliding field, and others do not. Avoid the collision at the source.
 
 ## Lint
 
-Run `.claude/skills/design-note/lint.sh <file>` on every document before you
+Run `.claude/skills/technical-writing/lint.sh <file>` on every document before you
 finish. It checks the mechanical rules: semicolons, Latin abbreviations,
 contractions, sentence length, and common non-approved words. Its word counts
 are approximate, so a flagged sentence can be legal under the counting rules.
@@ -227,15 +269,20 @@ The checklist below covers the judgment rules.
 
 ## Checklist
 
-- The note opens with the problem, not with the answer.
+- The section list fits this document. No section is there by habit.
+- A new document reached the user as a skeleton before it carried prose.
+- The document opens with the reader's question, not with the answer.
 - Every heading names a topic. No heading states a conclusion.
 - The design reads on its own terms. Another system is not the spine.
 - Every decision names its cost, in the section that makes it.
-- Non-goals and future work are separate sections.
-- The Model section defines every term a later section uses.
+- Non-goals and future work never merge into one section.
+- Every term is defined before a later section uses it.
 - Every stated limit comes from a measurement.
 - No field name is a keyword in a target language.
 - Deleting any sentence loses something. No sentence explains the obvious.
+- The prose is short, direct and plain. No padding, no throat-clearing.
+- No em dash anywhere in the file.
+- Another system is named the way its own documentation names it.
 - Every diagram fits in 80 columns and sits next to the text it supports.
 - No Mermaid diagram survives without a simplification attempt first.
 - Every open question carries a `CONSIDER(ali):` marker.

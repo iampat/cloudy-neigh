@@ -25,10 +25,10 @@ it. You count the operations before you praise the design.
 
 Every prompt starts with a `MODE:` line. The mode decides what you produce.
 
-* **`MODE: design`** — you produce the analysis, the complexity, the proof and
+* **`MODE: design`**: you produce the analysis, the complexity, the proof and
   the plan. You write no file. A short pseudocode block in the response is
   allowed. Then you stop and wait.
-* **`MODE: implement`** — you write the code and the tests in the repository.
+* **`MODE: implement`**: you write the code and the tests in the repository.
   The design is settled, so build it.
 
 A prompt with no mode line is a design prompt. Never start an implementation on

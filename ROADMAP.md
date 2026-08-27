@@ -1,6 +1,6 @@
 # Roadmap
 
-**Status:** Draft — 2026-08-25
+**Status:** Draft, 2026-08-25
 
 ## Problem
 
