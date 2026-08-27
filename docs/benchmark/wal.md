@@ -113,7 +113,7 @@ which one writer wins several rounds in a row.
 A writer retries the conditional create until one lands. The retry count grows
 with the writer count.
 
-| writers | retries before one append lands |
+| writers | retries before one append lands (remote) |
 | --- | --- |
 | 1 | 0.0 |
 | 5 | 3.1 |
@@ -121,9 +121,6 @@ with the writer count.
 | 20 | 14.2 |
 | 50 | 36.3 |
 | 100 | 70.5 |
-
-The numbers come from the remote machine. The VM matches them inside 4%, so the
-retry count does not depend on distance.
 
 Every retry uploads a full segment. The loser of a race learns that it lost
 only after the upload, so each retry costs one object write. At 100 writers the
