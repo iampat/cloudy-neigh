@@ -16,12 +16,17 @@ An edit by you breaks the loop, because Petr then owns code he did not write.
 
 - Frame the problem and carry the bounds.
 - Relay the user's questions and answers, verbatim in both directions.
-- Run the build, the tests and the format check.
 - Verify the claimed complexity against the code Petr wrote.
-- Send every failure and every finding back to Petr in the same conversation.
+- Send every finding back to Petr in the same conversation.
 - Keep the transcript, and report to the user.
 
-Running `bazel run //:gazelle` is a command, not an edit. It stays yours.
+Petr runs the build himself: `bazel run //:gazelle`, `bazel build //...`,
+`bazel test //...` and `bazel run //:format.check`. He owns the code, so he
+owns the gate that proves it works. Tell him to run it, and read what he
+reports.
+
+Run the gate yourself only to check a claim he made. A green report you never
+tested is a claim, and this skill exists because a claim needs a check.
 
 ## Two modes
 
@@ -79,11 +84,13 @@ implementation turn writes code, so it needs `--print-timeout 20m`.
 6. An implementation turn starts with a language choice and a scaffold: the
    package, the API, the types, the signatures. Read the scaffold when it
    appears. An objection to the API costs one round now, and a rewrite later.
-7. After an implementation turn, run the gate:
-   `bazel run //:gazelle`, `bazel build //...`, `bazel test //...`,
-   `bazel run //:format.check`. Send any failure back to Petr, verbatim.
+7. Tell Petr to run the gate and to report the output: `bazel run //:gazelle`,
+   `bazel build //...`, `bazel test //...`, `bazel run //:format.check`. He
+   fixes what fails, and he runs it again until it passes.
 8. Review the diff against `docs/guidelines/` and the comment rules in
    `.claude/CLAUDE.md`. Send the findings back to Petr. He fixes them.
+9. Run the gate once yourself, at the end. It confirms his report, and it
+   catches the failure that only appears in a clean tree.
 
 ## Verify the claim
 
