@@ -29,14 +29,13 @@ request carries an `authorization: Bearer <key>` header.
 | `GET /v1/namespaces/{ns}/_debug/warm_cache` | pulls a namespace into cache before measuring |
 | `GET /v1/namespaces/{ns}/_debug/purge_cache` | drops the cache for a cold run |
 
-Three details in the responses shape what we build.
+The responses need three things:
 
-A query response carries a `performance` block with the server time, a cache
-hit ratio and a cache temperature of `hot`, `warm` or `cold`. The reporter
-splits every percentile by that temperature, and it crashes on a fourth value.
-The metadata response has to report an up-to-date index at some point, because
-the run blocks until it does. And a 404 on the query path is silent: the run
-counts nothing, reports nothing and still looks healthy.
+- A query returns a `performance` block: server time, cache hit ratio, and a
+  cache temperature of `hot`, `warm` or `cold`. Only those three names.
+- Metadata reports an index status that reaches up to date.
+- A query on a missing namespace returns a real error. The tool ignores a 404
+  and measures nothing.
 
 ## Datasets and workloads
 
