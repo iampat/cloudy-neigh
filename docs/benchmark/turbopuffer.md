@@ -48,7 +48,7 @@ workloads.
 | Cohere Wikipedia | Hugging Face, 7 languages | 1M, 10M | 1024-dim | semantic | cosine, exact k-NN and ANN |
 | Cohere MSMarco | Hugging Face passages and queries | 10M, 100M | 1024-dim, expanded to 2048 | lexical, semantic, hybrid | BM25, cosine, RRF fusion |
 | Deep1B | Yandex `base.1B.fbin` | 1B | 96-dim | semantic | cosine, ANN |
-| TPC-H lineitem SF10 | generated | 59,986,052 rows | none | scalar filters | sum aggregation, query 6 |
+| TPC-H lineitem SF10 | generated | ~60M rows | none | scalar filters | sum aggregation, query 6 |
 | random | PCG generator | any | any width | query vectors only | matches the definition |
 
 MSMarco ships a query set with embeddings, so the text and hybrid runs search
