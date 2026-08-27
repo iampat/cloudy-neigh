@@ -1,12 +1,12 @@
 ---
 name: consult-petr
-description: Consult petr, an algorithm persona on the agy CLI, a competitive programming champion and algorithm designer. Use for a hard algorithmic or data-structure problem. The naive solution is too slow, the complexity bound decides the design, or a hot path needs the right structure. Petr designs and writes the code. You supervise.
+description: Consult petr, an algorithm persona on the agy CLI, a competitive programming champion and algorithm designer. Use for brainstorming, designing, implementing, or debugging hard algorithmic and data-structure work. Petr writes and debugs the code. You supervise.
 ---
 
 # Algorithm work with petr
 
 `agy` is a separate agent CLI with its own models. `petr` is its algorithm
-persona. Petr designs the algorithm, proves it, and writes the code.
+persona. Petr designs the algorithm, proves it, writes the code, and debugs it.
 
 **You do not implement inside this skill.** Not the algorithm, not the tests,
 not the fix for a broken build. Your job is different, and it is listed below.
@@ -20,24 +20,24 @@ An edit by you breaks the loop, because Petr then owns code he did not write.
 - Send every finding back to Petr in the same conversation.
 - Keep the transcript, and report to the user.
 
-Petr runs the build himself: `bazel run //:gazelle`, `bazel build //...`,
-`bazel test //...` and `bazel run //:format.check`. He owns the code, so he
-owns the gate that proves it works. Tell him to run it, and read what he
-reports.
+Petr runs the build himself when needed. He owns the code, so he uses his
+judgment on which checks to run. Tell him to run relevant checks, and read what
+he reports.
 
 Run the gate yourself only to check a claim he made. A green report you never
 tested is a claim, and this skill exists because a claim needs a check.
 
-## Two modes
+## Four modes
 
 Every prompt to Petr starts with a `MODE:` line.
 
-- `MODE: design`: Petr analyses, proves and plans. He writes no file. Use this
-  for a discussion, a data-structure choice, or a complexity question.
-- `MODE: implement`: Petr writes the code and the tests.
+- `MODE: brainstorm`: Technical peer dialogue. Discuss ideas and trade-offs.
+- `MODE: design`: Petr analyses, proves, and plans. He writes no file.
+- `MODE: debug`: Petr isolates bugs, shrinks inputs, and traces invariants.
+- `MODE: implement`: Petr writes the code, tests, and benchmarks.
 
-Start in design mode. Move to implement only when the user says so. Never send
-`MODE: implement` on your own initiative.
+Start in brainstorm or design mode. Move to implement only when the user says so.
+Never send `MODE: implement` on your own initiative.
 
 ## What the prompt carries
 
@@ -84,9 +84,8 @@ implementation turn writes code, so it needs `--print-timeout 20m`.
 6. An implementation turn starts with a language choice and a scaffold: the
    package, the API, the types, the signatures. Read the scaffold when it
    appears. An objection to the API costs one round now, and a rewrite later.
-7. Tell Petr to run the gate and to report the output: `bazel run //:gazelle`,
-   `bazel build //...`, `bazel test //...`, `bazel run //:format.check`. He
-   fixes what fails, and he runs it again until it passes.
+7. Tell Petr to run the necessary build and test checks. He uses his judgment on
+   which checks to run. He fixes what fails.
 8. Review the diff against `docs/guidelines/` and the comment rules in
    `.claude/CLAUDE.md`. Send the findings back to Petr. He fixes them.
 9. Run the gate once yourself, at the end. It confirms his report, and it
@@ -122,9 +121,11 @@ how the design went.
 
 ## When to ask
 
+- Brainstorming data structures or algorithmic trade-offs with an expert peer.
 - The naive solution is too slow, and the bound decides the design.
 - A data structure choice shapes a subsystem: index layout, posting list merge,
   ranking, compression, cache eviction.
+- A bug or invariant failure in a complex algorithmic scenario.
 - A hot path where the constant factor decides the latency target.
 - A correctness argument that needs a proof, not a test.
 
