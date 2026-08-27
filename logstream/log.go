@@ -8,7 +8,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -243,7 +242,7 @@ func (l *Log) Tail(ctx context.Context, stream string) (uint64, error) {
 		return 0, err
 	}
 
-	prefix := streamPrefix(l.prefix, stream)
+	prefix := fmt.Sprintf("%s/%s/", l.prefix, stream)
 	objs, err := l.store.List(ctx, prefix, "", l.listLimit)
 	if err != nil {
 		return 0, err
@@ -319,33 +318,23 @@ func jump(ctx context.Context, lo uint64, probe func(context.Context, uint64) (b
 		}
 	}
 
-	head, bProbes, err := binarySearch(ctx, low, high, probe)
-	return head, probes + bProbes, err
-}
-
-func binarySearch(ctx context.Context, low, high uint64, probe func(context.Context, uint64) (bool, error)) (uint64, int, error) {
-	var perr error
-	var probes int
-	n := int(high - low - 1)
-	idx := sort.Search(n, func(i int) bool {
-		if perr != nil || ctx.Err() != nil {
-			return true
+	for low+1 < high {
+		if err := ctx.Err(); err != nil {
+			return 0, probes, err
 		}
+		mid := low + (high-low)/2
 		probes++
-		ok, err := probe(ctx, low+1+uint64(i))
+		ok, err := probe(ctx, mid)
 		if err != nil {
-			perr = err
-			return true
+			return 0, probes, err
 		}
-		return !ok
-	})
-	if ctx.Err() != nil {
-		return 0, probes, ctx.Err()
+		if ok {
+			low = mid
+		} else {
+			high = mid
+		}
 	}
-	if perr != nil {
-		return 0, probes, perr
-	}
-	return low + uint64(idx), probes, nil
+	return low, probes, nil
 }
 
 func exists(ctx context.Context, store *objectstore.Store, key string) (bool, error) {
@@ -361,10 +350,6 @@ func exists(ctx context.Context, store *objectstore.Store, key string) (bool, er
 
 func segmentKey(prefix, stream string, seq uint64) string {
 	return fmt.Sprintf("%s/%s/%020d.recordio", prefix, stream, seq)
-}
-
-func streamPrefix(prefix, stream string) string {
-	return fmt.Sprintf("%s/%s/", prefix, stream)
 }
 
 func parseSeq(key string) (uint64, error) {

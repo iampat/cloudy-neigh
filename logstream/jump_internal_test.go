@@ -5,66 +5,10 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
+
+	"github.com/iampat/cloudy-neigh/objectstore"
 )
-
-func TestBinarySearch(t *testing.T) {
-	ctx := context.Background()
-	targetHead := uint64(42)
-	probe := func(ctx context.Context, seq uint64) (bool, error) {
-		return seq <= targetHead, nil
-	}
-
-	head, probes, err := binarySearch(ctx, 40, 50, probe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if head != targetHead {
-		t.Fatalf("head = %d, want %d", head, targetHead)
-	}
-	if probes == 0 {
-		t.Fatal("expected probes > 0")
-	}
-}
-
-func TestBinarySearchAbortsOnContextCancel(t *testing.T) {
-	cancelCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	probe := func(ctx context.Context, seq uint64) (bool, error) {
-		return seq <= 42, nil
-	}
-
-	_, probes, err := binarySearch(cancelCtx, 40, 50, probe)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("err = %v, want context.Canceled", err)
-	}
-	if probes != 0 {
-		t.Fatalf("probes = %d, want 0", probes)
-	}
-}
-
-func TestBinarySearchAbortsOnProbeError(t *testing.T) {
-	ctx := context.Background()
-	probeErr := errors.New("backend connection reset")
-	probesCount := 0
-
-	probe := func(ctx context.Context, seq uint64) (bool, error) {
-		probesCount++
-		if probesCount == 1 {
-			return false, probeErr
-		}
-		return true, nil
-	}
-
-	_, probes, err := binarySearch(ctx, 10, 1000, probe)
-	if !errors.Is(err, probeErr) {
-		t.Fatalf("err = %v, want %v", err, probeErr)
-	}
-	// Once perr is set, subsequent calls inside sort.Search immediately return true without probing.
-	if probes != 1 {
-		t.Fatalf("probes executed = %d, want 1", probes)
-	}
-}
 
 func TestJump(t *testing.T) {
 	ctx := context.Background()
@@ -85,6 +29,43 @@ func TestJump(t *testing.T) {
 	}
 }
 
+func TestJumpAbortsOnContextCancel(t *testing.T) {
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	probe := func(ctx context.Context, seq uint64) (bool, error) {
+		return seq <= 42, nil
+	}
+
+	_, probes, err := jump(cancelCtx, 1, probe)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if probes != 0 {
+		t.Fatalf("probes = %d, want 0", probes)
+	}
+}
+
+func TestJumpAbortsOnProbeError(t *testing.T) {
+	ctx := context.Background()
+	probeErr := errors.New("backend connection reset")
+
+	probe := func(ctx context.Context, seq uint64) (bool, error) {
+		if seq == 2 {
+			return false, probeErr
+		}
+		return true, nil
+	}
+
+	_, probes, err := jump(ctx, 1, probe)
+	if !errors.Is(err, probeErr) {
+		t.Fatalf("err = %v, want %v", err, probeErr)
+	}
+	if probes != 1 {
+		t.Fatalf("probes executed = %d, want 1", probes)
+	}
+}
+
 func TestJumpUint64AboveMaxInt64(t *testing.T) {
 	ctx := context.Background()
 	base := uint64(math.MaxInt64) + 100
@@ -102,5 +83,45 @@ func TestJumpUint64AboveMaxInt64(t *testing.T) {
 	}
 	if probes == 0 {
 		t.Fatal("expected probes > 0")
+	}
+}
+
+func TestJumpUint64LargeSpan(t *testing.T) {
+	ctx := context.Background()
+	targetHead := uint64(math.MaxInt64) + 100
+	probe := func(ctx context.Context, seq uint64) (bool, error) {
+		return seq <= targetHead, nil
+	}
+
+	head, probes, err := jump(ctx, 1, probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head != targetHead {
+		t.Fatalf("head = %d, want %d", head, targetHead)
+	}
+	if probes == 0 {
+		t.Fatal("expected probes > 0")
+	}
+}
+
+func TestAppendCancelWhileWaitingForLock(t *testing.T) {
+	s, err := objectstore.Open(context.Background(), "mem://")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	log := New(s)
+	st := log.stream("lock-stream")
+	st.ch <- struct{}{}
+	t.Cleanup(func() { <-st.ch })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	t.Cleanup(cancel)
+
+	_, err = log.Append(ctx, "lock-stream", []Record{[]byte("waiter")})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Append err = %v, want DeadlineExceeded", err)
 	}
 }

@@ -22,6 +22,23 @@ func TestGCS(t *testing.T) {
 	t.Cleanup(func() { s.Close() })
 
 	stream := t.Name()
+	prefix := "wal/" + stream + "/"
+	objs, err := s.List(ctx, prefix, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range objs {
+		if err := s.Delete(ctx, o.Key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		objs, _ := s.List(ctx, prefix, "", 0)
+		for _, o := range objs {
+			_ = s.Delete(ctx, o.Key)
+		}
+	})
+
 	log := logstream.New(s)
 	seq, err := log.Append(ctx, stream, []logstream.Record{[]byte("gcs-test-record")})
 	if err != nil {

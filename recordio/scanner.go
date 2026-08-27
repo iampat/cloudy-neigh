@@ -87,7 +87,7 @@ func (s *Scanner) readHeader() (uint64, bool) {
 		return 0, false
 	}
 
-	if s.maxRecordSize <= 0 || length > uint64(s.maxRecordSize) {
+	if length > uint64(s.maxRecordSize) {
 		s.err = ErrRecordTooLarge
 		return 0, false
 	}

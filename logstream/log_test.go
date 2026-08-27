@@ -278,171 +278,92 @@ func TestAppendDriftRecovery(t *testing.T) {
 	})
 }
 
-func TestConcurrentAppendsSingleLog(t *testing.T) {
+func TestConcurrentAppends(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
-		log := logstream.New(s)
-		ctx := context.Background()
-		stream := "concurrent-single"
+		tests := []struct {
+			name      string
+			stream    string
+			writers   int
+			perWriter int
+			sharedLog bool
+		}{
+			{name: "single log", stream: "concurrent-single", writers: 8, perWriter: 5, sharedLog: true},
+			{name: "multi log", stream: "concurrent-multi", writers: 4, perWriter: 4, sharedLog: false},
+		}
 
-		const writers = 8
-		const perWriter = 5
-		totalAppends := writers * perWriter
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				ctx := context.Background()
+				totalAppends := tc.writers * tc.perWriter
 
-		errCh := make(chan error, totalAppends)
-		seqCh := make(chan uint64, totalAppends)
-
-		var wg sync.WaitGroup
-		for w := 0; w < writers; w++ {
-			wg.Add(1)
-			go func(writerID int) {
-				defer wg.Done()
-				for i := 0; i < perWriter; i++ {
-					rec := []byte(fmt.Sprintf("w%d-%d", writerID, i))
-					seq, err := log.Append(ctx, stream, []logstream.Record{rec})
-					if err != nil {
-						errCh <- fmt.Errorf("writer %d iter %d: %w", writerID, i, err)
-						return
-					}
-					seqCh <- seq
+				var shared *logstream.Log
+				if tc.sharedLog {
+					shared = logstream.New(s)
 				}
-			}(w)
-		}
 
-		wg.Wait()
-		close(errCh)
-		close(seqCh)
+				errCh := make(chan error, totalAppends)
+				seqCh := make(chan uint64, totalAppends)
 
-		for err := range errCh {
-			t.Fatal(err)
-		}
-
-		seen := make(map[uint64]bool)
-		for seq := range seqCh {
-			if seen[seq] {
-				t.Fatalf("duplicate sequence number: %d", seq)
-			}
-			seen[seq] = true
-		}
-
-		if len(seen) != totalAppends {
-			t.Fatalf("got %d unique seqs, want %d", len(seen), totalAppends)
-		}
-
-		for i := 1; i <= totalAppends; i++ {
-			if !seen[uint64(i)] {
-				t.Fatalf("missing sequence number %d", i)
-			}
-		}
-
-		tail, err := log.Tail(ctx, stream)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if tail != uint64(totalAppends) {
-			t.Fatalf("tail = %d, want %d", tail, totalAppends)
-		}
-	})
-}
-
-func TestConcurrentAppendsMultiLog(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
-		ctx := context.Background()
-		stream := "concurrent-multi"
-
-		const writers = 4
-		const perWriter = 4
-		totalAppends := writers * perWriter
-
-		errCh := make(chan error, totalAppends)
-		seqCh := make(chan uint64, totalAppends)
-
-		var wg sync.WaitGroup
-		for w := 0; w < writers; w++ {
-			wg.Add(1)
-			go func(writerID int) {
-				defer wg.Done()
-				log := logstream.New(s)
-				for i := 0; i < perWriter; i++ {
-					rec := []byte(fmt.Sprintf("w%d-%d", writerID, i))
-					seq, err := log.Append(ctx, stream, []logstream.Record{rec})
-					if err != nil {
-						errCh <- fmt.Errorf("writer %d iter %d: %w", writerID, i, err)
-						return
-					}
-					seqCh <- seq
+				var wg sync.WaitGroup
+				for w := 0; w < tc.writers; w++ {
+					wg.Add(1)
+					go func(writerID int) {
+						defer wg.Done()
+						log := shared
+						if log == nil {
+							log = logstream.New(s)
+						}
+						for i := 0; i < tc.perWriter; i++ {
+							rec := []byte(fmt.Sprintf("w%d-%d", writerID, i))
+							seq, err := log.Append(ctx, tc.stream, []logstream.Record{rec})
+							if err != nil {
+								errCh <- fmt.Errorf("writer %d iter %d: %w", writerID, i, err)
+								return
+							}
+							seqCh <- seq
+						}
+					}(w)
 				}
-			}(w)
+
+				wg.Wait()
+				close(errCh)
+				close(seqCh)
+
+				for err := range errCh {
+					t.Fatal(err)
+				}
+
+				seen := make(map[uint64]bool)
+				for seq := range seqCh {
+					if seen[seq] {
+						t.Fatalf("duplicate sequence number: %d", seq)
+					}
+					seen[seq] = true
+				}
+
+				if len(seen) != totalAppends {
+					t.Fatalf("got %d unique seqs, want %d", len(seen), totalAppends)
+				}
+
+				for i := 1; i <= totalAppends; i++ {
+					if !seen[uint64(i)] {
+						t.Fatalf("missing sequence number %d", i)
+					}
+				}
+
+				readerLog := shared
+				if readerLog == nil {
+					readerLog = logstream.New(s)
+				}
+				tail, err := readerLog.Tail(ctx, tc.stream)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tail != uint64(totalAppends) {
+					t.Fatalf("tail = %d, want %d", tail, totalAppends)
+				}
+			})
 		}
-
-		wg.Wait()
-		close(errCh)
-		close(seqCh)
-
-		for err := range errCh {
-			t.Fatal(err)
-		}
-
-		seen := make(map[uint64]bool)
-		for seq := range seqCh {
-			if seen[seq] {
-				t.Fatalf("duplicate sequence number: %d", seq)
-			}
-			seen[seq] = true
-		}
-
-		if len(seen) != totalAppends {
-			t.Fatalf("got %d unique seqs, want %d", len(seen), totalAppends)
-		}
-
-		for i := 1; i <= totalAppends; i++ {
-			if !seen[uint64(i)] {
-				t.Fatalf("missing sequence number %d", i)
-			}
-		}
-	})
-}
-
-func TestContextCancellationDuringLockWait(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
-		log := logstream.New(s)
-		stream := "lock-cancel"
-
-		blockerCtx, cancelBlocker := context.WithCancel(context.Background())
-		defer cancelBlocker()
-
-		started := make(chan struct{})
-		lockHeld := make(chan struct{})
-		errCh := make(chan error, 2)
-
-		go func() {
-			close(started)
-			_, err := log.Append(blockerCtx, stream, []logstream.Record{[]byte("blocker")})
-			if err != nil && !errors.Is(err, context.Canceled) {
-				errCh <- err
-			}
-		}()
-
-		<-started
-		for {
-			tail, err := log.Tail(context.Background(), stream)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tail == 1 {
-				break
-			}
-		}
-		close(lockHeld)
-
-		waiterCtx, cancelWaiter := context.WithCancel(context.Background())
-		cancelWaiter()
-
-		_, err := log.Append(waiterCtx, stream, []logstream.Record{[]byte("waiter")})
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("Append with canceled context returned %v, want context.Canceled", err)
-		}
-
-		cancelBlocker()
 	})
 }
 

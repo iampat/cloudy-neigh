@@ -72,7 +72,7 @@ func (r *Reader) ReadRecord(dst []byte) (n int, err error) {
 		return 0, ErrHeaderCorrupted
 	}
 
-	if r.maxRecordSize <= 0 || length > uint64(r.maxRecordSize) {
+	if length > uint64(r.maxRecordSize) {
 		return 0, ErrRecordTooLarge
 	}
 	if int(length) > len(dst) {
