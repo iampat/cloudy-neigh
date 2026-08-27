@@ -22,5 +22,7 @@ go_test(
     deps = [
         "//objectstore",
         "//recordio",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
     ],
 )

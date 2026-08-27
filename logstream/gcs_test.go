@@ -7,6 +7,8 @@ import (
 
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGCS(t *testing.T) {
@@ -16,21 +18,15 @@ func TestGCS(t *testing.T) {
 	}
 	ctx := context.Background()
 	s, err := objectstore.Open(ctx, "gs://"+bucket)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
 
 	stream := t.Name()
 	prefix := "wal/" + stream + "/"
 	objs, err := s.List(ctx, prefix, "", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, o := range objs {
-		if err := s.Delete(ctx, o.Key); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, s.Delete(ctx, o.Key))
 	}
 	t.Cleanup(func() {
 		objs, _ := s.List(ctx, prefix, "", 0)
@@ -41,17 +37,9 @@ func TestGCS(t *testing.T) {
 
 	log := logstream.New(s)
 	seq, err := log.Append(ctx, stream, []logstream.Record{[]byte("gcs-test-record")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if seq != 1 {
-		t.Fatalf("seq = %d, want 1", seq)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), seq)
 	records, err := log.Read(ctx, stream, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 1 || string(records[0]) != "gcs-test-record" {
-		t.Fatalf("unexpected records: %v", records)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, []logstream.Record{[]byte("gcs-test-record")}, records)
 }

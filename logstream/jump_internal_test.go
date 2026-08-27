@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/iampat/cloudy-neigh/objectstore"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestJump(t *testing.T) {
@@ -18,15 +20,9 @@ func TestJump(t *testing.T) {
 	}
 
 	head, probes, err := jump(ctx, 1, probe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if head != targetHead {
-		t.Fatalf("head = %d, want %d", head, targetHead)
-	}
-	if probes == 0 {
-		t.Fatal("expected probes > 0")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, targetHead, head)
+	assert.Positive(t, probes)
 }
 
 func TestJumpAbortsOnContextCancel(t *testing.T) {
@@ -38,12 +34,8 @@ func TestJumpAbortsOnContextCancel(t *testing.T) {
 	}
 
 	_, probes, err := jump(cancelCtx, 1, probe)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("err = %v, want context.Canceled", err)
-	}
-	if probes != 0 {
-		t.Fatalf("probes = %d, want 0", probes)
-	}
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Zero(t, probes)
 }
 
 func TestJumpAbortsOnProbeError(t *testing.T) {
@@ -58,12 +50,8 @@ func TestJumpAbortsOnProbeError(t *testing.T) {
 	}
 
 	_, probes, err := jump(ctx, 1, probe)
-	if !errors.Is(err, probeErr) {
-		t.Fatalf("err = %v, want %v", err, probeErr)
-	}
-	if probes != 1 {
-		t.Fatalf("probes executed = %d, want 1", probes)
-	}
+	assert.ErrorIs(t, err, probeErr)
+	assert.Equal(t, 1, probes)
 }
 
 func TestJumpUint64AboveMaxInt64(t *testing.T) {
@@ -75,15 +63,9 @@ func TestJumpUint64AboveMaxInt64(t *testing.T) {
 	}
 
 	head, probes, err := jump(ctx, base, probe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if head != targetHead {
-		t.Fatalf("head = %d, want %d", head, targetHead)
-	}
-	if probes == 0 {
-		t.Fatal("expected probes > 0")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, targetHead, head)
+	assert.Positive(t, probes)
 }
 
 func TestJumpUint64LargeSpan(t *testing.T) {
@@ -94,22 +76,14 @@ func TestJumpUint64LargeSpan(t *testing.T) {
 	}
 
 	head, probes, err := jump(ctx, 1, probe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if head != targetHead {
-		t.Fatalf("head = %d, want %d", head, targetHead)
-	}
-	if probes == 0 {
-		t.Fatal("expected probes > 0")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, targetHead, head)
+	assert.Positive(t, probes)
 }
 
 func TestAppendCancelWhileWaitingForLock(t *testing.T) {
 	s, err := objectstore.Open(context.Background(), "mem://")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
 
 	log := New(s)
@@ -121,7 +95,5 @@ func TestAppendCancelWhileWaitingForLock(t *testing.T) {
 	t.Cleanup(cancel)
 
 	_, err = log.Append(ctx, "lock-stream", []Record{[]byte("waiter")})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Append err = %v, want DeadlineExceeded", err)
-	}
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }

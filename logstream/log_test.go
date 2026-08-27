@@ -3,7 +3,6 @@ package logstream_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -13,24 +12,22 @@ import (
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	"github.com/iampat/cloudy-neigh/recordio"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func forEachBackend(t *testing.T, fn func(t *testing.T, s *objectstore.Store)) {
 	t.Helper()
 	t.Run("mem", func(t *testing.T) {
 		s, err := objectstore.Open(context.Background(), "mem://")
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		t.Cleanup(func() { s.Close() })
 		fn(t, s)
 	})
 	t.Run("file", func(t *testing.T) {
 		dir := t.TempDir()
 		s, err := objectstore.Open(context.Background(), "file://"+dir+"?create_dir=true")
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		t.Cleanup(func() { s.Close() })
 		fn(t, s)
 	})
@@ -63,16 +60,22 @@ func TestStreamValidation(t *testing.T) {
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
 				_, err := log.Append(ctx, tc.stream, []logstream.Record{[]byte("val")})
-				if (err != nil) != tc.wantErr {
-					t.Errorf("Append(%q) err = %v, wantErr %v", tc.stream, err, tc.wantErr)
+				if tc.wantErr {
+					assert.Error(t, err)
+				} else {
+					assert.NoError(t, err)
 				}
 				_, err = log.Read(ctx, tc.stream, 1)
-				if (err != nil) != tc.wantErr && (!tc.wantErr || !errors.Is(err, logstream.ErrEndOfStream)) {
-					t.Errorf("Read(%q) err = %v, wantErr %v", tc.stream, err, tc.wantErr)
+				if tc.wantErr {
+					assert.Error(t, err)
+				} else {
+					assert.NoError(t, err)
 				}
 				_, err = log.Tail(ctx, tc.stream)
-				if (err != nil) != tc.wantErr {
-					t.Errorf("Tail(%q) err = %v, wantErr %v", tc.stream, err, tc.wantErr)
+				if tc.wantErr {
+					assert.Error(t, err)
+				} else {
+					assert.NoError(t, err)
 				}
 			})
 		}
@@ -86,64 +89,36 @@ func TestAppendAndRead(t *testing.T) {
 		stream := "test-stream"
 
 		tail, err := log.Tail(ctx, stream)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if tail != 0 {
-			t.Fatalf("tail on empty stream = %d, want 0", tail)
-		}
+		assert.NoError(t, err)
+		assert.Zero(t, tail)
 
 		b1 := []logstream.Record{[]byte("r1"), []byte("r2")}
 		seq1, err := log.Append(ctx, stream, b1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if seq1 != 1 {
-			t.Fatalf("seq1 = %d, want 1", seq1)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), seq1)
 
 		b2 := []logstream.Record{[]byte("r3")}
 		seq2, err := log.Append(ctx, stream, b2)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if seq2 != 2 {
-			t.Fatalf("seq2 = %d, want 2", seq2)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), seq2)
 
 		tail, err = log.Tail(ctx, stream)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if tail != 2 {
-			t.Fatalf("tail = %d, want 2", tail)
-		}
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(2), tail)
 
 		read1, err := log.Read(ctx, stream, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(read1) != 2 || string(read1[0]) != "r1" || string(read1[1]) != "r2" {
-			t.Fatalf("unexpected read1: %v", read1)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, []logstream.Record{[]byte("r1"), []byte("r2")}, read1)
 
 		read2, err := log.Read(ctx, stream, 2)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(read2) != 1 || string(read2[0]) != "r3" {
-			t.Fatalf("unexpected read2: %v", read2)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, []logstream.Record{[]byte("r3")}, read2)
 
 		_, err = log.Read(ctx, stream, 3)
-		if !errors.Is(err, logstream.ErrEndOfStream) {
-			t.Fatalf("Read(3) err = %v, want ErrEndOfStream", err)
-		}
+		assert.ErrorIs(t, err, logstream.ErrEndOfStream)
 
 		_, err = log.Read(ctx, stream, 0)
-		if err == nil {
-			t.Fatal("Read(0) err = nil, want error")
-		}
+		assert.Error(t, err)
 	})
 }
 
@@ -154,26 +129,18 @@ func TestAppendValidation(t *testing.T) {
 		stream := "validation-stream"
 
 		_, err := log.Append(ctx, stream, nil)
-		if err == nil {
-			t.Fatal("Append empty batch err = nil, want error")
-		}
+		assert.Error(t, err)
 
 		_, err = log.Append(ctx, stream, []logstream.Record{})
-		if err == nil {
-			t.Fatal("Append 0-len batch err = nil, want error")
-		}
+		assert.Error(t, err)
 
 		_, err = log.Append(ctx, stream, []logstream.Record{[]byte("12345678901")})
-		if err == nil {
-			t.Fatal("Append oversized record err = nil, want error")
-		}
+		assert.Error(t, err)
 
 		canceledCtx, cancel := context.WithCancel(ctx)
 		cancel()
 		_, err = log.Append(canceledCtx, stream, []logstream.Record{[]byte("ok")})
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("Append canceled ctx err = %v, want context.Canceled", err)
-		}
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
 
@@ -189,26 +156,18 @@ func TestReadSharesBackingArray(t *testing.T) {
 			[]byte("third record payload"),
 		}
 		seq, err := log.Append(ctx, stream, records)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 
 		read, err := log.Read(ctx, stream, seq)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(read) != 3 {
-			t.Fatalf("len(read) = %d, want 3", len(read))
-		}
+		require.NoError(t, err)
+		require.Len(t, read, 3)
 
 		base := unsafe.SliceData(read[0])
 		cap0 := cap(read[0])
 		for i := 1; i < len(read); i++ {
 			ptr := unsafe.SliceData(read[i])
 			diff := uintptr(unsafe.Pointer(ptr)) - uintptr(unsafe.Pointer(base))
-			if diff >= uintptr(cap0) {
-				t.Fatalf("record %d pointer %p is outside record 0 backing array capacity %d (base %p)", i, ptr, cap0, base)
-			}
+			assert.Less(t, diff, uintptr(cap0))
 		}
 	})
 }
@@ -222,22 +181,14 @@ func TestTailJumpColdStart(t *testing.T) {
 		total := 1005
 		for i := 1; i <= total; i++ {
 			seq, err := log.Append(ctx, stream, []logstream.Record{[]byte(fmt.Sprintf("rec-%d", i))})
-			if err != nil {
-				t.Fatalf("Append(%d): %v", i, err)
-			}
-			if seq != uint64(i) {
-				t.Fatalf("Append seq = %d, want %d", seq, i)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, uint64(i), seq)
 		}
 
 		coldLog := logstream.New(s)
 		tail, err := coldLog.Tail(ctx, stream)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if tail != uint64(total) {
-			t.Fatalf("Tail = %d, want %d", tail, total)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, uint64(total), tail)
 	})
 }
 
@@ -250,30 +201,18 @@ func TestAppendDriftRecovery(t *testing.T) {
 		writerB := logstream.New(s)
 
 		seqA1, err := writerA.Append(ctx, stream, []logstream.Record{[]byte("A1")})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if seqA1 != 1 {
-			t.Fatalf("seq = %d, want 1", seqA1)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), seqA1)
 
 		for i := 2; i <= 30; i++ {
 			seqB, err := writerB.Append(ctx, stream, []logstream.Record{[]byte(fmt.Sprintf("B%d", i))})
-			if err != nil {
-				t.Fatalf("writerB.Append(%d): %v", i, err)
-			}
-			if seqB != uint64(i) {
-				t.Fatalf("writerB seq = %d, want %d", seqB, i)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, uint64(i), seqB)
 		}
 
 		seqA2, err := writerA.Append(ctx, stream, []logstream.Record{[]byte("A2")})
-		if err != nil {
-			t.Fatalf("writerA drift Append failed: %v", err)
-		}
-		if seqA2 != 31 {
-			t.Fatalf("seqA2 = %d, want 31", seqA2)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, uint64(31), seqA2)
 	})
 }
 
@@ -329,25 +268,19 @@ func TestConcurrentAppends(t *testing.T) {
 				close(seqCh)
 
 				for err := range errCh {
-					t.Fatal(err)
+					require.NoError(t, err)
 				}
 
 				seen := make(map[uint64]bool)
 				for seq := range seqCh {
-					if seen[seq] {
-						t.Fatalf("duplicate sequence number: %d", seq)
-					}
+					assert.False(t, seen[seq], "duplicate sequence number: %d", seq)
 					seen[seq] = true
 				}
 
-				if len(seen) != totalAppends {
-					t.Fatalf("got %d unique seqs, want %d", len(seen), totalAppends)
-				}
+				assert.Len(t, seen, totalAppends)
 
 				for i := 1; i <= totalAppends; i++ {
-					if !seen[uint64(i)] {
-						t.Fatalf("missing sequence number %d", i)
-					}
+					assert.True(t, seen[uint64(i)], "missing sequence number %d", i)
 				}
 
 				readerLog := shared
@@ -355,12 +288,8 @@ func TestConcurrentAppends(t *testing.T) {
 					readerLog = logstream.New(s)
 				}
 				tail, err := readerLog.Tail(ctx, tc.stream)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if tail != uint64(totalAppends) {
-					t.Fatalf("tail = %d, want %d", tail, totalAppends)
-				}
+				require.NoError(t, err)
+				assert.Equal(t, uint64(totalAppends), tail)
 			})
 		}
 	})
@@ -373,61 +302,40 @@ func TestCorruptedSegment(t *testing.T) {
 		stream := "corrupt-stream"
 
 		seq, err := log.Append(ctx, stream, []logstream.Record{[]byte("valid payload")})
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 
 		key := fmt.Sprintf("wal/%s/%020d.recordio", stream, seq)
 		rc, _, err := s.Get(ctx, key)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		validBytes, err := io.ReadAll(rc)
 		rc.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 
 		corruptHeader := bytes.Clone(validBytes)
 		corruptHeader[9] ^= 0xFF
-		if err := s.Delete(ctx, key); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.Put(ctx, key, bytes.NewReader(corruptHeader), nil); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, s.Delete(ctx, key))
+		_, err = s.Put(ctx, key, bytes.NewReader(corruptHeader), nil)
+		require.NoError(t, err)
 
 		_, err = log.Read(ctx, stream, seq)
-		if !errors.Is(err, recordio.ErrHeaderCorrupted) {
-			t.Fatalf("Read corrupt header err = %v, want ErrHeaderCorrupted", err)
-		}
+		assert.ErrorIs(t, err, recordio.ErrHeaderCorrupted)
 
 		corruptData := bytes.Clone(validBytes)
 		corruptData[len(corruptData)-2] ^= 0xFF
-		if err := s.Delete(ctx, key); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.Put(ctx, key, bytes.NewReader(corruptData), nil); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, s.Delete(ctx, key))
+		_, err = s.Put(ctx, key, bytes.NewReader(corruptData), nil)
+		require.NoError(t, err)
 
 		_, err = log.Read(ctx, stream, seq)
-		if !errors.Is(err, recordio.ErrDataCorrupted) {
-			t.Fatalf("Read corrupt data err = %v, want ErrDataCorrupted", err)
-		}
+		assert.ErrorIs(t, err, recordio.ErrDataCorrupted)
 
 		truncated := validBytes[:len(validBytes)-2]
-		if err := s.Delete(ctx, key); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.Put(ctx, key, bytes.NewReader(truncated), nil); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, s.Delete(ctx, key))
+		_, err = s.Put(ctx, key, bytes.NewReader(truncated), nil)
+		require.NoError(t, err)
 
 		_, err = log.Read(ctx, stream, seq)
-		if !errors.Is(err, recordio.ErrTornWrite) {
-			t.Fatalf("Read truncated segment err = %v, want ErrTornWrite", err)
-		}
+		assert.ErrorIs(t, err, recordio.ErrTornWrite)
 	})
 }
 
