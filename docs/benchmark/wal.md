@@ -38,16 +38,15 @@ the samples at 100 writers. The 600 s window loses 2.3%.
 
 ## Correctness
 
-The log lost no record. Every one of the twelve streams passed the contiguity
-check, and no append failed in 120 minutes of contention.
+`walbench -sanity` reads every segment of every stream from the bucket. It
+checks four properties:
 
-```
-PASS f10lap-bench-n100  tail=4326  records=4326  holes=0 corrupt=0 lost=0 dup=0
-PASS f10vm-bench-n100   tail=4902  records=4902  holes=0 corrupt=0 lost=0 dup=0
-```
+- the live sequence numbers form `1..T` with no hole
+- each record matches its length field and its CRC32
+- every acknowledged record returns
+- no record returns twice
 
-The live sequence numbers form `1..T` with no hole in every run. The error rate
-was 0.000% on both machines.
+All twelve streams passed. No append failed in 120 minutes of contention.
 
 ## Rate
 
