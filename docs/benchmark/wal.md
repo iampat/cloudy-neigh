@@ -15,26 +15,16 @@ Three numbers matter:
 ## Method
 
 `cmd/walbench` runs one writer count at a time. All writers of a run append to
-one stream. The run stops at the deadline, and the tool then reads every
-segment back to check the log.
+one stream for 10 minutes.
 
 | | |
 | --- | --- |
 | Bucket | `kentrolabs-ai-cloudy-neigh-bench-calm-otter-5127`, US-CENTRAL1 |
 | Remote | MacBook, outside the GCP region |
-| VM | `walbench-central` in GCP, e2-standard-4, us-central1-a, in the region of the bucket |
+| VM | `walbench-central` in GCP, e2-standard-4, us-central1-a, same region as the bucket |
 | Payload | 1 KiB to 10 KiB, random |
-| Window | 600 s for each writer count |
+| Window | 10 minutes for each writer count |
 | Writers | 1, 5, 10, 20, 50, 100 |
-
-The bucket held no objects at the start. Both machines ran one binary, built
-from the same commit. The two matrices ran at the same time on separate
-streams.
-
-The window is 600 s because a short window truncates the tail. `walbench`
-excludes an append that starts inside the window and ends outside it. That rule
-drops `n` appends, and it drops the slowest ones. A 60 s window lost 21.3% of
-the samples at 100 writers. The 600 s window loses 2.3%.
 
 ## Correctness
 
@@ -160,4 +150,4 @@ reason the rate curve turns down.
 | p99 append latency, 100 writers | 104 s to 165 s | a loser retries with no attempt limit |
 | Retries before one append lands, 100 writers | 70.5 | one wasted upload for each lost race |
 
-Every number in this table comes from the 600 s runs.
+Every number in this table comes from the 10 minute runs.
