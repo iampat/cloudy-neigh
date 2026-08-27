@@ -874,7 +874,7 @@ message Manifest {
 | :--- | :--- | :--- | :--- |
 | **Total Keys per Branch** | $\gt 100,000$ items | Flat manifest download & parse serialization overhead ($O(N)$ write cost) | LSM SSTable Chunked Range Manifests ([Appendix A](#appendix-a-lsm--sstable-metadata-scaling-strategy-v2-roadmap)) |
 | **Concurrent Writes (Direct Mode)** | $\gt 3\text{ writes/sec}$ on a single branch | GCS caps mutations of one object. A measurement from a us-west1 VM against a us-west1 bucket sustained 2.7 mutations/sec on one key, and a faster loop got HTTP 429. | WAL staging tier with asynchronous batch consolidation |
-| **Concurrent Writes (WAL Mode)** | $\gt 500\text{--}1,000\text{ writes/sec}$ on a single stream | Direct client conditional create congestion on sequence numbers | `WALWriter Service` gateway micro-batching into RecordIO streams |
+| **Concurrent Writes (WAL Mode)** | $\gt 7.0\text{--}18.5\text{ writes/sec}$ on a single stream | Direct client conditional create congestion on sequence numbers. One conditional create costs one round trip, and the contiguity invariant serializes them. A measurement from a VM in GCP in us-central1 against a us-central1 bucket peaked at 18.5 appends/sec at 20 writers, and a remote writer reached 8.4. Past the peak the rate falls to 8.0 at 100 writers. See [benchmark/wal.md](../benchmark/wal.md). | `WALWriter Service` gateway micro-batching into RecordIO streams |
 | **Cloud Storage API Limits** | $\gt 3,500\text{--}5,500\text{ req/sec}$ on root prefixes | Hotspotting on `objects/`, `manifests/`, or `wal/` prefixes | 2-byte deterministic hash prefixes (`objects/a3/f1/...`) |
 
 ---

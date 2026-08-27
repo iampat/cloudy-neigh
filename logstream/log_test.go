@@ -215,12 +215,11 @@ func TestReadSharesBackingArray(t *testing.T) {
 
 func TestTailJumpColdStart(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
-		limit := 5
-		log := logstream.New(s, logstream.WithTailListLimit(limit))
+		log := logstream.New(s)
 		ctx := context.Background()
 		stream := "cold-jump"
 
-		total := 23
+		total := 1005
 		for i := 1; i <= total; i++ {
 			seq, err := log.Append(ctx, stream, []logstream.Record{[]byte(fmt.Sprintf("rec-%d", i))})
 			if err != nil {
@@ -231,7 +230,7 @@ func TestTailJumpColdStart(t *testing.T) {
 			}
 		}
 
-		coldLog := logstream.New(s, logstream.WithTailListLimit(limit))
+		coldLog := logstream.New(s)
 		tail, err := coldLog.Tail(ctx, stream)
 		if err != nil {
 			t.Fatal(err)

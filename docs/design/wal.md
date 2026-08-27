@@ -98,9 +98,11 @@ order that the tail search and every operator depend on.
 
 A monotonic key is the classic hotspot shape, and it does not bind here. The
 stream name sits inside the prefix, so two streams partition apart. One stream
-stops at 500 to 1,000 appends per second, because writers contend for the next
+stops at 7.0 to 18.5 appends per second, because writers contend for the next
 number. A backend prefix serves 3,500 requests per second. The contention limit
 is the lower one, so the prefix limit is never the binding constraint.
+
+The rate is one append for each round trip, and the round trip decides it.
 
 A backend that has not yet partitioned a new prefix can still refuse a burst
 while it scales. No measurement here confirms the margin.
@@ -125,9 +127,9 @@ removes the cold-start search. Three reasons refuse it.
 **The two calls obey different limits.** A conditional create writes a new key,
 so it uses the write budget of the whole prefix. A mutation rewrites one key, and
 every backend caps that key on its own. Appendix B of
-[storage.md](storage.md) measures 2.7 mutations per second on one key. The
-append ceiling is 500 to 1,000 per second, which is three orders of magnitude
-apart.
+[storage.md](storage.md) measures 2.7 mutations per second on one key.
+The measured append ceiling is 7.0 to 18.5 appends per second, which is three
+to seven times more.
 
 **The key namespace is the only source of truth.** A head object adds a second
 one. A partial failure then leaves the two in disagreement, and recovery needs a
@@ -166,12 +168,10 @@ Append(stream, records):
 
         tries = tries + 1
         tries < runway             ──▶  seq = seq + 1
-        exists(seq + 16) is false  ──▶  seq = seq + 1;  tries = 0
-        otherwise                  ──▶  head, probes = jump(seq + 16)
+        otherwise                  ──▶  head, probes = jump(seq)
                                         seq    = head + 1
                                         runway = max(3, 2 * probes)
                                         tries  = 0
-        wait a short random time, then continue
 ```
 
 A cold counter reads `Tail` before the first attempt. Without that read, a writer
@@ -188,9 +188,16 @@ stream always form the range `1..T` with no hole. The tail search depends on it,
 because a binary search over a range with a hole reports the wrong head.
 
 The cost of a collision is one wasted upload. The loser of a race uploads the
-segment again under the next number. Appendix B of [storage.md](storage.md) puts
-the resulting ceiling at 500 to 1,000 appends per second on one stream.
-[storage.md](storage.md) §9 names the gateway that raises it.
+segment again under the next number. The resulting ceiling is 7.0 to 18.5
+appends per second on one stream. More writers raise it only to a peak at 20
+writers. Past that peak they lower it, because the wasted uploads grow faster
+than the gain. At 100 writers the stream serves 8.0 appends per second, which
+is less than one writer serves.
+
+No writer starves at any count. The busiest writer at 100 writers takes 2.6% of
+the stream, against an ideal share of 1.0%.
+[benchmark/wal.md](../benchmark/wal.md) holds the measurements.
+[storage.md](storage.md) §9 names the gateway that raises the ceiling.
 
 The retry loop ends when the context ends. It has no attempt limit, because each
 precondition failure proves that another writer made progress.
@@ -208,17 +215,8 @@ writer that searches, and then allows itself only three linear attempts, finds
 those three numbers already taken and searches again. The loop never ends. The
 runway must stay proportional to the cost of the search that preceded it.
 
-Two conflicts are thus different problems, and one probe tells them apart.
-
-**Head contention.** Several writers race at the tip of the stream. The loser is
-zero segments behind, so a search would find what a single `+1` step finds. The
-gate probe at `seq + 16` reports absent, and the writer keeps marching.
-
-**Drift.** The writer is far behind. The gate probe at `seq + 16` reports
-present, and a linear walk cannot close the distance.
-
-A jump closes a drift. It starts from a number that is known to exist, so it
-needs no list page:
+When the linear runway fails, `jump` closes the distance to the head. It starts
+from a number that is known to exist, so it needs no list page:
 
 ```text
 jump(lo):                            lo is known to exist
@@ -239,14 +237,9 @@ segments behind pays 4 probes, and a writer a million behind pays about 40.
 
 The runway is twice the probe count, and never less than 3. A jump that returns
 after one probe would otherwise leave a runway of one. The next collision would
-then send the writer straight back to the gate. The stream also advances once per
+then trigger another jump immediately. The stream also advances once per
 active writer during every probe. A runway equal to the probe count is thus too
 short whenever more than one writer is active.
-
-A short random delay follows each precondition failure. Two writers that collide
-also fail at the same moment. A loop with no delay keeps them in step, and they
-collide again on the next number. The delay is an implementation constant, and it
-promises a caller nothing.
 
 ## Delivery guarantee
 
@@ -289,18 +282,18 @@ replay.
 
 ```text
 Tail(stream):
-    objs = List("wal/<stream>/", "", listLimit)
-    len(objs) == 0         ──▶  return 0
-    len(objs) < listLimit  ──▶  return seq(last key of objs)
+    objs = List("wal/<stream>/", "", 1000)
+    len(objs) == 0    ──▶  return 0
+    len(objs) < 1000  ──▶  return seq(last key of objs)
     return jump(seq(last key of objs))
 ```
 
 `Tail` reuses the jump above. The list page supplies a number that is known to
 exist, and the jump searches from there.
 
-`listLimit` defaults to 1000, which matches the page size of the supported
-backends. One `List` call thus answers every stream of less than 1000 segments,
-and that is the common case.
+The page limit is 1000, which matches the page size of the supported backends.
+One `List` call thus answers every stream of less than 1000 segments, and that
+is the common case.
 
 A repeated `List` walk is the wrong shape. `objectstore.List` filters
 `startAfter` on the client, so a paged search reads every key from the start of
@@ -317,7 +310,7 @@ Round trips against the segment count:
 | 1,000,000 | 40            | 31                       |
 
 The binary search takes `lo` from the last key the `List` returned, and never
-from `listLimit`. The two agree only while segment 1 still exists. An operator
+from 1000. The two agree only while segment 1 still exists. An operator
 lifecycle rule that deletes an old prefix breaks that equality, and the search
 then starts from a number that no object holds. The last returned key exists by
 construction, so it is always a valid lower bound.
@@ -363,7 +356,6 @@ type Option func(*Log)
 
 func WithPrefix(prefix string) Option
 func WithMaxRecordSize(max int) Option
-func WithTailListLimit(limit int) Option
 
 func New(store *objectstore.Store, opts ...Option) *Log
 
@@ -400,11 +392,13 @@ the lock runs a tail search, and a stalled backend holds the lock for seconds. A
 lock that ignores cancellation keeps every queued goroutine in place through that
 stall. Each one then wakes to a context that expired long before.
 
-That caps one process near one append per round trip on one stream, which is
-about 33 per second. The cap counts calls to `Append`, and each call carries a
-whole batch. A caller that appends 100 records per call thus reaches 3,300
-records per second. A deployment reaches the ceiling in the limits below with
-more processes. Group commit removes the cap, and Future work holds it.
+That caps one process near one append per round trip on one stream. The
+measured rate is 13.6 per second from a VM in GCP in the region of the bucket.
+A remote writer reaches 7.9 per second. The cap counts calls to `Append`, and
+each call carries a whole batch. A caller that appends 100 records per call
+thus reaches 1,360 records per second. More processes do not raise the rate, because the same
+round trip binds every writer of one stream. Group commit removes the cap, and
+Future work holds it.
 
 `Read` returns every record of one segment. It reports `ErrEndOfStream` when the
 segment does not exist, which means the reader reached the head.
@@ -440,29 +434,30 @@ write produces a segment that nothing can read back.
 
 ## Limits
 
-Every number here comes from Appendix B of [storage.md](storage.md).
+The first four rows come from [benchmark/wal.md](../benchmark/wal.md). The rest
+comes from Appendix B of [storage.md](storage.md).
 
 | Dimension                                 | Threshold         | Cause                                        |
 | ----------------------------------------- | ----------------- | -------------------------------------------- |
-| Segments per second, one stream, all writers | 500 to 1,000     | conditional-create contention on the number  |
-| Segments per second, one stream, one process | about 33         | one append at a time, at one round trip each |
+| Segments per second, one stream, all writers | 7.0 to 18.5    | one conditional create for each round trip   |
+| Segments per second, one stream, one process | 7.9 to 13.6    | one append at a time, at one round trip each |
+| Writers at the peak rate                  | 20                | write cost grows faster than the gain        |
+| p99 append latency, 100 writers           | 104 s to 165 s    | a loser retries with no attempt limit        |
 | Requests per second, one prefix           | 3,500 to 5,500    | backend prefix limits                        |
 | Segments per stream                       | no measured bound | retention is permanent, and GC is a non-goal |
 
 Every row counts segments, and one segment carries a whole batch. Record
 throughput is the segment rate times the batch size.
 
-The first row counts every writer of a stream. One process reaches the second row
-and no more, because it serializes its own appends. Only many processes reach the
-first row.
+The first two rows almost meet, and that is the finding. One writer alone
+reaches 73% of the peak of a whole deployment, because the round trip binds
+them both.
+
+The first row counts every writer of a stream, and the second counts one
+process. More processes raise the rate very little, because the round trip
+binds every writer of one stream.
 
 A local backend is much slower. `objectstore/local.go` holds a bucket-wide lock
 and waits for the wall clock to advance on every write. So `mem://` and `file://`
 cap near 500 writes per second for the whole bucket. That figure is read from the
 code, and no benchmark confirms it yet.
-
-## Open questions
-
-`CONSIDER(ali):` the gate distance of 16 and the runway both come from reasoning,
-not from a measurement. Run a contended stream, and set each one from the
-segments a writer misses during one jump.

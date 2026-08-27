@@ -36,6 +36,29 @@
       writes, so no Bazel action covers this work. `govulncheck` has the same
       shape. Measure the step, find where the `go` tool puts `GOCACHE`, then
       cache that directory or make the tool a Bazel target.
+- [ ] Add fuzz tests. A table test covers the cases we thought of. A fuzzer
+      finds the frame that no case names.
+  - [ ] Fuzz the RecordIO reader and the scanner with arbitrary bytes. Every
+        input must give a record or a named error, and never a panic.
+  - [ ] Fuzz a RecordIO write and read round trip. The records must come back
+        byte for byte.
+  - [ ] Fuzz the LogStream key parse and the stream name check. Both read
+        untrusted text, and both need an internal test to reach.
+  - [ ] Run a long fuzz job in CI and cache the corpus. `bazel test` runs the
+        seed corpus alone today.
+- [ ] Test against a mock object store. `logstream.New` takes a concrete
+      `*objectstore.Store`, so no test can inject a failure today.
+  - [ ] Let the caller declare the interface it needs, which
+        `docs/guidelines/go.md` requires. Take that interface in `New`.
+  - [ ] Build a mock that injects an error, a delay, a lost acknowledgement,
+        and a precondition failure.
+  - [ ] Cover the drift recovery with the mock. A test then
+        counts the probes instead of guessing them.
+  - [ ] Keep one test per real backend for the contract. A mock proves the
+        logic, and a backend proves the assumption.
+- [X] Count the append attempts inside LogStream. Debug logs record collisions,
+      jump probes, uploads, and elapsed time. `walbench -debuglog` writes these
+      records to measure write amplification.
 - [ ] Remove the `golang.org/x/tools` override in `MODULE.bazel`. rules_go
       0.62.0 pins v0.34.0, which reads export data version 2 at most. Drop the
       override when rules_go pins v0.44.0 or later.
