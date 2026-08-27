@@ -21,8 +21,8 @@ segment back to check the log.
 | | |
 | --- | --- |
 | Bucket | `kentrolabs-ai-cloudy-neigh-bench-calm-otter-5127`, US-CENTRAL1 |
-| Laptop | MacBook, outside the region |
-| VM | `walbench-central`, e2-standard-4, us-central1-a, in the region |
+| Remote | MacBook, outside the GCP region |
+| VM | `walbench-central` in GCP, e2-standard-4, us-central1-a, in the region of the bucket |
 | Payload | 1 KiB to 10 KiB, random |
 | Window | 600 s for each writer count |
 | Writers | 1, 5, 10, 20, 50, 100 |
@@ -63,7 +63,7 @@ it. Both peaks sit at 20 writers.
   n=50  ║░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░        16.8
   n=100 ║░░░░░░░░░░░░░░░░                           8.0
 
-  appends per second, laptop
+  appends per second, remote
   n=1   ║░░░░░░░░░░░░░░░░                           7.9
   n=5   ║░░░░░░░░░░░░░░░░                           8.0
   n=10  ║░░░░░░░░░░░░░░░░                           8.2
@@ -72,24 +72,12 @@ it. Both peaks sit at 20 writers.
   n=100 ║░░░░░░░░░░░░░░                             7.0
 ```
 
-The two curves have different shapes. The VM rate rises 36% from one writer to
-twenty. The laptop rate rises 6% over the same range, because the round trip
-sets it. A writer that waits 122 ms for one create cannot go faster, and more
-writers do not shorten that wait.
-
-Past 20 writers both rates fall. At 100 writers the stream serves 8.0 appends
-per second, which is less than one writer serves at 13.6.
-
-The advantage of the same region disappears under load. It is 2.20x at the
-peak and 1.14x at 100 writers. Contention costs more than distance once the
-stream saturates.
-
 ## Latency
 
 The median holds flat across the matrix. The tail grows by three orders of
 magnitude.
 
-| writers | laptop p50 | laptop p99 | laptop max | VM p50 | VM p99 | VM max |
+| writers | remote p50 | remote p99 | remote max | VM p50 | VM p99 | VM max |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 122 ms | 208 ms | 1.0 s | 70 ms | 141 ms | 0.9 s |
 | 5 | 122 ms | 13.5 s | 48.7 s | 65 ms | 3.8 s | 7.9 s |
@@ -98,8 +86,8 @@ magnitude.
 | 50 | 126 ms | 94.6 s | 223.9 s | 474 ms | 21.9 s | 46.0 s |
 | 100 | 147 ms | 164.6 s | 489.7 s | 211 ms | 104.0 s | 229.2 s |
 
-On the laptop the median moves from 122 ms to 147 ms. The p99 moves from 208 ms
-to 164.6 s over the same range, a factor of 790.
+On the remote machine the median moves from 122 ms to 147 ms. The p99 moves
+from 208 ms to 164.6 s over the same range, a factor of 790.
 
 The slowest append took 489.7 s. The retry loop has no attempt limit, so a
 writer that loses every race waits until its context ends. A caller that needs
@@ -126,7 +114,7 @@ lengths compare directly.
 Read the index against its floor, not against zero. At 100 writers the floor is
 0.010, so 0.874 sits near the top of the range.
 
-| writers | floor `1/n` | laptop Jain | laptop top share | VM Jain | VM top share |
+| writers | floor `1/n` | remote Jain | remote top share | VM Jain | VM top share |
 | --- | --- | --- | --- | --- | --- |
 | 5 | 0.200 | 0.969 | 25.7% | 0.996 | 21.7% |
 | 10 | 0.100 | 0.980 | 12.4% | 0.996 | 11.1% |
@@ -138,8 +126,8 @@ The top share is the second view. It gives the share of the stream that the
 busiest writer took. The busiest writer at 100 writers took 2.6% against an
 ideal share of 1.0%. The VM stays close to a perfect split at every count.
 
-The laptop is fair but noisier. A long round trip widens the window in which
-one writer wins several rounds in a row.
+The remote machine is fair but noisier. A long round trip widens the window in
+which one writer wins several rounds in a row.
 
 ## Write cost
 
@@ -155,8 +143,8 @@ with the writer count.
 | 50 | 36.3 |
 | 100 | 70.5 |
 
-The numbers come from the laptop. The VM matches them inside 4%, so the retry
-count does not depend on distance.
+The numbers come from the remote machine. The VM matches them inside 4%, so the
+retry count does not depend on distance.
 
 Every retry uploads a full segment. The loser of a race learns that it lost
 only after the upload, so each retry costs one object write. At 100 writers the

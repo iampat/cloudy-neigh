@@ -393,10 +393,10 @@ lock that ignores cancellation keeps every queued goroutine in place through tha
 stall. Each one then wakes to a context that expired long before.
 
 That caps one process near one append per round trip on one stream. The
-measured rate is 13.6 per second in the region of the bucket, and 7.9 per
-second from a laptop. The cap counts calls to `Append`, and each call carries a
-whole batch. A caller that appends 100 records per call thus reaches 1,360
-records per second. More processes do not raise the rate, because the same
+measured rate is 13.6 per second from a VM in GCP in the region of the bucket.
+A remote writer reaches 7.9 per second. The cap counts calls to `Append`, and
+each call carries a whole batch. A caller that appends 100 records per call
+thus reaches 1,360 records per second. More processes do not raise the rate, because the same
 round trip binds every writer of one stream. Group commit removes the cap, and
 Future work holds it.
 
