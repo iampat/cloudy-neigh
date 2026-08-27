@@ -22,7 +22,7 @@ request carries an `authorization: Bearer <key>` header.
 
 | Call | What it does |
 | --- | --- |
-| `POST /v2/namespaces/{ns}` | writes documents, both the bulk load and the measured writes |
+| `POST /v2/namespaces/{ns}` | loads the documents before a run |
 | `POST /v2/namespaces/{ns}/query` | every measured query, plus a count probe before the run |
 | `DELETE /v2/namespaces/{ns}` | clears a namespace so a run starts clean |
 | `GET /v1/namespaces/{ns}/metadata` | row and byte totals, and the index status |
@@ -39,9 +39,9 @@ The responses need three things:
 
 ## Datasets and workloads
 
-Eleven definitions ship with the tool. They draw on four real datasets plus a
-random generator, and cover semantic, lexical, hybrid and aggregation
-workloads.
+Fourteen definitions ship with the tool, eight of them marked nightly. They
+draw on four real datasets plus a random generator, and cover semantic,
+lexical, hybrid and aggregation workloads.
 
 | Dataset | Source | Size in a run | Vectors | Retrieval | Metric |
 | --- | --- | --- | --- | --- | --- |
@@ -59,6 +59,9 @@ and then query with random vectors. The 2048-dimension runs repeat the same
 Every definition also sets a warm-up policy of its own. Some wait for a 100%
 cache hit ratio before the clock starts. The cold variants purge the cache
 first, or disable it on every query.
+
+Every definition uses one namespace, and none of them writes while it measures.
+The load is read-only once setup ends.
 
 The tool downloads and caches each dataset on local disk. The nightly runs
 happen on a GCE `c4a-standard-32-lssd` in `us-central1-c`, in the same region
