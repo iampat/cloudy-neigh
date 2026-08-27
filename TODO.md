@@ -28,6 +28,14 @@
         Check that a conditional write linearizes every mutation.
   - [ ] State where the model and the code can drift apart. A proof binds the
         model, not the Go.
+- [ ] The `quality` workflow is slow. Most of the time goes to a build of
+      golangci-lint. The step runs `go run <tool>@<version>` through
+      `bazel run @io_bazel_rules_go//go`, so it compiles the tool from source
+      on every run. `setup-bazel` caches the Bazel disk cache and the
+      repository cache. Neither one holds the Go build cache that `go run`
+      writes, so no Bazel action covers this work. `govulncheck` has the same
+      shape. Measure the step, find where the `go` tool puts `GOCACHE`, then
+      cache that directory or make the tool a Bazel target.
 - [ ] Remove the `golang.org/x/tools` override in `MODULE.bazel`. rules_go
       0.62.0 pins v0.34.0, which reads export data version 2 at most. Drop the
       override when rules_go pins v0.44.0 or later.
