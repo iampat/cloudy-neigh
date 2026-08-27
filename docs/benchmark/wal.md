@@ -2,15 +2,15 @@
 
 **Status:** Accepted — 2026-08-27 — v1
 
-## Problem
+## Objective
 
-We measure the append performance of one LogStream stream on GCS.
+We measure how fast one LogStream stream takes appends on GCS.
 
-Three numbers matter:
+Three questions:
 
-- the rate one stream sustains
-- the latency a writer sees at the tail
-- the object write cost of a lost race
+- How many appends per second does one stream take?
+- How long does the slowest append wait?
+- How many retries does one append cost?
 
 ## Method
 
