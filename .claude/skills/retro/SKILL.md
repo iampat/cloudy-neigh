@@ -172,6 +172,6 @@ After approval, make the edits, then report:
 - Each rule you deleted, moved or superseded, and the file it left.
 - The `lessons.md` entry count, before and after.
 
-Run `.claude/skills/design-note/lint.sh` on every file you changed.
+Run `.claude/skills/technical-writing/lint.sh` on every file you changed.
 
 Then stop. Do not act on the findings in the same turn.

@@ -149,7 +149,8 @@ not trust memory over the help output.
   do not poll them. I read them myself.
 - Before declaring done: `bazel build //...` and `bazel run //:format.check` pass.
   A change that touches only Markdown skips both. Run
-  `.claude/skills/design-note/lint.sh <file>` on each changed document instead.
+  `.claude/skills/technical-writing/lint.sh <file>` on each changed document
+  instead.
 - Before opening a PR: run `bazel mod tidy`. A `go.mod` change leaves
   `MODULE.bazel` stale, and a stale `use_repo` call breaks the build.
 - After a PR merges: go to `main`, rebase on `origin`, then delete the merged
@@ -168,7 +169,7 @@ not trust memory over the help output.
 
 For planning a new feature or design, use the `plan-feature` skill. For any
 documentation or technical prose — `docs/`, READMEs, PR descriptions — use the
-`design-note` skill. To review code, a diff, or a PR, use the `code-review`
+`technical-writing` skill. To review code, a diff, or a PR, use the `code-review`
 skill. Before you present a design as done, use the `consult-jeff-dean` skill to get an
 external review from `agy`. For a hard algorithmic or data-structure problem,
 use the `consult-petr` skill. Petr designs and writes that code, and you
