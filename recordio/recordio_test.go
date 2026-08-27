@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/recordio"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockSyncerCloser struct {
@@ -90,47 +92,27 @@ func TestWriterReaderRoundTrip(t *testing.T) {
 	for i, rec := range records {
 		expectedOffsets[i] = writer.Offset()
 		n, offset, err := writer.WriteRecord(rec)
-		if err != nil {
-			t.Fatalf("WriteRecord(%d) failed: %v", i, err)
-		}
-		if offset != expectedOffsets[i] {
-			t.Errorf("WriteRecord(%d) offset = %d, want %d", i, offset, expectedOffsets[i])
-		}
-		if n != len(rec)+16 {
-			t.Errorf("WriteRecord(%d) n = %d, want %d", i, n, len(rec)+16)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, expectedOffsets[i], offset)
+		assert.Equal(t, len(rec)+16, n)
 	}
 
-	if err := writer.Flush(); err != nil {
-		t.Fatalf("Flush failed: %v", err)
-	}
+	require.NoError(t, writer.Flush())
 
 	reader := recordio.NewReader(bytes.NewReader(buf.Bytes()))
 	dst := make([]byte, 256*1024)
 
 	for i, expected := range records {
 		n, err := reader.ReadRecord(dst)
-		if err != nil {
-			t.Fatalf("ReadRecord(%d) failed: %v", i, err)
-		}
-		if n != len(expected) {
-			t.Errorf("ReadRecord(%d) n = %d, want %d", i, n, len(expected))
-		}
-		if !bytes.Equal(dst[:n], expected) {
-			t.Errorf("ReadRecord(%d) payload mismatch", i)
-		}
-		if reader.Offset() != expectedOffsets[i] {
-			t.Errorf("reader.Offset(%d) = %d, want %d", i, reader.Offset(), expectedOffsets[i])
-		}
+		require.NoError(t, err)
+		assert.Equal(t, len(expected), n)
+		assert.Equal(t, expected, dst[:n])
+		assert.Equal(t, expectedOffsets[i], reader.Offset())
 	}
 
 	_, err := reader.ReadRecord(dst)
-	if !errors.Is(err, io.EOF) {
-		t.Errorf("ReadRecord at end of stream err = %v, want io.EOF", err)
-	}
-	if reader.LastValidOffset() != writer.Offset() {
-		t.Errorf("reader.LastValidOffset = %d, want %d", reader.LastValidOffset(), writer.Offset())
-	}
+	assert.ErrorIs(t, err, io.EOF)
+	assert.Equal(t, writer.Offset(), reader.LastValidOffset())
 }
 
 func TestWriterWriteRecordFrom(t *testing.T) {
@@ -143,26 +125,15 @@ func TestWriterWriteRecordFrom(t *testing.T) {
 
 		startOffset := writer.Offset()
 		n, offset, err := writer.WriteRecordFrom(src, int64(len(payload)))
-		if err != nil {
-			t.Fatalf("WriteRecordFrom failed: %v", err)
-		}
-		if offset != startOffset {
-			t.Errorf("offset = %d, want %d", offset, startOffset)
-		}
-		if n != int64(len(payload)+16) {
-			t.Errorf("n = %d, want %d", n, len(payload)+16)
-		}
-		if err := writer.Flush(); err != nil {
-			t.Fatalf("Flush failed: %v", err)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, startOffset, offset)
+		assert.Equal(t, int64(len(payload)+16), n)
+		require.NoError(t, writer.Flush())
 
 		scanner := recordio.NewScanner(&buf)
-		if !scanner.Scan() {
-			t.Fatalf("Scan failed: %v", scanner.Err())
-		}
-		if !bytes.Equal(scanner.Record(), payload) {
-			t.Errorf("scanned record = %q, want %q", scanner.Record(), payload)
-		}
+		require.True(t, scanner.Scan())
+		assert.NoError(t, scanner.Err())
+		assert.Equal(t, payload, scanner.Record())
 	})
 
 	t.Run("ShortRead_PoisonContract", func(t *testing.T) {
@@ -173,14 +144,10 @@ func TestWriterWriteRecordFrom(t *testing.T) {
 		src := bytes.NewReader(shortPayload)
 
 		_, _, err := writer.WriteRecordFrom(src, 100)
-		if !errors.Is(err, recordio.ErrUnexpectedEOF) {
-			t.Errorf("WriteRecordFrom short read err = %v, want ErrUnexpectedEOF", err)
-		}
+		assert.ErrorIs(t, err, recordio.ErrUnexpectedEOF)
 
 		_, _, err = writer.WriteRecord([]byte("after poison"))
-		if !errors.Is(err, recordio.ErrUnexpectedEOF) {
-			t.Errorf("WriteRecord after poison err = %v, want ErrUnexpectedEOF", err)
-		}
+		assert.ErrorIs(t, err, recordio.ErrUnexpectedEOF)
 	})
 }
 
@@ -189,28 +156,16 @@ func TestWriterSyncAndClose(t *testing.T) {
 	writer := recordio.NewWriter(mock, recordio.WithWriterSyncOnFlush(true))
 
 	_, _, err := writer.WriteRecord([]byte("durability test"))
-	if err != nil {
-		t.Fatalf("WriteRecord failed: %v", err)
-	}
+	require.NoError(t, err)
 
-	if err := writer.Flush(); err != nil {
-		t.Fatalf("Flush failed: %v", err)
-	}
-	if !mock.synced {
-		t.Errorf("mock.synced = false, want true after Flush with syncOnFlush")
-	}
+	require.NoError(t, writer.Flush())
+	assert.True(t, mock.synced)
 
-	if err := writer.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
-	}
-	if !mock.closed {
-		t.Errorf("mock.closed = false, want true after Close")
-	}
+	require.NoError(t, writer.Close())
+	assert.True(t, mock.closed)
 
 	_, _, err = writer.WriteRecord([]byte("after close"))
-	if !errors.Is(err, os.ErrClosed) {
-		t.Errorf("WriteRecord after close err = %v, want os.ErrClosed", err)
-	}
+	assert.ErrorIs(t, err, os.ErrClosed)
 }
 
 func TestWriterSyncFailurePoison(t *testing.T) {
@@ -219,18 +174,12 @@ func TestWriterSyncFailurePoison(t *testing.T) {
 	writer := recordio.NewWriter(mock)
 
 	_, _, err := writer.WriteRecord([]byte("data"))
-	if err != nil {
-		t.Fatalf("WriteRecord failed: %v", err)
-	}
+	require.NoError(t, err)
 
-	if err := writer.Sync(); !errors.Is(err, syncErr) {
-		t.Fatalf("Sync() err = %v, want %v", err, syncErr)
-	}
+	assert.ErrorIs(t, writer.Sync(), syncErr)
 
 	_, _, err = writer.WriteRecord([]byte("new data"))
-	if !errors.Is(err, syncErr) {
-		t.Errorf("WriteRecord after failed Sync err = %v, want %v", err, syncErr)
-	}
+	assert.ErrorIs(t, err, syncErr)
 }
 
 func TestReaderBufferLimitsAndRetry(t *testing.T) {
@@ -247,60 +196,38 @@ func TestReaderBufferLimitsAndRetry(t *testing.T) {
 		smallDst := make([]byte, 5)
 
 		needed, err := reader.ReadRecord(smallDst)
-		if !errors.Is(err, recordio.ErrBufferTooSmall) {
-			t.Fatalf("ReadRecord small buffer err = %v, want ErrBufferTooSmall", err)
-		}
-		if needed != len(payload1) {
-			t.Errorf("needed length = %d, want %d", needed, len(payload1))
-		}
+		assert.ErrorIs(t, err, recordio.ErrBufferTooSmall)
+		assert.Equal(t, len(payload1), needed)
 
 		largeDst := make([]byte, needed)
 		n, err := reader.ReadRecord(largeDst)
-		if err != nil {
-			t.Fatalf("Retry ReadRecord failed: %v", err)
-		}
-		if !bytes.Equal(largeDst[:n], payload1) {
-			t.Errorf("Retry payload = %q, want %q", largeDst[:n], payload1)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, payload1, largeDst[:n])
 
 		n, err = reader.ReadRecord(largeDst)
-		if err != nil {
-			t.Fatalf("Read second record failed: %v", err)
-		}
-		if !bytes.Equal(largeDst[:n], payload2) {
-			t.Errorf("Second record = %q, want %q", largeDst[:n], payload2)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, payload2, largeDst[:n])
 	})
 
 	t.Run("RecordTooLarge", func(t *testing.T) {
 		reader := recordio.NewReader(bytes.NewReader(buf.Bytes()), recordio.WithReaderMaxRecordSize(5))
 		dst := make([]byte, 20)
 		_, err := reader.ReadRecord(dst)
-		if !errors.Is(err, recordio.ErrRecordTooLarge) {
-			t.Errorf("ReadRecord exceeding MaxRecordSize err = %v, want ErrRecordTooLarge", err)
-		}
+		assert.ErrorIs(t, err, recordio.ErrRecordTooLarge)
 	})
 
 	t.Run("ScannerRecordTooLarge", func(t *testing.T) {
 		scanner := recordio.NewScanner(bytes.NewReader(buf.Bytes()), recordio.WithScannerMaxRecordSize(5))
-		if scanner.Scan() {
-			t.Fatal("Scan succeeded, want failure due to ErrRecordTooLarge")
-		}
-		if !errors.Is(scanner.Err(), recordio.ErrRecordTooLarge) {
-			t.Errorf("Scanner err = %v, want ErrRecordTooLarge", scanner.Err())
-		}
+		assert.False(t, scanner.Scan())
+		assert.ErrorIs(t, scanner.Err(), recordio.ErrRecordTooLarge)
 	})
 
 	t.Run("NonPositiveMaxRecordSizeIgnored", func(t *testing.T) {
 		reader := recordio.NewReader(bytes.NewReader(buf.Bytes()), recordio.WithReaderMaxRecordSize(-10))
 		dst := make([]byte, 20)
 		n, err := reader.ReadRecord(dst)
-		if err != nil {
-			t.Fatalf("ReadRecord failed with negative max option: %v", err)
-		}
-		if n != len(payload1) {
-			t.Fatalf("ReadRecord n = %d, want %d", n, len(payload1))
-		}
+		require.NoError(t, err)
+		assert.Equal(t, len(payload1), n)
 	})
 }
 
@@ -315,40 +242,24 @@ func TestScannerScanAndRecordCopy(t *testing.T) {
 	}
 
 	for _, d := range data {
-		if _, _, err := writer.WriteRecord(d); err != nil {
-			t.Fatalf("WriteRecord failed: %v", err)
-		}
+		_, _, err := writer.WriteRecord(d)
+		require.NoError(t, err)
 	}
-	_ = writer.Flush()
+	require.NoError(t, writer.Flush())
 
 	scanner := recordio.NewScanner(bytes.NewReader(buf.Bytes()), recordio.WithScannerInitialBufferSize(8))
 
 	var copies [][]byte
 	idx := 0
 	for scanner.Scan() {
-		if idx >= len(data) {
-			t.Fatalf("scanned more records than expected")
-		}
-		if !bytes.Equal(scanner.Record(), data[idx]) {
-			t.Errorf("Record %d = %q, want %q", idx, scanner.Record(), data[idx])
-		}
+		require.Less(t, idx, len(data))
+		assert.Equal(t, data[idx], scanner.Record())
 		copies = append(copies, scanner.RecordCopy())
 		idx++
 	}
 
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("Scanner error: %v", err)
-	}
-
-	if len(copies) != len(data) {
-		t.Fatalf("Scanned %d copies, want %d", len(copies), len(data))
-	}
-
-	for i, c := range copies {
-		if !bytes.Equal(c, data[i]) {
-			t.Errorf("RecordCopy %d = %q, want %q", i, c, data[i])
-		}
-	}
+	assert.NoError(t, scanner.Err())
+	assert.Equal(t, data, copies)
 }
 
 func TestScannerSkip(t *testing.T) {
@@ -363,36 +274,19 @@ func TestScannerSkip(t *testing.T) {
 	runSkipTest := func(t *testing.T, r io.Reader) {
 		scanner := recordio.NewScanner(r)
 
-		if !scanner.Scan() || !bytes.Equal(scanner.Record(), testData[0]) {
-			t.Fatalf("Scan alpha failed: %v", scanner.Err())
-		}
-		if !scanner.Skip() {
-			t.Fatalf("Skip beta failed: %v", scanner.Err())
-		}
-		if len(scanner.Record()) != 0 {
-			t.Errorf("Record after Skip = %q, want empty", scanner.Record())
-		}
-		if !scanner.Scan() || !bytes.Equal(scanner.Record(), testData[2]) {
-			t.Fatalf("Scan gamma failed: %v", scanner.Err())
-		}
-		if !scanner.Skip() {
-			t.Fatalf("Skip delta failed: %v", scanner.Err())
-		}
-		if len(scanner.Record()) != 0 {
-			t.Errorf("Record after Skip = %q, want empty", scanner.Record())
-		}
-		if !scanner.Scan() || !bytes.Equal(scanner.Record(), testData[4]) {
-			t.Fatalf("Scan epsilon failed: %v", scanner.Err())
-		}
-		if scanner.Scan() {
-			t.Errorf("Scan at EOF returned true")
-		}
-		if len(scanner.Record()) != 0 {
-			t.Errorf("Record at EOF = %q, want empty", scanner.Record())
-		}
-		if scanner.Err() != nil {
-			t.Errorf("Scanner err at clean EOF: %v", scanner.Err())
-		}
+		require.True(t, scanner.Scan())
+		assert.Equal(t, testData[0], scanner.Record())
+		require.True(t, scanner.Skip())
+		assert.Empty(t, scanner.Record())
+		require.True(t, scanner.Scan())
+		assert.Equal(t, testData[2], scanner.Record())
+		require.True(t, scanner.Skip())
+		assert.Empty(t, scanner.Record())
+		require.True(t, scanner.Scan())
+		assert.Equal(t, testData[4], scanner.Record())
+		assert.False(t, scanner.Scan())
+		assert.Empty(t, scanner.Record())
+		assert.NoError(t, scanner.Err())
 	}
 
 	var buf bytes.Buffer
@@ -429,22 +323,12 @@ func TestWALRecoveryTornWrite(t *testing.T) {
 			truncatedData := fullBytes[:cut]
 			scanner := recordio.NewScanner(bytes.NewReader(truncatedData))
 
-			if !scanner.Scan() {
-				t.Fatalf("cut=%d: Scan record 1 failed: %v", cut, scanner.Err())
-			}
-			if !bytes.Equal(scanner.Record(), []byte("valid-record-1")) {
-				t.Fatalf("cut=%d: record 1 mismatch", cut)
-			}
+			require.True(t, scanner.Scan(), "cut=%d", cut)
+			assert.Equal(t, []byte("valid-record-1"), scanner.Record(), "cut=%d", cut)
 
-			if scanner.Scan() {
-				t.Fatalf("cut=%d: Scan record 2 succeeded on truncated data", cut)
-			}
-			if !errors.Is(scanner.Err(), recordio.ErrTornWrite) {
-				t.Errorf("cut=%d: Err = %v, want ErrTornWrite", cut, scanner.Err())
-			}
-			if scanner.LastValidOffset() != validEndOffset {
-				t.Errorf("cut=%d: LastValidOffset = %d, want %d", cut, scanner.LastValidOffset(), validEndOffset)
-			}
+			assert.False(t, scanner.Scan(), "cut=%d", cut)
+			assert.ErrorIs(t, scanner.Err(), recordio.ErrTornWrite, "cut=%d", cut)
+			assert.Equal(t, validEndOffset, scanner.LastValidOffset(), "cut=%d", cut)
 		}
 	})
 
@@ -453,19 +337,10 @@ func TestWALRecoveryTornWrite(t *testing.T) {
 			truncatedData := fullBytes[:cut]
 			scanner := recordio.NewScanner(bytes.NewReader(truncatedData))
 
-			if !scanner.Scan() {
-				t.Fatalf("cut=%d: Scan record 1 failed: %v", cut, scanner.Err())
-			}
-
-			if scanner.Skip() {
-				t.Fatalf("cut=%d: Skip record 2 succeeded on truncated data", cut)
-			}
-			if !errors.Is(scanner.Err(), recordio.ErrTornWrite) {
-				t.Errorf("cut=%d: Err = %v, want ErrTornWrite", cut, scanner.Err())
-			}
-			if scanner.LastValidOffset() != validEndOffset {
-				t.Errorf("cut=%d: LastValidOffset = %d, want %d", cut, scanner.LastValidOffset(), validEndOffset)
-			}
+			require.True(t, scanner.Scan(), "cut=%d", cut)
+			assert.False(t, scanner.Skip(), "cut=%d", cut)
+			assert.ErrorIs(t, scanner.Err(), recordio.ErrTornWrite, "cut=%d", cut)
+			assert.Equal(t, validEndOffset, scanner.LastValidOffset(), "cut=%d", cut)
 		}
 	})
 }
@@ -486,18 +361,10 @@ func TestCorruptionDetection(t *testing.T) {
 		corrupted[firstEndOffset+9] ^= 0x01
 
 		scanner := recordio.NewScanner(bytes.NewReader(corrupted))
-		if !scanner.Scan() {
-			t.Fatalf("first scan failed")
-		}
-		if scanner.Scan() {
-			t.Errorf("second scan succeeded on corrupted header CRC")
-		}
-		if !errors.Is(scanner.Err(), recordio.ErrHeaderCorrupted) {
-			t.Errorf("err = %v, want ErrHeaderCorrupted", scanner.Err())
-		}
-		if scanner.LastValidOffset() != firstEndOffset {
-			t.Errorf("LastValidOffset = %d, want %d", scanner.LastValidOffset(), firstEndOffset)
-		}
+		assert.True(t, scanner.Scan())
+		assert.False(t, scanner.Scan())
+		assert.ErrorIs(t, scanner.Err(), recordio.ErrHeaderCorrupted)
+		assert.Equal(t, firstEndOffset, scanner.LastValidOffset())
 	})
 
 	t.Run("PayloadDataCRCCorruption", func(t *testing.T) {
@@ -505,18 +372,10 @@ func TestCorruptionDetection(t *testing.T) {
 		corrupted[firstEndOffset+13] ^= 0x01
 
 		scanner := recordio.NewScanner(bytes.NewReader(corrupted))
-		if !scanner.Scan() {
-			t.Fatalf("first scan failed")
-		}
-		if scanner.Scan() {
-			t.Errorf("second scan succeeded on corrupted payload")
-		}
-		if !errors.Is(scanner.Err(), recordio.ErrDataCorrupted) {
-			t.Errorf("err = %v, want ErrDataCorrupted", scanner.Err())
-		}
-		if scanner.LastValidOffset() != firstEndOffset {
-			t.Errorf("LastValidOffset = %d, want %d", scanner.LastValidOffset(), firstEndOffset)
-		}
+		assert.True(t, scanner.Scan())
+		assert.False(t, scanner.Scan())
+		assert.ErrorIs(t, scanner.Err(), recordio.ErrDataCorrupted)
+		assert.Equal(t, firstEndOffset, scanner.LastValidOffset())
 	})
 
 	t.Run("FooterCRCCorruption", func(t *testing.T) {
@@ -524,15 +383,9 @@ func TestCorruptionDetection(t *testing.T) {
 		corrupted[len(corrupted)-2] ^= 0x01
 
 		scanner := recordio.NewScanner(bytes.NewReader(corrupted))
-		if !scanner.Scan() {
-			t.Fatalf("first scan failed")
-		}
-		if scanner.Scan() {
-			t.Errorf("second scan succeeded on corrupted footer CRC")
-		}
-		if !errors.Is(scanner.Err(), recordio.ErrDataCorrupted) {
-			t.Errorf("err = %v, want ErrDataCorrupted", scanner.Err())
-		}
+		assert.True(t, scanner.Scan())
+		assert.False(t, scanner.Scan())
+		assert.ErrorIs(t, scanner.Err(), recordio.ErrDataCorrupted)
 	})
 }
 
@@ -541,17 +394,11 @@ func TestRealIOErrorsPreserved(t *testing.T) {
 	reader := recordio.NewReader(&errReader{err: customErr})
 	dst := make([]byte, 64)
 	_, err := reader.ReadRecord(dst)
-	if !errors.Is(err, customErr) {
-		t.Errorf("Reader err = %v, want %v", err, customErr)
-	}
+	assert.ErrorIs(t, err, customErr)
 
 	scanner := recordio.NewScanner(&errReader{err: customErr})
-	if scanner.Scan() {
-		t.Errorf("Scanner.Scan succeeded on errReader")
-	}
-	if !errors.Is(scanner.Err(), customErr) {
-		t.Errorf("Scanner err = %v, want %v", scanner.Err(), customErr)
-	}
+	assert.False(t, scanner.Scan())
+	assert.ErrorIs(t, scanner.Err(), customErr)
 }
 
 func TestReaderTransientErrorPoisons(t *testing.T) {
@@ -559,13 +406,10 @@ func TestReaderTransientErrorPoisons(t *testing.T) {
 	writer := recordio.NewWriter(&buf)
 	payload := bytes.Repeat([]byte("x"), 64)
 	for i := 0; i < 2; i++ {
-		if _, _, err := writer.WriteRecord(payload); err != nil {
-			t.Fatalf("WriteRecord(%d) failed: %v", i, err)
-		}
+		_, _, err := writer.WriteRecord(payload)
+		require.NoError(t, err)
 	}
-	if err := writer.Flush(); err != nil {
-		t.Fatalf("Flush failed: %v", err)
-	}
+	require.NoError(t, writer.Flush())
 
 	const headerBytes = 12
 
@@ -584,18 +428,14 @@ func TestReaderTransientErrorPoisons(t *testing.T) {
 			reader := recordio.NewReader(src, recordio.WithReaderBufferSize(16))
 			dst := make([]byte, 128)
 
-			if _, err := reader.ReadRecord(dst); !errors.Is(err, transient) {
-				t.Fatalf("first ReadRecord err = %v, want %v", err, transient)
-			}
-			if !src.failed {
-				t.Fatal("faultyReader never injected the error")
-			}
+			_, err := reader.ReadRecord(dst)
+			assert.ErrorIs(t, err, transient)
+			assert.True(t, src.failed)
 
 			// ReadRecord consumed the header, so a retry would read payload
 			// bytes as a header and report corruption for a transient fault.
-			if _, err := reader.ReadRecord(dst); !errors.Is(err, transient) {
-				t.Errorf("second ReadRecord err = %v, want %v", err, transient)
-			}
+			_, err = reader.ReadRecord(dst)
+			assert.ErrorIs(t, err, transient)
 		})
 	}
 }
@@ -609,9 +449,7 @@ func TestZeroAllocations(t *testing.T) {
 		allocs := testing.AllocsPerRun(100, func() {
 			_, _, _ = writer.WriteRecord(record)
 		})
-		if allocs != 0 {
-			t.Errorf("Writer.WriteRecord allocs/op = %v, want 0", allocs)
-		}
+		assert.Zero(t, allocs)
 	})
 
 	t.Run("Reader_ReadRecord", func(t *testing.T) {
@@ -628,9 +466,7 @@ func TestZeroAllocations(t *testing.T) {
 		allocs := testing.AllocsPerRun(100, func() {
 			_, _ = reader.ReadRecord(dst)
 		})
-		if allocs != 0 {
-			t.Errorf("Reader.ReadRecord allocs/op = %v, want 0", allocs)
-		}
+		assert.Zero(t, allocs)
 	})
 
 	t.Run("Scanner_Scan", func(t *testing.T) {
@@ -648,9 +484,7 @@ func TestZeroAllocations(t *testing.T) {
 				_ = scanner.Record()
 			}
 		})
-		if allocs != 0 {
-			t.Errorf("Scanner.Scan allocs/op = %v, want 0", allocs)
-		}
+		assert.Zero(t, allocs)
 	})
 }
 

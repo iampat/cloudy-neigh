@@ -15,5 +15,9 @@ go_library(
 go_test(
     name = "recordio_test",
     srcs = ["recordio_test.go"],
-    deps = [":recordio"],
+    deps = [
+        ":recordio",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
 )

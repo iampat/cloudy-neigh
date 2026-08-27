@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/objectstore"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type contractConfig struct {
@@ -24,18 +26,14 @@ func read(t *testing.T, r io.ReadCloser) string {
 	t.Helper()
 	defer r.Close()
 	data, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
+	require.NoError(t, err)
 	return string(data)
 }
 
 func put(t *testing.T, s *objectstore.Store, key, value string) string {
 	t.Helper()
 	gen, err := s.Put(context.Background(), key, strings.NewReader(value), nil)
-	if err != nil {
-		t.Fatalf("Put(%q): %v", key, err)
-	}
+	require.NoError(t, err)
 	return gen
 }
 
@@ -65,9 +63,8 @@ func raceAbsentPut(t *testing.T, stores []*objectstore.Store, key string, writer
 	for err := range errCh {
 		t.Error(err)
 	}
-	if wins.Load() != 1 || losses.Load() != int32(writers-1) {
-		t.Fatalf("wins=%d losses=%d, want 1 and %d", wins.Load(), losses.Load(), writers-1)
-	}
+	assert.Equal(t, int32(1), wins.Load())
+	assert.Equal(t, int32(writers-1), losses.Load())
 }
 
 func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg contractConfig) {
@@ -75,13 +72,9 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 	prefix := func(t *testing.T, s *objectstore.Store) string {
 		p := strings.ReplaceAll(t.Name(), "/", "_") + "/"
 		objs, err := s.List(ctx, p, "", 0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, o := range objs {
-			if err := s.Delete(ctx, o.Key); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, s.Delete(ctx, o.Key))
 		}
 		return p
 	}
@@ -90,26 +83,14 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		s := open(t)
 		k := prefix(t, s) + "k"
 		gen := put(t, s, k, "v1")
-		if gen == "" {
-			t.Fatal("Put returned an empty generation")
-		}
+		require.NotEmpty(t, gen)
 		r, _, err := s.Get(ctx, k)
-		if err != nil {
-			t.Fatalf("Get: %v", err)
-		}
-		if got := read(t, r); got != "v1" {
-			t.Fatalf("Get = %q, want %q", got, "v1")
-		}
+		require.NoError(t, err)
+		assert.Equal(t, "v1", read(t, r))
 		r, gen2, err := s.Get(ctx, k)
-		if err != nil {
-			t.Fatalf("Get: %v", err)
-		}
-		if got := read(t, r); got != "v1" {
-			t.Fatalf("Get = %q, want %q", got, "v1")
-		}
-		if gen2 != gen {
-			t.Fatalf("generation = %q, want %q", gen2, gen)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, "v1", read(t, r))
+		assert.Equal(t, gen, gen2)
 	})
 
 	t.Run("GenerationChangesOnIdenticalWrite", func(t *testing.T) {
@@ -117,32 +98,21 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		k := prefix(t, s) + "k"
 		g1 := put(t, s, k, "same")
 		g2 := put(t, s, k, "same")
-		if g1 == g2 {
-			t.Fatalf("generation did not change: %q", g1)
-		}
+		assert.NotEqual(t, g1, g2)
 	})
 
 	t.Run("AbsentCondition", func(t *testing.T) {
 		s := open(t)
 		k := prefix(t, s) + "k"
 		gen, err := s.Put(ctx, k, strings.NewReader("v1"), &objectstore.Condition{Absent: true})
-		if err != nil || gen == "" {
-			t.Fatalf("Put(Absent) fresh = (%q, %v)", gen, err)
-		}
+		require.NoError(t, err)
+		assert.NotEmpty(t, gen)
 		gen, err = s.Put(ctx, k, strings.NewReader("v2"), &objectstore.Condition{Absent: true})
-		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
-			t.Fatalf("Put(Absent) existing = %v, want ErrPreconditionFailed", err)
-		}
-		if gen != "" {
-			t.Fatalf("failed Put(Absent) returned generation %q", gen)
-		}
+		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
+		assert.Empty(t, gen)
 		r, _, err := s.Get(ctx, k)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := read(t, r); got != "v1" {
-			t.Fatalf("loser overwrote: %q", got)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, "v1", read(t, r))
 	})
 
 	t.Run("AbsentConditionRace", func(t *testing.T) {
@@ -196,13 +166,9 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 			t.Fatal(err)
 		}
 		r, _, err := s.Get(ctx, k)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		want := strconv.Itoa(cfg.casWriters * cfg.casIters)
-		if got := read(t, r); got != want {
-			t.Fatalf("counter = %q, want %q", got, want)
-		}
+		assert.Equal(t, want, read(t, r))
 	})
 
 	t.Run("StaleGenerationFails", func(t *testing.T) {
@@ -211,46 +177,30 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		g1 := put(t, s, k, "v1")
 		put(t, s, k, "v2")
 		gen, err := s.Put(ctx, k, strings.NewReader("v3"), &objectstore.Condition{GenerationMatch: g1})
-		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
-			t.Fatalf("stale CAS = %v, want ErrPreconditionFailed", err)
-		}
-		if gen != "" {
-			t.Fatalf("failed CAS returned generation %q", gen)
-		}
+		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
+		assert.Empty(t, gen)
 	})
 
 	t.Run("DeleteRecreateInvalidatesOldGeneration", func(t *testing.T) {
 		s := open(t)
 		k := prefix(t, s) + "k"
 		g1 := put(t, s, k, "v1")
-		if err := s.Delete(ctx, k); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, s.Delete(ctx, k))
 		put(t, s, k, "v1")
-		if _, err := s.Put(ctx, k, strings.NewReader("v2"), &objectstore.Condition{GenerationMatch: g1}); !errors.Is(err, objectstore.ErrPreconditionFailed) {
-			t.Fatalf("old token after re-create = %v, want ErrPreconditionFailed", err)
-		}
+		_, err := s.Put(ctx, k, strings.NewReader("v2"), &objectstore.Condition{GenerationMatch: g1})
+		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
 	})
 
 	t.Run("AbsentKey", func(t *testing.T) {
 		s := open(t)
 		k := prefix(t, s) + "nope"
-		if _, _, err := s.Get(ctx, k); !errors.Is(err, objectstore.ErrNotFound) {
-			t.Fatalf("Get = %v, want ErrNotFound", err)
-		}
-		if _, _, err := s.Get(ctx, k); !errors.Is(err, objectstore.ErrNotFound) {
-			t.Fatalf("Get = %v, want ErrNotFound", err)
-		}
-		if err := s.Delete(ctx, k); !errors.Is(err, objectstore.ErrNotFound) {
-			t.Fatalf("Delete = %v, want ErrNotFound", err)
-		}
+		_, _, err := s.Get(ctx, k)
+		assert.ErrorIs(t, err, objectstore.ErrNotFound)
+		assert.ErrorIs(t, s.Delete(ctx, k), objectstore.ErrNotFound)
 		gen := put(t, s, k, "v")
-		if err := s.Delete(ctx, k); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.Put(ctx, k, strings.NewReader("v"), &objectstore.Condition{GenerationMatch: gen}); !errors.Is(err, objectstore.ErrPreconditionFailed) {
-			t.Fatalf("CAS on deleted key = %v, want ErrPreconditionFailed", err)
-		}
+		require.NoError(t, s.Delete(ctx, k))
+		_, err = s.Put(ctx, k, strings.NewReader("v"), &objectstore.Condition{GenerationMatch: gen})
+		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
 	})
 
 	t.Run("MalformedGeneration", func(t *testing.T) {
@@ -258,9 +208,8 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		k := prefix(t, s) + "k"
 		put(t, s, k, "v1")
 		_, err := s.Put(ctx, k, strings.NewReader("v2"), &objectstore.Condition{GenerationMatch: "not-a-token"})
-		if err == nil || errors.Is(err, objectstore.ErrPreconditionFailed) {
-			t.Fatalf("malformed generation = %v, want a plain error", err)
-		}
+		assert.Error(t, err)
+		assert.NotErrorIs(t, err, objectstore.ErrPreconditionFailed)
 	})
 
 	t.Run("InvalidCondition", func(t *testing.T) {
@@ -272,9 +221,8 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 				k := prefix(t, s) + "k"
 				put(t, s, k, "v1")
 				_, err := s.Put(ctx, k, strings.NewReader("v2"), cond)
-				if err == nil || errors.Is(err, objectstore.ErrPreconditionFailed) {
-					t.Fatalf("Put with %s condition = %v, want a plain error", name, err)
-				}
+				assert.Error(t, err)
+				assert.NotErrorIs(t, err, objectstore.ErrPreconditionFailed)
 			})
 		}
 	})
@@ -283,21 +231,16 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		s := open(t)
 		k := prefix(t, s) + "k"
 		put(t, s, k, "v1")
-		if _, err := s.Put(ctx, k, strings.NewReader("v1"), &objectstore.Condition{}); err != nil {
-			t.Fatalf("zero-Condition Put = %v, want nil", err)
-		}
-		if _, err := s.Put(ctx, k, strings.NewReader("v2"), nil); err != nil {
-			t.Fatalf("unconditional Put = %v, want nil", err)
-		}
+		_, err := s.Put(ctx, k, strings.NewReader("v1"), &objectstore.Condition{})
+		assert.NoError(t, err)
+		_, err = s.Put(ctx, k, strings.NewReader("v2"), nil)
+		assert.NoError(t, err)
 		r, _, err := s.Get(ctx, k)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		defer r.Close()
-		got, _ := io.ReadAll(r)
-		if string(got) != "v2" {
-			t.Fatalf("value = %q, want %q", got, "v2")
-		}
+		got, err := io.ReadAll(r)
+		require.NoError(t, err)
+		assert.Equal(t, "v2", string(got))
 	})
 
 	t.Run("CanceledContext", func(t *testing.T) {
@@ -305,9 +248,8 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		k := prefix(t, s) + "k"
 		canceled, cancel := context.WithCancel(ctx)
 		cancel()
-		if _, err := s.Put(canceled, k, strings.NewReader("v"), nil); !errors.Is(err, context.Canceled) {
-			t.Fatalf("Put = %v, want context.Canceled", err)
-		}
+		_, err := s.Put(canceled, k, strings.NewReader("v"), nil)
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 
 	t.Run("List", func(t *testing.T) {
@@ -317,78 +259,50 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 			put(t, s, p+k, "v")
 		}
 		objs, err := s.List(ctx, p+"a/", "", 0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		var keys []string
 		for _, o := range objs {
 			keys = append(keys, o.Key)
-			if o.Size != 1 {
-				t.Errorf("size of %q = %d, want 1", o.Key, o.Size)
-			}
-			if o.Generation == "" {
-				t.Errorf("missing generation for %q", o.Key)
-			}
+			assert.Equal(t, int64(1), o.Size)
+			assert.NotEmpty(t, o.Generation)
 		}
-		want := []string{p + "a/1", p + "a/2", p + "a/3"}
-		if fmt.Sprint(keys) != fmt.Sprint(want) {
-			t.Fatalf("List = %v, want %v", keys, want)
-		}
+		assert.Equal(t, []string{p + "a/1", p + "a/2", p + "a/3"}, keys)
+		require.NotEmpty(t, objs)
 		r, gen, err := s.Get(ctx, objs[0].Key)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		r.Close()
-		if objs[0].Generation != gen {
-			t.Fatalf("List generation %q != Get generation %q", objs[0].Generation, gen)
-		}
+		assert.Equal(t, gen, objs[0].Generation)
 		objs, err = s.List(ctx, p+"a/", p+"a/1", 0)
-		if err != nil || len(objs) != 2 || objs[0].Key != p+"a/2" {
-			t.Fatalf("List startAfter = %v, %v", objs, err)
-		}
+		require.NoError(t, err)
+		require.Len(t, objs, 2)
+		assert.Equal(t, p+"a/2", objs[0].Key)
 		objs, err = s.List(ctx, p+"a/", "", 1)
-		if err != nil || len(objs) != 1 || objs[0].Key != p+"a/1" {
-			t.Fatalf("List limit = %v, %v", objs, err)
-		}
+		require.NoError(t, err)
+		require.Len(t, objs, 1)
+		assert.Equal(t, p+"a/1", objs[0].Key)
 	})
 
 	t.Run("Exists", func(t *testing.T) {
 		s := open(t)
 		k := prefix(t, s) + "exists"
 		ok, err := s.Exists(ctx, k)
-		if err != nil {
-			t.Fatalf("Exists before Put: %v", err)
-		}
-		if ok {
-			t.Fatal("Exists before Put = true, want false")
-		}
+		assert.NoError(t, err)
+		assert.False(t, ok)
 		put(t, s, k, "val")
 		ok, err = s.Exists(ctx, k)
-		if err != nil {
-			t.Fatalf("Exists after Put: %v", err)
-		}
-		if !ok {
-			t.Fatal("Exists after Put = false, want true")
-		}
-		if err := s.Delete(ctx, k); err != nil {
-			t.Fatal(err)
-		}
+		assert.NoError(t, err)
+		assert.True(t, ok)
+		require.NoError(t, s.Delete(ctx, k))
 		ok, err = s.Exists(ctx, k)
-		if err != nil {
-			t.Fatalf("Exists after Delete: %v", err)
-		}
-		if ok {
-			t.Fatal("Exists after Delete = true, want false")
-		}
+		assert.NoError(t, err)
+		assert.False(t, ok)
 	})
 }
 
 func openURL(tb testing.TB, url string) *objectstore.Store {
 	tb.Helper()
 	s, err := objectstore.Open(context.Background(), url)
-	if err != nil {
-		tb.Fatal(err)
-	}
+	require.NoError(tb, err)
 	return s
 }
 
