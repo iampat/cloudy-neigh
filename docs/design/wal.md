@@ -98,7 +98,7 @@ order that the tail search and every operator depend on.
 
 A monotonic key is the classic hotspot shape, and it does not bind here. The
 stream name sits inside the prefix, so two streams partition apart. One stream
-stops at 7 to 17 appends per second, because writers contend for the next
+stops at 7.0 to 18.5 appends per second, because writers contend for the next
 number. A backend prefix serves 3,500 requests per second. The contention limit
 is the lower one, so the prefix limit is never the binding constraint.
 
@@ -128,8 +128,8 @@ removes the cold-start search. Three reasons refuse it.
 so it uses the write budget of the whole prefix. A mutation rewrites one key, and
 every backend caps that key on its own. Appendix B of
 [storage.md](storage.md) measures 2.7 mutations per second on one key.
-The measured append ceiling is 7 to 17 appends per second, which is about five
-times more.
+The measured append ceiling is 7.0 to 18.5 appends per second, which is three
+to seven times more.
 
 **The key namespace is the only source of truth.** A head object adds a second
 one. A partial failure then leaves the two in disagreement, and recovery needs a
@@ -188,9 +188,15 @@ stream always form the range `1..T` with no hole. The tail search depends on it,
 because a binary search over a range with a hole reports the wrong head.
 
 The cost of a collision is one wasted upload. The loser of a race uploads the
-segment again under the next number. The resulting ceiling is 7 to 17 appends per
-second on one stream. More writers do not raise it. They lower it past a peak
-near 20 writers, and one writer then wins most of the stream.
+segment again under the next number. The resulting ceiling is 7.0 to 18.5
+appends per second on one stream. More writers raise it only to a peak at 20
+writers. Past that peak they lower it, because the wasted uploads grow faster
+than the gain. At 100 writers the stream serves 8.0 appends per second, which
+is less than one writer serves.
+
+No writer starves at any count. The busiest writer at 100 writers takes 2.6% of
+the stream, against an ideal share of 1.0%.
+[benchmark/wal.md](../benchmark/wal.md) holds the measurements.
 [storage.md](storage.md) §9 names the gateway that raises the ceiling.
 
 The retry loop ends when the context ends. It has no attempt limit, because each
@@ -387,9 +393,9 @@ lock that ignores cancellation keeps every queued goroutine in place through tha
 stall. Each one then wakes to a context that expired long before.
 
 That caps one process near one append per round trip on one stream. The
-measured rate is 11.9 per second in the region of the bucket, and 7.5 per
+measured rate is 13.6 per second in the region of the bucket, and 7.9 per
 second from a laptop. The cap counts calls to `Append`, and each call carries a
-whole batch. A caller that appends 100 records per call thus reaches 1,190
+whole batch. A caller that appends 100 records per call thus reaches 1,360
 records per second. More processes do not raise the rate, because the same
 round trip binds every writer of one stream. Group commit removes the cap, and
 Future work holds it.
@@ -428,21 +434,24 @@ write produces a segment that nothing can read back.
 
 ## Limits
 
-The first two rows come from cloud storage measurements. The rest comes from
-Appendix B of [storage.md](storage.md).
+The first four rows come from [benchmark/wal.md](../benchmark/wal.md). The rest
+comes from Appendix B of [storage.md](storage.md).
 
 | Dimension                                 | Threshold         | Cause                                        |
 | ----------------------------------------- | ----------------- | -------------------------------------------- |
-| Segments per second, one stream, all writers | 7 to 17        | one conditional create for each round trip   |
-| Segments per second, one stream, one process | 7.5 to 11.9    | one append at a time, at one round trip each |
+| Segments per second, one stream, all writers | 7.0 to 18.5    | one conditional create for each round trip   |
+| Segments per second, one stream, one process | 7.9 to 13.6    | one append at a time, at one round trip each |
+| Writers at the peak rate                  | 20                | write cost grows faster than the gain        |
+| p99 append latency, 100 writers           | 104 s to 165 s    | a loser retries with no attempt limit        |
 | Requests per second, one prefix           | 3,500 to 5,500    | backend prefix limits                        |
 | Segments per stream                       | no measured bound | retention is permanent, and GC is a non-goal |
 
 Every row counts segments, and one segment carries a whole batch. Record
 throughput is the segment rate times the batch size.
 
-The two rows almost meet, and that is the finding. One writer alone reaches the
-rate of a whole deployment, because the round trip binds them both.
+The first two rows almost meet, and that is the finding. One writer alone
+reaches 73% of the peak of a whole deployment, because the round trip binds
+them both.
 
 The first row counts every writer of a stream, and the second counts one
 process. More processes raise the rate very little, because the round trip

@@ -4,15 +4,13 @@
 
 ## Problem
 
-`docs/design/wal.md` states an append ceiling of 7 to 17 segments per second on
-one stream. That range came from a short measurement. It carries no tail
-latency, no fairness number, and no cost for a lost race.
+We measure the append performance of one LogStream stream on GCS.
 
-An operator needs three numbers before the write path takes production traffic.
-The first is the rate one stream sustains. The second is the latency a writer
-sees at the tail. The third is the object write cost of the contention.
+Three numbers matter:
 
-This report measures all three.
+- the rate one stream sustains
+- the latency a writer sees at the tail
+- the object write cost of a lost race
 
 ## Method
 
