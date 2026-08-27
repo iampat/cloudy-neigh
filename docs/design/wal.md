@@ -1,6 +1,6 @@
 # LogStream
 
-**Status:** Draft — 2026-08-26 — v1
+**Status:** Draft, 2026-08-26, v1
 
 ## Problem
 

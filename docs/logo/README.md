@@ -17,7 +17,7 @@ Generated with Google's **`gemini-3.1-flash-image`** (Nano Banana) model,
 ## Regenerating
 
 Requires a `GEMINI_API_KEY` environment variable. Note that generation is
-non-deterministic — each run produces a new variation, not this exact image.
+non-deterministic. Each run produces a new variation, not this exact image.
 
 ```sh
 curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent" \

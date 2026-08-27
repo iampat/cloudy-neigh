@@ -10,7 +10,7 @@ corrections the user repeated that no other rule file covers, and each entry
 names the action to take. The `retro` skill maintains that file. The user
 triggers the skill and approves every edit it makes.
 
-## Build — Bazel only
+## Build: Bazel only
 
 Never invoke `go build`/`go test` or run scripts directly. Go through Bazel so
 the toolchain and the dependency graph stay authoritative.
@@ -49,9 +49,9 @@ imports it. Delete the copies when the tool finishes.
 
 ## Language guidelines
 
-Before the first edit in a language — new code or a refactor — read its
-guideline file. Code review reads the same files, so you write to the rules
-you are reviewed against.
+Read the guideline file for a language before your first edit in it. This
+covers new code and a refactor. Code review reads the same files, so you write
+to the rules you are reviewed against.
 
 - Go (`*.go`, `go.mod`): `docs/guidelines/go.md`
 - Bazel (`BUILD.bazel`, `MODULE.bazel`, `.bazelrc`): `docs/guidelines/bazel.md`
@@ -123,21 +123,26 @@ not trust memory over the help output.
   The note holds the rationale, and the copy goes stale. Go convention alone
   does not justify a doc comment. Delete a comment that paraphrases the
   identifier, restates the signature, or explains a pattern the reader knows.
-  Delete one that gives the reason for an obvious choice, or names the caller. Applies to config and
-  build files (`.bazelrc`, `MODULE.bazel`, `BUILD.bazel`, workflows) as much as
-  to Go. Delete them before you show the code, not after review asks.
+  Delete one that gives the reason for an obvious choice, or names the caller.
+  The rule covers config and build files as much as Go: `.bazelrc`,
+  `MODULE.bazel`, `BUILD.bazel`, and workflows. Delete them before you show the
+  code, not after review asks.
 - Flag open design questions with `CONSIDER(ali):` comments.
-- Write prose in ASD-STE100 Simplified Technical English: active voice, simple
-  tenses, one idea per sentence, one term per concept. Maximum 20 words in an
-  instruction, 25 in a description. No semicolons, no phrasal verbs. Spell out
-  an acronym at first use. "e.g." is permitted.
+- Write short, direct, plain English. Blunt on purpose. Say the point in the
+  first sentence. No throat-clearing, no corporate tone, no padding. Simple
+  words, active voice, one idea per sentence. Maximum 20 words in an
+  instruction, 25 in a description. No semicolon, no em dash, no phrasal verb.
+  Spell out an acronym at first use. "e.g." is permitted. This is ASD-STE100
+  Simplified Technical English with a plainer voice on top.
+- Avoid these phrases: "say the word", "honest" and "honestly", "load bearing".
+  They read as filler or as flattery.
 - Write for a working software engineer. Do not explain a language feature, a
   protocol, or a pattern that audience already knows. Explain only what is
   specific to this project.
 - Replies to the user follow the same rules. Lead with the result. Add detail
-  only when it changes what the reader does next. To explain structure or
-  flow, prefer a small sketch — a file tree, a call tree, pseudocode, or a
-  diff — over prose.
+  only when it changes what the reader does next. To explain structure or flow,
+  prefer a small sketch over prose: a file tree, a call tree, pseudocode, or a
+  diff.
 - Design notes: Markdown in `docs/design/`. Update them alongside the code they
   describe.
 - Every change reaches `main` through a pull request. Never commit on `main`,
@@ -167,10 +172,13 @@ not trust memory over the help output.
 - An agy review transcript lives in `docs/reviews/<date>-<topic>.md` for the
   pull request only. `git rm` it before the merge.
 
-For planning a new feature or design, use the `plan-feature` skill. For any
-documentation or technical prose — `docs/`, READMEs, PR descriptions — use the
-`technical-writing` skill. To review code, a diff, or a PR, use the `code-review`
-skill. Before you present a design as done, use the `consult-jeff-dean` skill to get an
-external review from `agy`. For a hard algorithmic or data-structure problem,
-use the `consult-petr` skill. Petr designs and writes that code, and you
-supervise.
+Skills to use:
+
+- `plan-feature`, to plan a new feature or design.
+- `technical-writing`, for any documentation or technical prose. This covers
+  `docs/`, READMEs, and PR descriptions.
+- `code-review`, to review code, a diff, or a PR.
+- `consult-jeff-dean`, for an external review from `agy`. Use it before you
+  present a design as done.
+- `consult-petr`, for a hard algorithmic or data-structure problem. Petr
+  designs and writes that code, and you supervise.

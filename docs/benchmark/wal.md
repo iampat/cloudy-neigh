@@ -1,6 +1,6 @@
 # LogStream append contention
 
-**Status:** Accepted — 2026-08-27 — v1
+**Status:** Accepted, 2026-08-27, v1
 
 ## Objective
 

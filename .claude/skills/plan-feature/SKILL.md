@@ -1,6 +1,6 @@
 ---
 name: plan-feature
-description: Plan a new feature, subsystem, or design. Use when starting non-trivial work — before writing code — to surface unknowns, failure modes, and trade-offs while they are still cheap to fix.
+description: Plan a new feature, subsystem, or design. Use when starting non-trivial work, before writing code, to surface unknowns, failure modes, and trade-offs while they are still cheap to fix.
 ---
 
 # Planning a feature
@@ -17,7 +17,7 @@ and the decisions that need input. Do not narrate the parts that are obvious.
 - Translate vague terms in the request into precise ones ("fast" → target
   latency/throughput; "durable" → what survives what kind of crash).
 - Schema decisions, serialization formats, and type interfaces are the most likely
-  tweaking points — flag them and keep them cheap to change.
+  tweaking points. Flag them and keep them cheap to change.
 - When two designs are genuinely competitive, sketch both briefly and compare
   instead of committing to the first.
 
@@ -25,7 +25,7 @@ and the decisions that need input. Do not narrate the parts that are obvious.
 
 1. Break the work into small, independently verifiable tasks.
 2. Outline the code: package layout, key types, function names and purposes.
-3. List the specific test cases you will write — happy path **and** failure modes
+3. List the specific test cases you will write: happy path **and** failure modes
    (crash mid-write, partial/torn writes, concurrent writers, retries, context
    cancellation).
 4. State the error-handling strategy per failure scenario.
@@ -33,7 +33,7 @@ and the decisions that need input. Do not narrate the parts that are obvious.
 
 ## 3. Interrogate failure modes
 
-For a storage/search engine this is the part most likely to be wrong — answer
+For a storage/search engine this is the part most likely to be wrong. Answer
 explicitly:
 
 - What happens on a crash at the worst possible moment? What state is recovered,

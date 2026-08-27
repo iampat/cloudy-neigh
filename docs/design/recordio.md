@@ -1,6 +1,6 @@
 # RecordIO
 
-**Status:** Draft — 2026-08-20 — v1
+**Status:** Draft, 2026-08-20, v1
 
 ## Problem
 
