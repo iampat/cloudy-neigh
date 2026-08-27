@@ -213,12 +213,12 @@ func TestReadSharesBackingArray(t *testing.T) {
 	})
 }
 
-func TestTailGallopColdStart(t *testing.T) {
+func TestTailJumpColdStart(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
 		limit := 5
 		log := logstream.New(s, logstream.WithTailListLimit(limit))
 		ctx := context.Background()
-		stream := "cold-gallop"
+		stream := "cold-jump"
 
 		total := 23
 		for i := 1; i <= total; i++ {

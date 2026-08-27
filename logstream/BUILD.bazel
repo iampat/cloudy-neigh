@@ -14,8 +14,8 @@ go_library(
 go_test(
     name = "logstream_test",
     srcs = [
-        "gallop_internal_test.go",
         "gcs_test.go",
+        "jump_internal_test.go",
         "log_test.go",
     ],
     embed = [":logstream"],

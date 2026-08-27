@@ -17,7 +17,7 @@ func WithReaderBufferSize(size int) ReaderOption {
 	}
 }
 
-func WithReaderMaxRecordSize(max int64) ReaderOption {
+func WithReaderMaxRecordSize(max int) ReaderOption {
 	return func(r *Reader) {
 		if max > 0 {
 			r.maxRecordSize = max
@@ -30,7 +30,7 @@ type Reader struct {
 	bufSize         int
 	offset          int64
 	lastValidOffset int64
-	maxRecordSize   int64
+	maxRecordSize   int
 	err             error
 	footer          [footerSize]byte
 }
@@ -72,7 +72,7 @@ func (r *Reader) ReadRecord(dst []byte) (n int, err error) {
 		return 0, ErrHeaderCorrupted
 	}
 
-	if length > uint64(r.maxRecordSize) {
+	if r.maxRecordSize <= 0 || length > uint64(r.maxRecordSize) {
 		return 0, ErrRecordTooLarge
 	}
 	if int(length) > len(dst) {

@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,7 +32,7 @@ func WithPrefix(prefix string) Option {
 	}
 }
 
-func WithMaxRecordSize(max int64) Option {
+func WithMaxRecordSize(max int) Option {
 	return func(l *Log) {
 		if max > 0 {
 			l.maxRecordSize = max
@@ -48,14 +49,14 @@ func WithTailListLimit(limit int) Option {
 }
 
 type streamState struct {
-	mu        chan struct{}
+	ch        chan struct{}
 	lastKnown uint64
 }
 
 type Log struct {
 	store         *objectstore.Store
 	prefix        string
-	maxRecordSize int64
+	maxRecordSize int
 	listLimit     int
 
 	streamsMu sync.Mutex
@@ -76,8 +77,6 @@ func New(store *objectstore.Store, opts ...Option) *Log {
 	return l
 }
 
-// CONSIDER(ali): the gate distance of 16 and the runway both come from reasoning,
-// not from a measurement.
 const gateDistance = 16
 
 func (l *Log) stream(name string) *streamState {
@@ -86,7 +85,7 @@ func (l *Log) stream(name string) *streamState {
 	s, ok := l.streams[name]
 	if !ok {
 		s = &streamState{
-			mu: make(chan struct{}, 1),
+			ch: make(chan struct{}, 1),
 		}
 		l.streams[name] = s
 	}
@@ -104,7 +103,7 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 		return 0, err
 	}
 	for _, r := range records {
-		if int64(len(r)) > l.maxRecordSize {
+		if len(r) > l.maxRecordSize {
 			return 0, fmt.Errorf("logstream: record size %d exceeds max %d", len(r), l.maxRecordSize)
 		}
 	}
@@ -125,9 +124,9 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
-	case st.mu <- struct{}{}:
+	case st.ch <- struct{}{}:
 	}
-	defer func() { <-st.mu }()
+	defer func() { <-st.ch }()
 
 	if st.lastKnown == 0 {
 		t, err := l.Tail(ctx, stream)
@@ -145,7 +144,7 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		key := l.segmentKey(stream, seq)
+		key := segmentKey(l.prefix, stream, seq)
 		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), &objectstore.Condition{Absent: true})
 		if err == nil {
 			st.lastKnown = seq
@@ -162,7 +161,8 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 			if seq > math.MaxUint64-gateDistance {
 				return 0, errors.New("logstream: sequence number overflow")
 			}
-			ex, err := l.exists(ctx, stream, seq+gateDistance)
+			gateKey := segmentKey(l.prefix, stream, seq+gateDistance)
+			ex, err := exists(ctx, l.store, gateKey)
 			if err != nil {
 				return 0, err
 			}
@@ -170,7 +170,10 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 				seq++
 				tries = 0
 			} else {
-				head, probes, err := l.gallop(ctx, stream, seq+gateDistance)
+				probe := func(ctx context.Context, s uint64) (bool, error) {
+					return exists(ctx, l.store, segmentKey(l.prefix, stream, s))
+				}
+				head, probes, err := jump(ctx, seq+gateDistance, probe)
 				if err != nil {
 					return 0, err
 				}
@@ -184,7 +187,6 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
 			return 0, ctx.Err()
 		case <-timer.C:
 		}
@@ -202,7 +204,7 @@ func (l *Log) Read(ctx context.Context, stream string, seq uint64) ([]Record, er
 		return nil, err
 	}
 
-	key := l.segmentKey(stream, seq)
+	key := segmentKey(l.prefix, stream, seq)
 	rc, _, err := l.store.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
@@ -241,7 +243,7 @@ func (l *Log) Tail(ctx context.Context, stream string) (uint64, error) {
 		return 0, err
 	}
 
-	prefix := l.streamPrefix(stream)
+	prefix := streamPrefix(l.prefix, stream)
 	objs, err := l.store.List(ctx, prefix, "", l.listLimit)
 	if err != nil {
 		return 0, err
@@ -258,11 +260,14 @@ func (l *Log) Tail(ctx context.Context, stream string) (uint64, error) {
 		return lastSeq, nil
 	}
 
-	head, _, err := l.gallop(ctx, stream, lastSeq)
+	probe := func(ctx context.Context, s uint64) (bool, error) {
+		return exists(ctx, l.store, segmentKey(l.prefix, stream, s))
+	}
+	head, _, err := jump(ctx, lastSeq, probe)
 	return head, err
 }
 
-func (l *Log) gallop(ctx context.Context, stream string, lo uint64) (uint64, int, error) {
+func jump(ctx context.Context, lo uint64, probe func(context.Context, uint64) (bool, error)) (uint64, int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, 0, err
 	}
@@ -270,7 +275,7 @@ func (l *Log) gallop(ctx context.Context, stream string, lo uint64) (uint64, int
 		return lo, 0, nil
 	}
 
-	ex, err := l.exists(ctx, stream, lo+1)
+	ex, err := probe(ctx, lo+1)
 	if err != nil {
 		return 0, 1, err
 	}
@@ -294,7 +299,7 @@ func (l *Log) gallop(ctx context.Context, stream string, lo uint64) (uint64, int
 			target = lo + d
 		}
 
-		ex, err := l.exists(ctx, stream, target)
+		ex, err := probe(ctx, target)
 		probes++
 		if err != nil {
 			return 0, probes, err
@@ -314,43 +319,52 @@ func (l *Log) gallop(ctx context.Context, stream string, lo uint64) (uint64, int
 		}
 	}
 
-	for low+1 < high {
-		if err := ctx.Err(); err != nil {
-			return 0, probes, err
-		}
-		mid := low + (high-low)/2
-		ex, err := l.exists(ctx, stream, mid)
-		probes++
-		if err != nil {
-			return 0, probes, err
-		}
-		if ex {
-			low = mid
-		} else {
-			high = mid
-		}
-	}
-	return low, probes, nil
+	head, bProbes, err := binarySearch(ctx, low, high, probe)
+	return head, probes + bProbes, err
 }
 
-func (l *Log) exists(ctx context.Context, stream string, seq uint64) (bool, error) {
+func binarySearch(ctx context.Context, low, high uint64, probe func(context.Context, uint64) (bool, error)) (uint64, int, error) {
+	var perr error
+	var probes int
+	n := int(high - low - 1)
+	idx := sort.Search(n, func(i int) bool {
+		if perr != nil || ctx.Err() != nil {
+			return true
+		}
+		probes++
+		ok, err := probe(ctx, low+1+uint64(i))
+		if err != nil {
+			perr = err
+			return true
+		}
+		return !ok
+	})
+	if ctx.Err() != nil {
+		return 0, probes, ctx.Err()
+	}
+	if perr != nil {
+		return 0, probes, perr
+	}
+	return low + uint64(idx), probes, nil
+}
+
+func exists(ctx context.Context, store *objectstore.Store, key string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	key := l.segmentKey(stream, seq)
-	objs, err := l.store.List(ctx, key, "", 1)
+	objs, err := store.List(ctx, key, "", 1)
 	if err != nil {
 		return false, err
 	}
 	return len(objs) > 0 && objs[0].Key == key, nil
 }
 
-func (l *Log) segmentKey(stream string, seq uint64) string {
-	return fmt.Sprintf("%s/%s/%020d.recordio", l.prefix, stream, seq)
+func segmentKey(prefix, stream string, seq uint64) string {
+	return fmt.Sprintf("%s/%s/%020d.recordio", prefix, stream, seq)
 }
 
-func (l *Log) streamPrefix(stream string) string {
-	return fmt.Sprintf("%s/%s/", l.prefix, stream)
+func streamPrefix(prefix, stream string) string {
+	return fmt.Sprintf("%s/%s/", prefix, stream)
 }
 
 func parseSeq(key string) (uint64, error) {
