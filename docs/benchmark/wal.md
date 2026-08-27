@@ -4,24 +4,25 @@
 
 ## Objective
 
-We measure the range of appends per second on one LogStream stream on GCS. We
-also report the latency, the fairness, and the retry cost.
+We measure the range of the append rate for one LogStream stream on Google Cloud
+Storage. We also report the latency, the fairness, and the write cost.
 
 ## Method
 
 `cmd/walbench` runs one writer count at a time. All writers of a run append to
 one stream for 10 minutes. Each record holds 1 KiB to 10 KiB of random bytes.
 
-Two machines ran the same matrix. The remote machine is a MacBook outside the
-GCP region. The VM is `walbench-central`, an e2-standard-4 in us-central1-a,
-the region of the bucket.
+Two machines ran the same writer counts. The virtual machine (VM) is
+`walbench-central`, an e2-standard-4 in us-central1-a, the region of the bucket.
+The remote machine is a MacBook outside that region.
 
 ## Correctness
 
 `walbench -sanity` reads every segment of every stream from the bucket. It
 checks four properties:
 
-- the live sequence numbers form `1..T` with no hole
+- the live sequence numbers form `1..T` with no hole, where `T` is the record
+  count
 - each record matches its length field and its CRC32
 - every acknowledged record returns
 - no record returns twice
@@ -53,8 +54,8 @@ it. Both peaks sit at 20 writers.
 
 ## Latency
 
-The median holds flat across the matrix. The tail grows by three orders of
-magnitude.
+The median holds flat across the writer counts. The tail grows by three orders
+of magnitude.
 
 | writers | remote p50 | remote p99 | remote max | VM p50 | VM p99 | VM max |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -74,10 +75,10 @@ a bound must set a deadline.
 
 ## Fairness
 
-No writer starved. Not one writer in any run received one append or less.
+No writer starved. Every writer landed more than one append in every run.
 
 The Jain index measures how evenly the appends split across the writers. Writer
-`i` lands `x` appends, and `n` writers share the stream.
+`i` lands `xᵢ` appends, and `n` writers share the stream.
 
 ```
         ( Σ xᵢ )²
@@ -101,12 +102,12 @@ Read the index against its floor, not against zero. At 100 writers the floor is
 | 50 | 0.020 | 0.898 | 4.0% | 0.988 | 2.5% |
 | 100 | 0.010 | 0.821 | 2.6% | 0.874 | 2.3% |
 
-The top share is the second view. It gives the share of the stream that the
-busiest writer took. The busiest writer at 100 writers took 2.6% against an
-ideal share of 1.0%. The VM stays close to a perfect split at every count.
+The top share gives the share of the stream that the busiest writer took. At 100
+writers the busiest writer took 2.6% against an ideal share of 1.0%. The VM
+stays close to a perfect split at every count.
 
-The remote machine is fair but noisier. A long round trip widens the window in
-which one writer wins several rounds in a row.
+The remote machine is fair but noisier. A long round trip widens the window, so
+one writer can win several successive rounds.
 
 ## Write cost
 
@@ -125,4 +126,4 @@ with the writer count.
 Every retry uploads a full segment. The loser of a race learns that it lost
 only after the upload, so each retry costs one object write. At 100 writers the
 stream paid 309,000 object writes to store 4,326 records. This cost is the
-reason the rate curve turns down.
+reason the rate curve falls.
