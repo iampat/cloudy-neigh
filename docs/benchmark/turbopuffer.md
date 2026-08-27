@@ -15,15 +15,6 @@ The tool talks to one thing: turbopuffer's HTTP and JSON API. Build that API on
 cloudy-neigh, and `tpufbench` runs against it unchanged. Same binary, same
 definitions, same datasets, same measurement. Two engines.
 
-That compatible API runs in the process that already holds the engine, next to
-the gRPC service. Both systems then parse the same JSON bytes from the same
-client, and any difference in the numbers belongs to the engine.
-
-Forking the tool for a gRPC client is less work and ruins the point. Each
-system would then face a different client and a different encoder. A
-translating gateway fails from the other side. It leaves the tool alone, but it
-taxes only our half with an extra hop.
-
 The cost is a second API surface, scoped to what the benchmark definitions
 call. It never enters `docs/design/grpc-api.md`. It also buys a migration path,
 because a turbopuffer client can point at cloudy-neigh without a rewrite.
