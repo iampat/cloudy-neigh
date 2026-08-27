@@ -17,6 +17,7 @@ We deliver features through an incremental roadmap. We break down search capabil
 - Deliver low query latency through tiered local NVMe SSD and memory caching.
 - Ship incremental capabilities in distinct, testable milestones.
 - Keep the operational footprint minimal with zero external coordination servers.
+- Publish latency and throughput numbers that a reader can reproduce.
 
 ## Non-goals
 
@@ -53,6 +54,13 @@ The system separates query processing, cache management, and durable storage int
 1. **Storage Layer**: Stores append-only write-ahead logs (`recordio` files), immutable index segments, and manifest snapshots in object storage.
 2. **Execution Layer**: Executes vector distance computations, inverted index scans, and score fusions.
 3. **Cache Layer**: Caches immutable object segments on local NVMe SSD and in RAM to eliminate remote network round-trips.
+
+---
+
+## Benchmarks
+
+The engine needs a benchmark. A milestone that adds a retrieval path also
+publishes the numbers for it, and a reader must be able to reproduce them.
 
 ---
 
@@ -243,4 +251,4 @@ Complete the developer workflow and harden production operations.
 
 ## Open Questions
 
-`CONSIDER(ali):` Should index compaction run inside query nodes or as a separate serverless worker process? A separate worker isolates compute spikes from read latency, but adds operational deployment components.
+`CONSIDER(ali):` Does index compaction run inside a query node, or in a separate serverless worker? A separate worker isolates compute spikes from read latency, but it adds a deployment component.
