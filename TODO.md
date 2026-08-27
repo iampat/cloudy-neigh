@@ -6,6 +6,16 @@
   - [ ] Revisit the ObjectStore API. Add a `Head` call, because the LogStream
         tail search probes with `List` today and pays list pricing. Drop the
         generation token from a conditional create, which no caller reads.
+- [ ] Publish the benchmarks, the code coverage, and the build health on the
+      front page of the repository. A number nobody sees changes no decision.
+  - [ ] Show the state of the build and the tests as a badge in `README.md`.
+  - [ ] Measure the code coverage in CI, publish it, and show it as a badge.
+        `bazel coverage //...` produces the data today.
+  - [ ] Publish the benchmark results. `ci.yaml` already runs them with
+        `-test.bench=.`, and the numbers reach the log and stop there. Keep a
+        history, so a change that costs latency shows as a step in a chart.
+  - [ ] Name the numbers that matter on the front page: the append rate of
+        LogStream, and the read latency of the object store.
 - [ ] Validate the protocols with a formal method. A test finds the
       interleaving it runs. A model checker finds the one nobody thought of,
       and that is where a storage protocol fails.
