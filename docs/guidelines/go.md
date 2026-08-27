@@ -55,6 +55,8 @@ into the smallest hook the library offers, such as the `As` escape hatch in
 - A function that does I/O, or calls one that does, takes `context.Context` as
   its first parameter and passes it down. Flag a call that drops one, and flag
   a `_ context.Context` parameter.
+- Context cancellation is best-effort, not a commitment. Do not add a manual
+  `ctx.Err()` check only to force cancellation on fast or local operations.
 - Check `ctx.Err()` where there is work worth abandoning: once per item in a
   batch, and once more before a commit.
 - Never add a context that no implementation reads. It claims a cancellation

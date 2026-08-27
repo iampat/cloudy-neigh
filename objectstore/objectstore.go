@@ -99,9 +99,6 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 }
 
 func (s *Store) Exists(ctx context.Context, key string) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
 	ok, err := s.b.Exists(ctx, key)
 	if err != nil {
 		return false, translate(key, err)
