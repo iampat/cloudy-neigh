@@ -4,39 +4,33 @@
 
 ## The idea
 
-We want an apples-to-apples comparison against turbopuffer, and the cleanest
-way to get one is to stop writing our own benchmark. A benchmark we build
-ourselves picks its own data, its own queries and its own load, so it also
-picks its own winner.
+We want an apples-to-apples comparison against turbopuffer. A benchmark we
+build ourselves picks its own data, its own queries and its own load, so it
+also picks its own winner.
 
-turbopuffer already published the tool behind its public latency numbers:
-[tpuf-benchmark](https://github.com/turbopuffer/tpuf-benchmark). It is one Go
-binary, MIT licensed, and everything that decides a result lives in that
-repository. The datasets, the query shapes, the request rate, the warm-up and
-the reporting are all committed there, so anyone can rerun what turbopuffer
-publishes.
+turbopuffer published the tool behind its public latency numbers:
+[tpuf-benchmark](https://github.com/turbopuffer/tpuf-benchmark). One Go binary,
+MIT licensed, with the datasets, the query shapes, the request rate and the
+warm-up all committed to that repository.
 
-The one thing standing between that tool and cloudy-neigh is the wire. It
-speaks turbopuffer's HTTP and JSON API, and we speak gRPC. So we propose to
-build an API compatible with their endpoints, and then run `tpufbench` against
-cloudy-neigh unchanged. Same binary, same TOML definitions, same datasets,
-same measurement — two engines.
+Only the wire stands between that tool and cloudy-neigh. It speaks
+turbopuffer's HTTP and JSON API, and we speak gRPC. So we propose to build an
+API compatible with their endpoints, then run `tpufbench` against cloudy-neigh
+unchanged. Same binary, same definitions, same datasets, same measurement —
+two engines.
 
-We would serve that compatible API from the process that already holds the
-engine, next to the gRPC service. Both systems then parse the same JSON bytes
-sent by the same client, and whatever difference the numbers show belongs to
-the engine.
+That compatible API runs in the process that already holds the engine, next to
+the gRPC service. Both systems then parse the same JSON bytes from the same
+client, and any difference in the numbers belongs to the engine.
 
-The alternative is to fork the tool and hand it a gRPC client. That is less
-work, and it quietly ruins the point. Each system would then face a different
-client and a different encoder. A translating gateway in a separate process has
-the same problem from the other side. It leaves the tool alone, but it taxes
-only our half of the comparison with an extra hop.
+Forking the tool for a gRPC client is less work and ruins the point. Each
+system would then face a different client and a different encoder. A
+translating gateway fails from the other side. It leaves the tool alone, but it
+taxes only our half with an extra hop.
 
-The cost is a second API surface. We keep it scoped to what the benchmark
-definitions call, and it never enters `docs/design/grpc-api.md`. It buys
-something beyond the numbers, though. A turbopuffer user can then point an
-existing client at cloudy-neigh and see what happens.
+The cost is a second API surface, scoped to what the benchmark definitions
+call. It never enters `docs/design/grpc-api.md`. It also buys a migration path,
+because a turbopuffer client can point at cloudy-neigh without a rewrite.
 
 ## Endpoints the benchmark needs
 
@@ -63,9 +57,9 @@ counts nothing, reports nothing and still looks healthy.
 
 ## Datasets and workloads
 
-Eleven definitions ship with the tool. They pull from four real datasets plus
-a random generator, and they cover semantic search, lexical search, both at
-once, and a filtered aggregation.
+Eleven definitions ship with the tool. They draw on four real datasets plus a
+random generator, and cover semantic, lexical, hybrid and aggregation
+workloads.
 
 | Dataset | Source | Size in a run | Vectors | Retrieval | Metric |
 | --- | --- | --- | --- | --- | --- |
@@ -75,11 +69,10 @@ once, and a filtered aggregation.
 | TPC-H lineitem SF10 | generated | 59,986,052 rows | none | scalar filters | sum aggregation, query 6 |
 | random | PCG generator | any | any width | query vectors only | matches the definition |
 
-A few things worth knowing about that table. MSMarco ships a query set with
-embeddings, so the text and hybrid runs search with real queries rather than
-noise. The Wikipedia runs seed real embeddings and then query with random
-vectors. The 2048-dimension runs take the same 1024-dim MSMarco vectors and
-repeat them to 2048, stored as `f16`.
+MSMarco ships a query set with embeddings, so the text and hybrid runs search
+with real queries rather than noise. The Wikipedia runs seed real embeddings
+and then query with random vectors. The 2048-dimension runs repeat the same
+1024-dim MSMarco vectors to 2048, stored as `f16`.
 
 Every definition also sets a warm-up policy of its own. Some wait for a 100%
 cache hit ratio before the clock starts. The cold variants purge the cache
@@ -91,11 +84,10 @@ as the service, which is where we would run ours too.
 
 ## Where we start
 
-Milestone 1 gives us writes, exact k-NN and attribute filters. That is already
-enough for `vector-knn-1m-hot.toml` and `vector-knn-1m-cold.toml`: a million
-documents, 1024 dimensions, exact k-NN, five minutes per run. Neither needs an
-ANN index or a text index, so they are the first parity numbers we can put on
-a page.
+Milestone 1 gives us writes, exact k-NN and attribute filters. That already
+covers `vector-knn-1m-hot.toml` and `vector-knn-1m-cold.toml`: a million
+documents, 1024 dimensions, five minutes per run. Neither needs an ANN index or
+a text index, so they are the first numbers we can publish.
 
 | Milestone | What it unlocks |
 | --- | --- |
