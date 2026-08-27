@@ -1,10 +1,10 @@
 # Roadmap
 
-**Status:** Draft, 2026-08-25
+**Status:** Draft, 2026-08-27
 
 ## Problem
 
-Building a search engine on cloud object storage presents a fundamental trade-off. Remote object storage provides low cost, high durability, and unlimited capacity. But remote network calls add latency. Traditional search systems keep entire indexes in RAM. That design is expensive and limits dataset scale.
+A search engine on cloud object storage trades latency for cost. Remote object storage provides low cost, high durability, and unlimited capacity. But remote network calls add latency. Traditional search systems keep entire indexes in RAM. That design is expensive and limits dataset scale.
 
 `cloudy-neigh` is an open-source, cloud-native search engine. It decouples compute from storage. The engine uses cloud object storage as the source of truth. Stateless query and ingestion nodes use local NVMe SSD and RAM caches to achieve low search latency.
 
@@ -37,7 +37,7 @@ We deliver features through an incremental roadmap. We break down search capabil
       │                      Compute Node                      │
       │                                                        │
       │  ┌───────────────────────┐   ┌──────────────────────┐  │
-      │  │  Query Engine / Cache  │   │  WAL Writer / Buffer │  │
+      │  │  Query Engine / Cache │   │  WAL Writer / Buffer │  │
       │  │  (RAM / NVMe SSD)     │   │  (Group Commit)      │  │
       │  └───────────┬───────────┘   └──────────┬───────────┘  │
       └──────────────┼──────────────────────────┼──────────────┘
@@ -45,7 +45,7 @@ We deliver features through an incremental roadmap. We break down search capabil
                      ▼                          ▼
       ┌────────────────────────────────────────────────────────┐
       │               Cloud Object Storage                     │
-      │   (Immutable Index Segments, Manifests, and WAL Logs)  │
+      │     (Immutable Index Segments, Manifests, and WAL)     │
       └────────────────────────────────────────────────────────┘
 ```
 
@@ -64,11 +64,11 @@ publishes the numbers for it, and a reader must be able to reproduce them.
 
 ---
 
-## Phased Milestones
+## Milestones
 
 ```
    ┌────────────────────────────────────────────────────────────────────────┐
-   │ 1. Core Storage, WAL & Exact Retrieval                                 │
+   │ 1. Durable Ingestion & Exact Retrieval                                 │
    └───────────────────────────────────┬────────────────────────────────────┘
                                        ▼
    ┌────────────────────────────────────────────────────────────────────────┐
@@ -126,7 +126,7 @@ Establish the minimal functional search engine. A user can run a single node, in
 
 ### Milestone 2: Tiered Local Caching and Latency Optimization
 
-Reduce warm query latency from cloud round-trip times to sub-millisecond local reads.
+Serve a warm query from a local read instead of a cloud round trip.
 
 - **Two-tier cache hierarchy**: RAM cache for hot metadata and NVMe SSD cache for immutable index segments.
 - **Single-flight request coalescing**: Deduplicate concurrent object fetch requests during cache misses.
@@ -159,7 +159,7 @@ Combine vector similarity and lexical text relevance in a single query call.
 - **Filter pushdown**: Evaluate metadata predicates directly during hybrid scans to prune candidate sets early.
 - **Custom attribute ranking**: Rank results by scalar attribute values or computed distance metrics.
 
-**User Value**: Superior search quality that joins semantic similarity and exact keyword precision in one request.
+**User Value**: Semantic similarity and keyword precision in one request.
 
 ---
 
@@ -185,7 +185,7 @@ Support statistical summaries and facet counts over filtered document sets.
 - **Distinct count and facets**: Fast unique value extraction for search facets.
 - **Nested attribute filtering**: Query predicates for nested JSON structures and array containment.
 
-**User Value**: Rich faceted navigation and analytical search directly from the search index.
+**User Value**: Faceted navigation and analytics from the search index, with no second system.
 
 ---
 
@@ -199,7 +199,7 @@ Support multi-vector document representations and modern retrieval models.
 - **Snippet extraction and highlighting**: Return matched text snippets with highlighted query terms.
 - **Fuzzy text matching**: Levenshtein distance and n-gram matching for typo tolerance.
 
-**User Value**: Advanced information retrieval architectures and improved end-user search experiences.
+**User Value**: Support for modern retrieval models, and results a reader can scan.
 
 ---
 
@@ -212,7 +212,7 @@ Provide Git-like dataset branching and point-in-time snapshot isolation.
 - **Point-in-time queries**: Pin queries to specific historical snapshot versions.
 - **Garbage collection (GC)**: Background service to clean up unreferenced blobs and superseded manifest files.
 
-**User Value**: Safe experimentation, instant staging environments, and zero-downtime rollbacks with no storage duplication.
+**User Value**: Safe experimentation, instant staging environments, and rollbacks that copy no data.
 
 ---
 
@@ -225,7 +225,7 @@ Scale dataset size and query throughput across multiple compute nodes.
 - **Consistent routing**: Topology-aware request routing and shard mapping.
 - **Online resharding**: Rebalance and split shards with zero read downtime.
 
-**User Value**: Linear scaling from small embedded workloads to multi-terabyte search deployments.
+**User Value**: One engine for a small embedded workload and for a multi-terabyte deployment.
 
 ---
 
@@ -238,7 +238,7 @@ Complete the developer workflow and harden production operations.
 - **Data migration tools**: Bulk export, import, and backup restore utilities.
 - **Observability**: Prometheus metrics, OpenTelemetry distributed tracing, and health check endpoints.
 
-**User Value**: Turnkey developer experience with enterprise-grade operational controls.
+**User Value**: A complete client workflow, and the signals an operator needs to run the engine.
 
 ---
 
@@ -248,7 +248,3 @@ Complete the developer workflow and harden production operations.
 - Cross-region replication and multi-region read replicas.
 - Cross-encoder server-side reranking pipelines.
 - Natural language query interface compiling to structured query messages.
-
-## Open Questions
-
-`CONSIDER(ali):` Does index compaction run inside a query node, or in a separate serverless worker? A separate worker isolates compute spikes from read latency, but it adds a deployment component.
