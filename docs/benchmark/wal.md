@@ -125,24 +125,25 @@ one writer wins several rounds in a row.
 
 ## Write cost
 
-The stream pays `0.72n` object writes for each append that lands.
+A writer retries the conditional create until one lands. The retry count grows
+with the writer count.
 
-| writers | uploads per append | share that lands |
-| --- | --- | --- |
-| 1 | 1.00 | 100% |
-| 5 | 4.05 | 24.7% |
-| 10 | 7.81 | 12.8% |
-| 20 | 15.22 | 6.6% |
-| 50 | 37.30 | 2.7% |
-| 100 | 71.52 | 1.4% |
+| writers | retries before one append lands |
+| --- | --- |
+| 1 | 0.0 |
+| 5 | 3.1 |
+| 10 | 6.8 |
+| 20 | 14.2 |
+| 50 | 36.3 |
+| 100 | 70.5 |
 
-The numbers come from the laptop. The VM matches them inside 4%, so the cost
-does not depend on distance.
+The numbers come from the laptop. The VM matches them inside 4%, so the retry
+count does not depend on distance.
 
-At 100 writers the stream paid 309,000 object writes to store 4,326 records.
-The loser of a race uploads a full segment before it learns that it lost, so
-the waste grows with the writer count. This cost is the reason the rate curve
-turns down.
+Every retry uploads a full segment. The loser of a race learns that it lost
+only after the upload, so each retry costs one object write. At 100 writers the
+stream paid 309,000 object writes to store 4,326 records. This cost is the
+reason the rate curve turns down.
 
 ## Limits
 
@@ -152,6 +153,6 @@ turns down.
 | Appends per second, one stream, cross region | 8.4 | the round trip sets the rate |
 | Peak writer count | 20 | write cost grows faster than the gain |
 | p99 append latency, 100 writers | 104 s to 165 s | a loser retries with no attempt limit |
-| Object writes per append, 100 writers | 71.5 | one wasted upload for each lost race |
+| Retries before one append lands, 100 writers | 70.5 | one wasted upload for each lost race |
 
 Every number in this table comes from the 600 s runs.
