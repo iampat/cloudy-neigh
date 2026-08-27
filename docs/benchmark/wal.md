@@ -126,15 +126,3 @@ Every retry uploads a full segment. The loser of a race learns that it lost
 only after the upload, so each retry costs one object write. At 100 writers the
 stream paid 309,000 object writes to store 4,326 records. This cost is the
 reason the rate curve turns down.
-
-## Limits
-
-| Dimension | Threshold | Cause |
-| --- | --- | --- |
-| Appends per second, one stream, in region | 18.5 | one conditional create for each round trip |
-| Appends per second, one stream, cross region | 8.4 | the round trip sets the rate |
-| Peak writer count | 20 | write cost grows faster than the gain |
-| p99 append latency, 100 writers | 104 s to 165 s | a loser retries with no attempt limit |
-| Retries before one append lands, 100 writers | 70.5 | one wasted upload for each lost race |
-
-Every number in this table comes from the 10 minute runs.
