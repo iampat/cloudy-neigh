@@ -248,7 +248,3 @@ Complete the developer workflow and harden production operations.
 - Cross-region replication and multi-region read replicas.
 - Cross-encoder server-side reranking pipelines.
 - Natural language query interface compiling to structured query messages.
-
-## Open Questions
-
-`CONSIDER(ali):` Does index compaction run inside a query node, or in a separate serverless worker? A separate worker isolates compute spikes from read latency, but it adds a deployment component.
