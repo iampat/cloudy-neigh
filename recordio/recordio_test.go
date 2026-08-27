@@ -280,6 +280,28 @@ func TestReaderBufferLimitsAndRetry(t *testing.T) {
 			t.Errorf("ReadRecord exceeding MaxRecordSize err = %v, want ErrRecordTooLarge", err)
 		}
 	})
+
+	t.Run("ScannerRecordTooLarge", func(t *testing.T) {
+		scanner := recordio.NewScanner(bytes.NewReader(buf.Bytes()), recordio.WithScannerMaxRecordSize(5))
+		if scanner.Scan() {
+			t.Fatal("Scan succeeded, want failure due to ErrRecordTooLarge")
+		}
+		if !errors.Is(scanner.Err(), recordio.ErrRecordTooLarge) {
+			t.Errorf("Scanner err = %v, want ErrRecordTooLarge", scanner.Err())
+		}
+	})
+
+	t.Run("NonPositiveMaxRecordSizeIgnored", func(t *testing.T) {
+		reader := recordio.NewReader(bytes.NewReader(buf.Bytes()), recordio.WithReaderMaxRecordSize(-10))
+		dst := make([]byte, 20)
+		n, err := reader.ReadRecord(dst)
+		if err != nil {
+			t.Fatalf("ReadRecord failed with negative max option: %v", err)
+		}
+		if n != len(payload1) {
+			t.Fatalf("ReadRecord n = %d, want %d", n, len(payload1))
+		}
+	})
 }
 
 func TestScannerScanAndRecordCopy(t *testing.T) {

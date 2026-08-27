@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	DefaultBufferSize          = 64 * 1024
-	DefaultMaxRecordSize int64 = 64 * 1024 * 1024
+	DefaultBufferSize        = 64 * 1024
+	DefaultMaxRecordSize int = 64 * 1024 * 1024
 
 	maskDelta     uint32 = 0xa282ead8
 	headerSize           = 12

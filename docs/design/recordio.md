@@ -242,11 +242,11 @@ func WithWriterBufferSize(size int) WriterOption
 func WithWriterSyncOnFlush(sync bool) WriterOption
 
 func WithReaderBufferSize(size int) ReaderOption
-func WithReaderMaxRecordSize(max int64) ReaderOption
+func WithReaderMaxRecordSize(max int) ReaderOption
 
 func WithScannerBufferSize(size int) ScannerOption
 func WithScannerInitialBufferSize(size int) ScannerOption
-func WithScannerMaxRecordSize(max int64) ScannerOption
+func WithScannerMaxRecordSize(max int) ScannerOption
 ```
 
 ## Error handling and WAL recovery

@@ -26,7 +26,7 @@ func WithScannerInitialBufferSize(size int) ScannerOption {
 	}
 }
 
-func WithScannerMaxRecordSize(max int64) ScannerOption {
+func WithScannerMaxRecordSize(max int) ScannerOption {
 	return func(s *Scanner) {
 		if max > 0 {
 			s.maxRecordSize = max
@@ -43,7 +43,7 @@ type Scanner struct {
 	recordLen       int
 	offset          int64
 	lastValidOffset int64
-	maxRecordSize   int64
+	maxRecordSize   int
 	err             error
 	header          [headerSize]byte
 	footer          [footerSize]byte

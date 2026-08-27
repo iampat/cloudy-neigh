@@ -167,7 +167,7 @@ Append(stream, records):
         tries = tries + 1
         tries < runway             ──▶  seq = seq + 1
         exists(seq + 16) is false  ──▶  seq = seq + 1;  tries = 0
-        otherwise                  ──▶  head, probes = gallop(seq + 16)
+        otherwise                  ──▶  head, probes = jump(seq + 16)
                                         seq    = head + 1
                                         runway = max(3, 2 * probes)
                                         tries  = 0
@@ -217,11 +217,11 @@ gate probe at `seq + 16` reports absent, and the writer keeps marching.
 **Drift.** The writer is far behind. The gate probe at `seq + 16` reports
 present, and a linear walk cannot close the distance.
 
-A gallop closes a drift. It starts from a number that is known to exist, so it
+A jump closes a drift. It starts from a number that is known to exist, so it
 needs no list page:
 
 ```text
-gallop(lo):                          lo is known to exist
+jump(lo):                            lo is known to exist
     exists(lo + 1) is false  ──▶     return lo
     d = 2
     while exists(lo + d):  d = d * 2
@@ -229,15 +229,15 @@ gallop(lo):                          lo is known to exist
     binary search that range for the last number that exists
 ```
 
-The gallop doubles an **offset** from `lo`. It never doubles the sequence number
+The jump doubles an **offset** from `lo`. It never doubles the sequence number
 itself. Take a stream at one million segments, with a head five above `lo`. A
 doubled sequence number searches the range up to two million. That costs 20
 probes to find a number 5 away.
 
-The gallop costs about `2 log2(delta)` probes in the real distance. A writer 3
+The jump costs about `2 log2(delta)` probes in the real distance. A writer 3
 segments behind pays 4 probes, and a writer a million behind pays about 40.
 
-The runway is twice the probe count, and never less than 3. A gallop that returns
+The runway is twice the probe count, and never less than 3. A jump that returns
 after one probe would otherwise leave a runway of one. The next collision would
 then send the writer straight back to the gate. The stream also advances once per
 active writer during every probe. A runway equal to the probe count is thus too
@@ -292,11 +292,11 @@ Tail(stream):
     objs = List("wal/<stream>/", "", listLimit)
     len(objs) == 0         ──▶  return 0
     len(objs) < listLimit  ──▶  return seq(last key of objs)
-    return gallop(seq(last key of objs))
+    return jump(seq(last key of objs))
 ```
 
-`Tail` reuses the gallop above. The list page supplies a number that is known to
-exist, and the gallop searches from there.
+`Tail` reuses the jump above. The list page supplies a number that is known to
+exist, and the jump searches from there.
 
 `listLimit` defaults to 1000, which matches the page size of the supported
 backends. One `List` call thus answers every stream of less than 1000 segments,
@@ -362,7 +362,7 @@ type Log struct{ ... }
 type Option func(*Log)
 
 func WithPrefix(prefix string) Option
-func WithMaxRecordSize(max int64) Option
+func WithMaxRecordSize(max int) Option
 func WithTailListLimit(limit int) Option
 
 func New(store *objectstore.Store, opts ...Option) *Log
@@ -465,4 +465,4 @@ code, and no benchmark confirms it yet.
 
 `CONSIDER(ali):` the gate distance of 16 and the runway both come from reasoning,
 not from a measurement. Run a contended stream, and set each one from the
-segments a writer misses during one gallop.
+segments a writer misses during one jump.
