@@ -4,20 +4,16 @@
 
 ## The idea
 
-We want an apples-to-apples comparison against turbopuffer. A benchmark we
-build ourselves picks its own data, its own queries and its own load, so it
-also picks its own winner.
+We want an apples-to-apples comparison against turbopuffer.
 
 turbopuffer published the tool behind its public latency numbers:
 [tpuf-benchmark](https://github.com/turbopuffer/tpuf-benchmark). One Go binary,
 MIT licensed, with the datasets, the query shapes, the request rate and the
 warm-up all committed to that repository.
 
-Only the wire stands between that tool and cloudy-neigh. It speaks
-turbopuffer's HTTP and JSON API, and we speak gRPC. So we propose to build an
-API compatible with their endpoints, then run `tpufbench` against cloudy-neigh
-unchanged. Same binary, same definitions, same datasets, same measurement. Two
-engines.
+The tool talks to one thing: turbopuffer's HTTP and JSON API. Build that API on
+cloudy-neigh, and `tpufbench` runs against it unchanged. Same binary, same
+definitions, same datasets, same measurement. Two engines.
 
 That compatible API runs in the process that already holds the engine, next to
 the gRPC service. Both systems then parse the same JSON bytes from the same
