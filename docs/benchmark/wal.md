@@ -4,9 +4,8 @@
 
 ## Objective
 
-We measure how fast one LogStream stream takes appends on GCS. We want the
-appends per second one stream takes, the wait of the slowest append, and the
-retries one append costs.
+We measure the range of appends per second on one LogStream stream on GCS. We
+also report the latency, the fairness, and the retry cost.
 
 ## Method
 
