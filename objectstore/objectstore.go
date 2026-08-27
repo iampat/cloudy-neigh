@@ -98,6 +98,17 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+func (s *Store) Exists(ctx context.Context, key string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	ok, err := s.b.Exists(ctx, key)
+	if err != nil {
+		return false, translate(key, err)
+	}
+	return ok, nil
+}
+
 func (s *Store) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
 	var out []Object
 	it := s.b.List(&blob.ListOptions{Prefix: prefix})

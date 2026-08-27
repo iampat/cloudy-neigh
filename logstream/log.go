@@ -321,14 +321,7 @@ func jump(ctx context.Context, lo uint64, probe func(context.Context, uint64) (b
 }
 
 func exists(ctx context.Context, store *objectstore.Store, key string) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	objs, err := store.List(ctx, key, "", 1)
-	if err != nil {
-		return false, err
-	}
-	return len(objs) > 0 && objs[0].Key == key, nil
+	return store.Exists(ctx, key)
 }
 
 func segmentKey(prefix, stream string, seq uint64) string {

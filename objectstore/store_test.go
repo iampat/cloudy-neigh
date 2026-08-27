@@ -351,6 +351,46 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 			t.Fatalf("List limit = %v, %v", objs, err)
 		}
 	})
+
+	t.Run("Exists", func(t *testing.T) {
+		s := open(t)
+		k := prefix(t, s) + "exists"
+		ok, err := s.Exists(ctx, k)
+		if err != nil {
+			t.Fatalf("Exists before Put: %v", err)
+		}
+		if ok {
+			t.Fatal("Exists before Put = true, want false")
+		}
+		put(t, s, k, "val")
+		ok, err = s.Exists(ctx, k)
+		if err != nil {
+			t.Fatalf("Exists after Put: %v", err)
+		}
+		if !ok {
+			t.Fatal("Exists after Put = false, want true")
+		}
+		if err := s.Delete(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+		ok, err = s.Exists(ctx, k)
+		if err != nil {
+			t.Fatalf("Exists after Delete: %v", err)
+		}
+		if ok {
+			t.Fatal("Exists after Delete = true, want false")
+		}
+	})
+
+	t.Run("ExistsCanceledContext", func(t *testing.T) {
+		s := open(t)
+		k := prefix(t, s) + "k"
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		if _, err := s.Exists(canceled, k); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Exists = %v, want context.Canceled", err)
+		}
+	})
 }
 
 func openURL(tb testing.TB, url string) *objectstore.Store {
