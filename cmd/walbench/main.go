@@ -308,6 +308,9 @@ func benchmark(ctx context.Context, url, name string, n int, d time.Duration, mi
 		g.Go(func() error {
 			log := logstream.New(stores[id])
 			for it := range work {
+				if stop.Load() {
+					return nil
+				}
 				binary.BigEndian.PutUint32(it.buf[16:20], uint32(id))
 
 				t0 := time.Now()
