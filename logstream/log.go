@@ -42,7 +42,7 @@ func WithMaxRecordSize(max int) Option {
 const headListLimit = 1000
 
 type ObjectStore interface {
-	Put(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) error
+	Put(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) (string, error)
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
 	Exists(ctx context.Context, key string) (bool, error)
 	List(ctx context.Context, prefix, startAfter string, limit int) ([]objectstore.Object, error)
@@ -119,7 +119,7 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 
 	for {
 		key := segmentKey(l.prefix, l.stream, seq)
-		err := l.store.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{Absent: true})
+		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{Absent: true})
 		if err == nil {
 			l.lastKnown = seq
 			slog.Debug("logstream append",

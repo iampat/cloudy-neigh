@@ -35,7 +35,7 @@ func forEachBackend(t *testing.T, fn func(t *testing.T, s *objectstore.Store)) {
 
 func newLog(t *testing.T, s *objectstore.Store, stream string, opts ...logstream.Option) *logstream.Log {
 	t.Helper()
-	l, err := logstream.New(s.Adapter(), stream, opts...)
+	l, err := logstream.New(s, stream, opts...)
 	require.NoError(t, err)
 	return l
 }
@@ -63,7 +63,7 @@ func TestStreamValidation(t *testing.T) {
 
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
-				log, err := logstream.New(s.Adapter(), tc.stream)
+				log, err := logstream.New(s, tc.stream)
 				if tc.wantErr {
 					assert.Error(t, err)
 					return
@@ -244,7 +244,7 @@ func TestConcurrentAppends(t *testing.T) {
 						log := shared
 						if log == nil {
 							var err error
-							log, err = logstream.New(s.Adapter(), tc.stream)
+							log, err = logstream.New(s, tc.stream)
 							if err != nil {
 								errCh <- err
 								return
@@ -346,7 +346,7 @@ func BenchmarkAppend(b *testing.B) {
 	defer s.Close()
 
 	ctx := context.Background()
-	log, err := logstream.New(s.Adapter(), "bench")
+	log, err := logstream.New(s, "bench")
 	if err != nil {
 		b.Fatal(err)
 	}

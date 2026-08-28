@@ -64,16 +64,3 @@ func (s *Store) Exists(ctx context.Context, key string) (bool, error) {
 func (s *Store) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
 	return s.d.list(ctx, prefix, startAfter, limit)
 }
-
-type Adapter struct {
-	*Store
-}
-
-func (a Adapter) Put(ctx context.Context, key string, r io.Reader, cond Condition) error {
-	_, err := a.Store.Put(ctx, key, r, cond)
-	return err
-}
-
-func (s *Store) Adapter() Adapter {
-	return Adapter{Store: s}
-}

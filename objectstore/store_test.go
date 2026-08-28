@@ -317,22 +317,6 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		_, err = s.Head(ctx, prefix(t, s)+"nope")
 		assert.ErrorIs(t, err, objectstore.ErrNotFound)
 	})
-
-	t.Run("Adapter", func(t *testing.T) {
-		s := open(t)
-		k := prefix(t, s) + "adapter"
-		var p interface {
-			Put(context.Context, string, io.Reader, objectstore.Condition) error
-		} = s.Adapter()
-		err := p.Put(ctx, k, strings.NewReader("val"), objectstore.Condition{})
-		require.NoError(t, err)
-		r, err := s.Get(ctx, k)
-		require.NoError(t, err)
-		assert.Equal(t, "val", read(t, r))
-
-		err = p.Put(ctx, k, strings.NewReader("val2"), objectstore.Condition{Absent: true})
-		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
-	})
 }
 
 func openURL(tb testing.TB, url string) *objectstore.Store {
