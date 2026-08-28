@@ -91,7 +91,7 @@ func TestAppendCancelWhileWaitingForLock(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
 
-	log, err := New(s, "lock-stream")
+	log, err := New(s.Adapter(), "lock-stream")
 	require.NoError(t, err)
 	log.ch <- struct{}{}
 	t.Cleanup(func() { <-log.ch })

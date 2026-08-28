@@ -17,6 +17,7 @@ go_test(
         "gcs_test.go",
         "jump_internal_test.go",
         "log_test.go",
+        "mock_test.go",
     ],
     embed = [":logstream"],
     deps = [

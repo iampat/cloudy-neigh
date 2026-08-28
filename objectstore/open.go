@@ -4,11 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"strings"
 
-	"gocloud.dev/blob"
-	_ "gocloud.dev/blob/fileblob"
-	_ "gocloud.dev/blob/gcsblob"
-	_ "gocloud.dev/blob/memblob"
+	"cloud.google.com/go/storage"
 )
 
 func Open(ctx context.Context, rawURL string) (*Store, error) {
@@ -16,32 +15,41 @@ func Open(ctx context.Context, rawURL string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if u.Scheme == "file" {
-		q := u.Query()
-		if !q.Has("metadata") {
-			q.Set("metadata", "skip")
-			u.RawQuery = q.Encode()
-			rawURL = u.String()
-		}
-	}
-	b, err := blob.OpenBucket(ctx, rawURL)
-	if err != nil {
-		return nil, err
-	}
 	switch u.Scheme {
-	case "gs":
-		return &Store{b: b, bucket: gcsBucket{}}, nil
+	case "mem":
+		return &Store{d: newMemDriver()}, nil
 	case "file":
-		lock, err := diskMu(u.Path)
+		path := u.Path
+		if path == "" && u.Host != "" {
+			path = u.Host
+		}
+		if path == "" {
+			return nil, fmt.Errorf("objectstore: file URL requires a path: %q", rawURL)
+		}
+		if u.Query().Get("create_dir") == "true" {
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				return nil, err
+			}
+		}
+		d, err := newLocalDriver(path)
 		if err != nil {
-			b.Close()
 			return nil, err
 		}
-		return &Store{b: b, bucket: &local{b: b, l: lock}}, nil
-	case "mem":
-		return &Store{b: b, bucket: &local{b: b, l: &diskLock{}, nativeAbsent: true}}, nil
+		return &Store{d: d}, nil
+	case "gs":
+		bucket := u.Host
+		if bucket == "" {
+			bucket = strings.Trim(u.Path, "/")
+		}
+		if bucket == "" {
+			return nil, fmt.Errorf("objectstore: gs URL requires a bucket name: %q", rawURL)
+		}
+		client, err := storage.NewClient(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return &Store{d: &gcsDriver{client: client, bucket: bucket}}, nil
 	default:
-		b.Close()
 		return nil, fmt.Errorf("objectstore: unsupported scheme %q in %q (supported: file, gs, mem)", u.Scheme, rawURL)
 	}
 }

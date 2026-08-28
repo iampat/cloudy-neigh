@@ -32,11 +32,13 @@ func TestDiskReopen(t *testing.T) {
 
 	s = openURL(t, "file://"+dir+"?create_dir=true")
 	defer s.Close()
-	r, gen2, err := s.Get(ctx, "k")
+	r, err := s.Get(ctx, "k")
 	require.NoError(t, err)
 	require.Equal(t, "v1", read(t, r))
-	require.Equal(t, gen, gen2, "generation must survive a reopen")
-	_, err = s.Put(ctx, "k", strings.NewReader("v2"), &objectstore.Condition{GenerationMatch: gen})
+	obj, err := s.Head(ctx, "k")
+	require.NoError(t, err)
+	require.Equal(t, gen, obj.Generation, "generation must survive a reopen")
+	_, err = s.Put(ctx, "k", strings.NewReader("v2"), objectstore.Condition{GenerationMatch: gen})
 	require.NoError(t, err, "CAS after reopen")
 }
 

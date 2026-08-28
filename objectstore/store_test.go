@@ -32,7 +32,7 @@ func read(t *testing.T, r io.ReadCloser) string {
 
 func put(t *testing.T, s *objectstore.Store, key, value string) string {
 	t.Helper()
-	gen, err := s.Put(context.Background(), key, strings.NewReader(value), nil)
+	gen, err := s.Put(context.Background(), key, strings.NewReader(value), objectstore.Condition{})
 	require.NoError(t, err)
 	return gen
 }
@@ -47,7 +47,7 @@ func raceAbsentPut(t *testing.T, stores []*objectstore.Store, key string, writer
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := s.Put(context.Background(), key, strings.NewReader(strconv.Itoa(i)), &objectstore.Condition{Absent: true})
+			_, err := s.Put(context.Background(), key, strings.NewReader(strconv.Itoa(i)), objectstore.Condition{Absent: true})
 			switch {
 			case err == nil:
 				wins.Add(1)
@@ -84,13 +84,12 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		k := prefix(t, s) + "k"
 		gen := put(t, s, k, "v1")
 		require.NotEmpty(t, gen)
-		r, _, err := s.Get(ctx, k)
+		r, err := s.Get(ctx, k)
 		require.NoError(t, err)
 		assert.Equal(t, "v1", read(t, r))
-		r, gen2, err := s.Get(ctx, k)
+		r, err = s.Get(ctx, k)
 		require.NoError(t, err)
 		assert.Equal(t, "v1", read(t, r))
-		assert.Equal(t, gen, gen2)
 	})
 
 	t.Run("GenerationChangesOnIdenticalWrite", func(t *testing.T) {
@@ -104,13 +103,13 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 	t.Run("AbsentCondition", func(t *testing.T) {
 		s := open(t)
 		k := prefix(t, s) + "k"
-		gen, err := s.Put(ctx, k, strings.NewReader("v1"), &objectstore.Condition{Absent: true})
+		gen, err := s.Put(ctx, k, strings.NewReader("v1"), objectstore.Condition{Absent: true})
 		require.NoError(t, err)
 		assert.NotEmpty(t, gen)
-		gen, err = s.Put(ctx, k, strings.NewReader("v2"), &objectstore.Condition{Absent: true})
+		gen, err = s.Put(ctx, k, strings.NewReader("v2"), objectstore.Condition{Absent: true})
 		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
 		assert.Empty(t, gen)
-		r, _, err := s.Get(ctx, k)
+		r, err := s.Get(ctx, k)
 		require.NoError(t, err)
 		assert.Equal(t, "v1", read(t, r))
 	})
@@ -132,7 +131,12 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 				defer wg.Done()
 				for n := 0; n < cfg.casIters; n++ {
 					for {
-						r, gen, err := s.Get(ctx, k)
+						obj, err := s.Head(ctx, k)
+						if err != nil {
+							errCh <- fmt.Errorf("Head: %w", err)
+							return
+						}
+						r, err := s.Get(ctx, k)
 						if err != nil {
 							errCh <- fmt.Errorf("Get: %w", err)
 							return
@@ -148,7 +152,7 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 							errCh <- fmt.Errorf("counter payload %q", data)
 							return
 						}
-						_, err = s.Put(ctx, k, strings.NewReader(strconv.Itoa(v+1)), &objectstore.Condition{GenerationMatch: gen})
+						_, err = s.Put(ctx, k, strings.NewReader(strconv.Itoa(v+1)), objectstore.Condition{GenerationMatch: obj.Generation})
 						if err == nil {
 							break
 						}
@@ -165,7 +169,7 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		for err := range errCh {
 			t.Fatal(err)
 		}
-		r, _, err := s.Get(ctx, k)
+		r, err := s.Get(ctx, k)
 		require.NoError(t, err)
 		want := strconv.Itoa(cfg.casWriters * cfg.casIters)
 		assert.Equal(t, want, read(t, r))
@@ -176,7 +180,7 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		k := prefix(t, s) + "k"
 		g1 := put(t, s, k, "v1")
 		put(t, s, k, "v2")
-		gen, err := s.Put(ctx, k, strings.NewReader("v3"), &objectstore.Condition{GenerationMatch: g1})
+		gen, err := s.Put(ctx, k, strings.NewReader("v3"), objectstore.Condition{GenerationMatch: g1})
 		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
 		assert.Empty(t, gen)
 	})
@@ -187,19 +191,19 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		g1 := put(t, s, k, "v1")
 		require.NoError(t, s.Delete(ctx, k))
 		put(t, s, k, "v1")
-		_, err := s.Put(ctx, k, strings.NewReader("v2"), &objectstore.Condition{GenerationMatch: g1})
+		_, err := s.Put(ctx, k, strings.NewReader("v2"), objectstore.Condition{GenerationMatch: g1})
 		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
 	})
 
 	t.Run("AbsentKey", func(t *testing.T) {
 		s := open(t)
 		k := prefix(t, s) + "nope"
-		_, _, err := s.Get(ctx, k)
+		_, err := s.Get(ctx, k)
 		assert.ErrorIs(t, err, objectstore.ErrNotFound)
 		assert.ErrorIs(t, s.Delete(ctx, k), objectstore.ErrNotFound)
 		gen := put(t, s, k, "v")
 		require.NoError(t, s.Delete(ctx, k))
-		_, err = s.Put(ctx, k, strings.NewReader("v"), &objectstore.Condition{GenerationMatch: gen})
+		_, err = s.Put(ctx, k, strings.NewReader("v"), objectstore.Condition{GenerationMatch: gen})
 		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
 	})
 
@@ -207,13 +211,13 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		s := open(t)
 		k := prefix(t, s) + "k"
 		put(t, s, k, "v1")
-		_, err := s.Put(ctx, k, strings.NewReader("v2"), &objectstore.Condition{GenerationMatch: "not-a-token"})
+		_, err := s.Put(ctx, k, strings.NewReader("v2"), objectstore.Condition{GenerationMatch: "not-a-token"})
 		assert.Error(t, err)
 		assert.NotErrorIs(t, err, objectstore.ErrPreconditionFailed)
 	})
 
 	t.Run("InvalidCondition", func(t *testing.T) {
-		for name, cond := range map[string]*objectstore.Condition{
+		for name, cond := range map[string]objectstore.Condition{
 			"bothSet": {Absent: true, GenerationMatch: "12345"},
 		} {
 			t.Run(name, func(t *testing.T) {
@@ -231,11 +235,11 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		s := open(t)
 		k := prefix(t, s) + "k"
 		put(t, s, k, "v1")
-		_, err := s.Put(ctx, k, strings.NewReader("v1"), &objectstore.Condition{})
+		_, err := s.Put(ctx, k, strings.NewReader("v1"), objectstore.Condition{})
 		assert.NoError(t, err)
-		_, err = s.Put(ctx, k, strings.NewReader("v2"), nil)
+		_, err = s.Put(ctx, k, strings.NewReader("v2"), objectstore.Condition{})
 		assert.NoError(t, err)
-		r, _, err := s.Get(ctx, k)
+		r, err := s.Get(ctx, k)
 		require.NoError(t, err)
 		defer r.Close()
 		got, err := io.ReadAll(r)
@@ -248,7 +252,7 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		k := prefix(t, s) + "k"
 		canceled, cancel := context.WithCancel(ctx)
 		cancel()
-		_, err := s.Put(canceled, k, strings.NewReader("v"), nil)
+		_, err := s.Put(canceled, k, strings.NewReader("v"), objectstore.Condition{})
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 
@@ -268,10 +272,12 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		}
 		assert.Equal(t, []string{p + "a/1", p + "a/2", p + "a/3"}, keys)
 		require.NotEmpty(t, objs)
-		r, gen, err := s.Get(ctx, objs[0].Key)
+		r, err := s.Get(ctx, objs[0].Key)
 		require.NoError(t, err)
 		r.Close()
-		assert.Equal(t, gen, objs[0].Generation)
+		obj, err := s.Head(ctx, objs[0].Key)
+		require.NoError(t, err)
+		assert.Equal(t, obj.Generation, objs[0].Generation)
 		objs, err = s.List(ctx, p+"a/", p+"a/1", 0)
 		require.NoError(t, err)
 		require.Len(t, objs, 2)
@@ -296,6 +302,36 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		ok, err = s.Exists(ctx, k)
 		assert.NoError(t, err)
 		assert.False(t, ok)
+	})
+
+	t.Run("Head", func(t *testing.T) {
+		s := open(t)
+		k := prefix(t, s) + "head"
+		gen := put(t, s, k, "hello")
+		obj, err := s.Head(ctx, k)
+		require.NoError(t, err)
+		assert.Equal(t, k, obj.Key)
+		assert.Equal(t, gen, obj.Generation)
+		assert.Equal(t, int64(5), obj.Size)
+
+		_, err = s.Head(ctx, prefix(t, s)+"nope")
+		assert.ErrorIs(t, err, objectstore.ErrNotFound)
+	})
+
+	t.Run("Adapter", func(t *testing.T) {
+		s := open(t)
+		k := prefix(t, s) + "adapter"
+		var p interface {
+			Put(context.Context, string, io.Reader, objectstore.Condition) error
+		} = s.Adapter()
+		err := p.Put(ctx, k, strings.NewReader("val"), objectstore.Condition{})
+		require.NoError(t, err)
+		r, err := s.Get(ctx, k)
+		require.NoError(t, err)
+		assert.Equal(t, "val", read(t, r))
+
+		err = p.Put(ctx, k, strings.NewReader("val2"), objectstore.Condition{Absent: true})
+		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
 	})
 }
 

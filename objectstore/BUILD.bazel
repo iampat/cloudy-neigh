@@ -3,9 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "objectstore",
     srcs = [
-        "bucket.go",
+        "driver.go",
         "gcs.go",
         "local.go",
+        "mem.go",
         "objectstore.go",
         "open.go",
     ],
@@ -13,11 +14,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "@com_google_cloud_go_storage//:storage",
-        "@dev_gocloud//blob",
-        "@dev_gocloud//blob/fileblob",
-        "@dev_gocloud//blob/gcsblob",
-        "@dev_gocloud//blob/memblob",
-        "@dev_gocloud//gcerrors",
+        "@org_golang_google_api//googleapi",
+        "@org_golang_google_api//iterator",
     ],
 )
 

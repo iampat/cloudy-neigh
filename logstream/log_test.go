@@ -35,7 +35,7 @@ func forEachBackend(t *testing.T, fn func(t *testing.T, s *objectstore.Store)) {
 
 func newLog(t *testing.T, s *objectstore.Store, stream string, opts ...logstream.Option) *logstream.Log {
 	t.Helper()
-	l, err := logstream.New(s, stream, opts...)
+	l, err := logstream.New(s.Adapter(), stream, opts...)
 	require.NoError(t, err)
 	return l
 }
@@ -63,7 +63,7 @@ func TestStreamValidation(t *testing.T) {
 
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
-				log, err := logstream.New(s, tc.stream)
+				log, err := logstream.New(s.Adapter(), tc.stream)
 				if tc.wantErr {
 					assert.Error(t, err)
 					return
@@ -244,7 +244,7 @@ func TestConcurrentAppends(t *testing.T) {
 						log := shared
 						if log == nil {
 							var err error
-							log, err = logstream.New(s, tc.stream)
+							log, err = logstream.New(s.Adapter(), tc.stream)
 							if err != nil {
 								errCh <- err
 								return
@@ -304,7 +304,7 @@ func TestCorruptedSegment(t *testing.T) {
 		require.NoError(t, err)
 
 		key := fmt.Sprintf("wal/%s/%020d.recordio", stream, seq)
-		rc, _, err := s.Get(ctx, key)
+		rc, err := s.Get(ctx, key)
 		require.NoError(t, err)
 		validBytes, err := io.ReadAll(rc)
 		rc.Close()
@@ -313,7 +313,7 @@ func TestCorruptedSegment(t *testing.T) {
 		corruptHeader := bytes.Clone(validBytes)
 		corruptHeader[9] ^= 0xFF
 		require.NoError(t, s.Delete(ctx, key))
-		_, err = s.Put(ctx, key, bytes.NewReader(corruptHeader), nil)
+		_, err = s.Put(ctx, key, bytes.NewReader(corruptHeader), objectstore.Condition{})
 		require.NoError(t, err)
 
 		_, err = log.Read(ctx, seq)
@@ -322,7 +322,7 @@ func TestCorruptedSegment(t *testing.T) {
 		corruptData := bytes.Clone(validBytes)
 		corruptData[len(corruptData)-2] ^= 0xFF
 		require.NoError(t, s.Delete(ctx, key))
-		_, err = s.Put(ctx, key, bytes.NewReader(corruptData), nil)
+		_, err = s.Put(ctx, key, bytes.NewReader(corruptData), objectstore.Condition{})
 		require.NoError(t, err)
 
 		_, err = log.Read(ctx, seq)
@@ -330,7 +330,7 @@ func TestCorruptedSegment(t *testing.T) {
 
 		truncated := validBytes[:len(validBytes)-2]
 		require.NoError(t, s.Delete(ctx, key))
-		_, err = s.Put(ctx, key, bytes.NewReader(truncated), nil)
+		_, err = s.Put(ctx, key, bytes.NewReader(truncated), objectstore.Condition{})
 		require.NoError(t, err)
 
 		_, err = log.Read(ctx, seq)
@@ -346,7 +346,7 @@ func BenchmarkAppend(b *testing.B) {
 	defer s.Close()
 
 	ctx := context.Background()
-	log, err := logstream.New(s, "bench")
+	log, err := logstream.New(s.Adapter(), "bench")
 	if err != nil {
 		b.Fatal(err)
 	}

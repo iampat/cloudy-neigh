@@ -167,7 +167,7 @@ func run(c config) error {
 
 	for _, n := range counts {
 		name := streamName(c.prefix, n)
-		probe, err := logstream.New(store, name)
+		probe, err := logstream.New(store.Adapter(), name)
 		if err != nil {
 			return err
 		}
@@ -309,7 +309,7 @@ func benchmark(ctx context.Context, url, name string, n int, d time.Duration, mi
 	for i := range n {
 		id := i
 		g.Go(func() error {
-			log, err := logstream.New(stores[id], name)
+			log, err := logstream.New(stores[id].Adapter(), name)
 			if err != nil {
 				return err
 			}
@@ -587,7 +587,7 @@ func runSanity(path string, readers int) error {
 
 func checkStream(ctx context.Context, store *objectstore.Store, r *runResult, readers int) (bool, error) {
 	stream := r.stream
-	log, err := logstream.New(store, stream)
+	log, err := logstream.New(store.Adapter(), stream)
 	if err != nil {
 		return false, err
 	}

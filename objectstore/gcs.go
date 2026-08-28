@@ -4,83 +4,135 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strconv"
 
 	"cloud.google.com/go/storage"
-	"gocloud.dev/blob"
+	"google.golang.org/api/googleapi"
+	"google.golang.org/api/iterator"
 )
 
-var errNotGCS = errors.New("objectstore: bucket is not backed by GCS")
-
-type gcsBucket struct{}
-
-func (gcsBucket) lock() func() { return func() {} }
-
-func (gcsBucket) listOptions(prefix, startAfter string) *blob.ListOptions {
-	opts := &blob.ListOptions{Prefix: prefix}
-	if startAfter == "" {
-		return opts
-	}
-	opts.BeforeList = func(as func(any) bool) error {
-		var q *storage.Query
-		if !as(&q) {
-			return errNotGCS
-		}
-		q.StartOffset = startAfter
-		return nil
-	}
-	return opts
+type gcsDriver struct {
+	client *storage.Client
+	bucket string
 }
 
-func (gcsBucket) generation(r *blob.Reader) (string, error) {
-	var sr *storage.Reader
-	if !r.As(&sr) {
-		return "", errNotGCS
-	}
-	return strconv.FormatInt(sr.Attrs.Generation, 10), nil
+func (g *gcsDriver) Close() error {
+	return g.client.Close()
 }
 
-func (gcsBucket) listGeneration(o *blob.ListObject) string {
-	var oa storage.ObjectAttrs
-	if !o.As(&oa) {
-		return ""
-	}
-	return strconv.FormatInt(oa.Generation, 10)
+func (g *gcsDriver) bkt() *storage.BucketHandle {
+	return g.client.Bucket(g.bucket)
 }
 
-func (gcsBucket) writeOptions(ctx context.Context, key string, cond *Condition) (*blob.WriterOptions, func() (string, error), error) {
-	var sw *storage.Writer
-	capture := func(as func(any) bool) error {
-		if !as(&sw) {
-			return errNotGCS
-		}
-		return nil
+func (g *gcsDriver) head(ctx context.Context, key string) (Object, error) {
+	attrs, err := g.bkt().Object(key).Attrs(ctx)
+	if err != nil {
+		return Object{}, translateGCS(key, err)
 	}
-	opts := &blob.WriterOptions{BeforeWrite: capture}
-	generation := func() (string, error) {
-		return strconv.FormatInt(sw.Attrs().Generation, 10), nil
+	return Object{
+		Key:        key,
+		Generation: strconv.FormatInt(attrs.Generation, 10),
+		Size:       attrs.Size,
+	}, nil
+}
+
+func (g *gcsDriver) get(ctx context.Context, key string) (io.ReadCloser, error) {
+	r, err := g.bkt().Object(key).NewReader(ctx)
+	if err != nil {
+		return nil, translateGCS(key, err)
 	}
+	return r, nil
+}
+
+func (g *gcsDriver) exists(ctx context.Context, key string) (bool, error) {
+	_, err := g.bkt().Object(key).Attrs(ctx)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return false, nil
+	}
+	var gerr *googleapi.Error
+	if errors.As(err, &gerr) && gerr.Code == http.StatusNotFound {
+		return false, nil
+	}
+	return false, err
+}
+
+func (g *gcsDriver) delete(ctx context.Context, key string) error {
+	err := g.bkt().Object(key).Delete(ctx)
+	if err != nil {
+		return translateGCS(key, err)
+	}
+	return nil
+}
+
+func (g *gcsDriver) put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
+	obj := g.bkt().Object(key)
 	switch {
-	case cond == nil:
 	case cond.Absent:
-		opts.IfNotExist = true
-	default:
-		g, err := strconv.ParseInt(cond.GenerationMatch, 10, 64)
-		// GCS treats GenerationMatch 0 as no condition, so a non-positive
-		// generation must fail here instead of writing unconditionally.
-		if err != nil || g <= 0 {
-			return nil, nil, fmt.Errorf("objectstore: key %q: malformed generation %q", key, cond.GenerationMatch)
+		obj = obj.If(storage.Conditions{DoesNotExist: true})
+	case cond.GenerationMatch != "":
+		gen, err := strconv.ParseInt(cond.GenerationMatch, 10, 64)
+		if err != nil || gen <= 0 {
+			return "", fmt.Errorf("objectstore: key %q: malformed generation %q", key, cond.GenerationMatch)
 		}
-		opts.BeforeWrite = func(as func(any) bool) error {
-			// Asking for the writer materializes it and freezes the
-			// conditions, so capture must stay last.
-			var objp **storage.ObjectHandle
-			if !as(&objp) {
-				return errNotGCS
-			}
-			*objp = (*objp).If(storage.Conditions{GenerationMatch: g})
-			return capture(as)
+		obj = obj.If(storage.Conditions{GenerationMatch: gen})
+	}
+	w := obj.NewWriter(ctx)
+	if _, err := io.Copy(w, r); err != nil {
+		_ = w.Close()
+		return "", err
+	}
+	if err := w.Close(); err != nil {
+		return "", translateGCS(key, err)
+	}
+	return strconv.FormatInt(w.Attrs().Generation, 10), nil
+}
+
+func (g *gcsDriver) list(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
+	query := &storage.Query{Prefix: prefix}
+	if startAfter != "" {
+		query.StartOffset = startAfter
+	}
+	it := g.bkt().Objects(ctx, query)
+	var out []Object
+	for {
+		if limit > 0 && len(out) == limit {
+			return out, nil
+		}
+		attrs, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			return out, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if attrs.Name <= startAfter {
+			continue
+		}
+		out = append(out, Object{
+			Key:        attrs.Name,
+			Generation: strconv.FormatInt(attrs.Generation, 10),
+			Size:       attrs.Size,
+		})
+	}
+}
+
+func translateGCS(key string, err error) error {
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return fmt.Errorf("key %q: %w", key, ErrNotFound)
+	}
+	var gerr *googleapi.Error
+	if errors.As(err, &gerr) {
+		switch gerr.Code {
+		case http.StatusNotFound:
+			return fmt.Errorf("key %q: %w", key, ErrNotFound)
+		case http.StatusPreconditionFailed:
+			return fmt.Errorf("key %q: %w", key, ErrPreconditionFailed)
 		}
 	}
-	return opts, generation, nil
+	return err
 }
