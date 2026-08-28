@@ -40,6 +40,10 @@ type local struct {
 	nativeAbsent bool
 }
 
+func (d *local) listOptions(prefix, _ string) *blob.ListOptions {
+	return &blob.ListOptions{Prefix: prefix}
+}
+
 func (d *local) lock() func() {
 	d.l.mu.Lock()
 	if d.l.dir != "" {

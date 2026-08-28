@@ -102,7 +102,7 @@ func (s *Store) Exists(ctx context.Context, key string) (bool, error) {
 
 func (s *Store) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
 	var out []Object
-	it := s.b.List(&blob.ListOptions{Prefix: prefix})
+	it := s.b.List(s.bucket.listOptions(prefix, startAfter))
 	for {
 		if limit > 0 && len(out) == limit {
 			return out, nil

@@ -148,6 +148,15 @@ comment. Flag a comment that:
 - names the caller, or describes how another package uses the code. That text
   is wrong after the first refactor.
 - labels a section or narrates the change to the reviewer.
+- justifies the code instead of constraining the next edit. "A loser of the
+  race backs off, so a crowd does not return to the same sequence number"
+  explains why the call is there. It binds nobody.
+- explains the behaviour of a third-party API at the call site. Read the
+  library, not our paraphrase of it.
+
+An invariant earns a comment. A justification does not. Apply one test: name
+the edit the comment stops. A comment that stops no edit is a design note in
+the wrong file, and it goes stale where nobody looks.
 
 If a better name removes the need for the comment, give the name. No metaphor
 and no counterfactual. Plain sentences. Several short ones beat one built from

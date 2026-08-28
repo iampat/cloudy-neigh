@@ -16,6 +16,22 @@ type gcsBucket struct{}
 
 func (gcsBucket) lock() func() { return func() {} }
 
+func (gcsBucket) listOptions(prefix, startAfter string) *blob.ListOptions {
+	opts := &blob.ListOptions{Prefix: prefix}
+	if startAfter == "" {
+		return opts
+	}
+	opts.BeforeList = func(as func(any) bool) error {
+		var q *storage.Query
+		if !as(&q) {
+			return errNotGCS
+		}
+		q.StartOffset = startAfter
+		return nil
+	}
+	return opts
+}
+
 func (gcsBucket) generation(r *blob.Reader) (string, error) {
 	var sr *storage.Reader
 	if !r.As(&sr) {

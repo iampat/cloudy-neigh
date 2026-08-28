@@ -38,7 +38,7 @@ func WithMaxRecordSize(max int) Option {
 	}
 }
 
-const tailListLimit = 1000
+const headListLimit = 1000
 
 type Log struct {
 	store         *objectstore.Store
@@ -105,10 +105,8 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 	}
 
 	seq := l.lastKnown + 1
-	runway := 3
-	tries := 0
 	first := seq
-	var collisions, jumpProbes int
+	var collisions, lists, jumpProbes int
 	start := time.Now()
 
 	for {
@@ -121,6 +119,7 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 				"seq", seq,
 				"first_try", first,
 				"collisions", collisions,
+				"lists", lists,
 				"jump_probes", jumpProbes,
 				"uploads", collisions+1,
 				"elapsed_ms", time.Since(start).Milliseconds())
@@ -131,21 +130,40 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 		}
 		collisions++
 
-		tries++
-		if tries < runway {
-			seq++
-		} else {
-			head, probes, err := jump(ctx, seq, l.probe)
-			jumpProbes += probes
-			if err != nil {
-				return 0, err
-			}
-			seq = head + 1
-			runway = max(3, 2*probes)
-			tries = 0
+		head, probes, err := l.head(ctx, seq)
+		lists++
+		jumpProbes += probes
+		if err != nil {
+			return 0, err
 		}
-
+		seq = head + 1
 	}
+}
+
+func (l *Log) head(ctx context.Context, lo uint64) (uint64, int, error) {
+	var start string
+	if lo > 0 {
+		start = segmentKey(l.prefix, l.stream, lo)
+	}
+	objs, err := l.store.List(ctx, l.streamPrefix(), start, headListLimit)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(objs) == 0 {
+		return lo, 0, nil
+	}
+	last, err := parseSeq(objs[len(objs)-1].Key)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(objs) < headListLimit {
+		return last, 0, nil
+	}
+	return jump(ctx, last, l.probe)
+}
+
+func (l *Log) streamPrefix() string {
+	return fmt.Sprintf("%s/%s/", l.prefix, l.stream)
 }
 
 func (l *Log) probe(ctx context.Context, seq uint64) (bool, error) {
@@ -188,24 +206,7 @@ func (l *Log) Read(ctx context.Context, seq uint64) ([]Record, error) {
 }
 
 func (l *Log) Tail(ctx context.Context) (uint64, error) {
-	prefix := fmt.Sprintf("%s/%s/", l.prefix, l.stream)
-	objs, err := l.store.List(ctx, prefix, "", tailListLimit)
-	if err != nil {
-		return 0, err
-	}
-	if len(objs) == 0 {
-		return 0, nil
-	}
-
-	lastSeq, err := parseSeq(objs[len(objs)-1].Key)
-	if err != nil {
-		return 0, err
-	}
-	if len(objs) < tailListLimit {
-		return lastSeq, nil
-	}
-
-	head, _, err := jump(ctx, lastSeq, l.probe)
+	head, _, err := l.head(ctx, 0)
 	return head, err
 }
 
