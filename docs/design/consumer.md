@@ -41,3 +41,13 @@ To prevent duplicate processing on expensive workloads (such as LLM inference) a
 - **State Initialization**:
   1. The consumer for a new branch reads `parent_manifest` once to initialize its base snapshot ($O(1)$).
   2. The consumer tails `wal/<branch>/` starting from sequence 1 for branch-specific deltas.
+
+## 5. Point-in-Time Recovery & Replays
+Branch streams are decoupled and need no cross-stream coordination during replays:
+- **Single-Branch Replay**:
+  1. Load `parent_manifest` once to restore the base snapshot at the fork point.
+  2. Replay `wal/<branch>/` from sequence 1 up to target sequence $K$.
+  3. No coordination with parent stream is needed.
+- **Full Bucket Replay**:
+  1. Read `wal/_meta/` sequentially from sequence 1 to discover all branches and their `parent_manifest` anchors.
+  2. Replay each discovered branch stream independently and in parallel.
