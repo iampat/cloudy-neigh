@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iampat/cloudy-neigh/internal/xtime"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	"github.com/iampat/cloudy-neigh/recordio"
 )
@@ -153,21 +154,6 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 	}
 }
 
-// CONSIDER(ali): replace other cancellable sleep instances across the codebase with sleepContext.
-func sleepContext(ctx context.Context, d time.Duration) error {
-	if d <= 0 {
-		return nil
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
 func (l *Log) paceWinner(ctx context.Context, collisions int, putDuration time.Duration) error {
 	if l.rttEMA == 0 {
 		l.rttEMA = putDuration
@@ -191,7 +177,7 @@ func (l *Log) paceWinner(ctx context.Context, collisions int, putDuration time.D
 	if l.rttEMA > 10 {
 		jitter = time.Duration(rand.Int64N(int64(l.rttEMA / 10)))
 	}
-	return sleepContext(ctx, baseDelay+jitter)
+	return xtime.Sleep(ctx, baseDelay+jitter)
 }
 
 func (l *Log) head(ctx context.Context, lo uint64) (uint64, int, error) {

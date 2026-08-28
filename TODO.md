@@ -71,6 +71,8 @@
 - [ ] Remove the `golang.org/x/tools` override in `MODULE.bazel`. rules_go
       0.62.0 pins v0.34.0, which reads export data version 2 at most. Drop the
       override when rules_go pins v0.44.0 or later.
+- [ ] Replace custom cancellable sleeps across the codebase with `xtime.Sleep`.
+      `walbench` and other tools use ad-hoc timer and select patterns.
 
 ## Done
 
