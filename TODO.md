@@ -6,6 +6,15 @@
   - [ ] Revisit the ObjectStore API. Add a `Head` call, because the LogStream
         tail search probes with `List` today and pays list pricing. Drop the
         generation token from a conditional create, which no caller reads.
+- [ ] Settle the fileblob conditional write. `objectstore` never asks fileblob
+      to enforce `Absent`. A read of `gocloud.dev@v0.46.0` shows a fresh mutex
+      for every writer, then a rename over the target.
+  - [ ] Reproduce it, or reject it. Race two writers with `IfNotExist` straight
+        at fileblob, outside our lock. Our lock hides the fault today, so
+        nothing in the repository proves it.
+  - [ ] Report it upstream when it reproduces, and record the issue number.
+  - [ ] Improve the implementation on the outcome. Drop `nativeAbsent` and the
+        lock when fileblob holds. Keep both and cite the issue when it does not.
 - [ ] Publish the benchmarks, the code coverage, and the build health on the
       front page of the repository. A number nobody sees changes no decision.
   - [ ] Show the state of the build and the tests as a badge in `README.md`.

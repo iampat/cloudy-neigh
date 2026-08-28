@@ -30,12 +30,17 @@ func TestJumpAbortsOnContextCancel(t *testing.T) {
 	cancel()
 
 	probe := func(ctx context.Context, seq uint64) (bool, error) {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		default:
+		}
 		return seq <= 42, nil
 	}
 
 	_, probes, err := jump(cancelCtx, 1, probe)
 	assert.ErrorIs(t, err, context.Canceled)
-	assert.Zero(t, probes)
+	assert.Equal(t, 1, probes)
 }
 
 func TestJumpAbortsOnProbeError(t *testing.T) {
@@ -86,14 +91,14 @@ func TestAppendCancelWhileWaitingForLock(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
 
-	log := New(s)
-	st := log.stream("lock-stream")
-	st.ch <- struct{}{}
-	t.Cleanup(func() { <-st.ch })
+	log, err := New(s, "lock-stream")
+	require.NoError(t, err)
+	log.ch <- struct{}{}
+	t.Cleanup(func() { <-log.ch })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	t.Cleanup(cancel)
 
-	_, err = log.Append(ctx, "lock-stream", []Record{[]byte("waiter")})
+	_, err = log.Append(ctx, []Record{[]byte("waiter")})
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }

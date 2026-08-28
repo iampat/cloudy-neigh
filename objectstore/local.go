@@ -16,9 +16,8 @@ import (
 )
 
 type diskLock struct {
-	dir     string
-	mu      sync.Mutex
-	lastMod int64
+	dir string
+	mu  sync.Mutex
 }
 
 var diskMus sync.Map
@@ -36,8 +35,13 @@ func diskMu(dir string) (*diskLock, error) {
 }
 
 type local struct {
-	b *blob.Bucket
-	l *diskLock
+	b            *blob.Bucket
+	l            *diskLock
+	nativeAbsent bool
+}
+
+func (d *local) listOptions(prefix, _ string) *blob.ListOptions {
+	return &blob.ListOptions{Prefix: prefix}
 }
 
 func (d *local) lock() func() {
@@ -93,13 +97,12 @@ func (d *local) live(ctx context.Context, key string) (string, error) {
 }
 
 func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (*blob.WriterOptions, func() (string, error), error) {
-	prevLive, err := d.live(ctx, key)
-	if err != nil && !errors.Is(err, ErrPreconditionFailed) {
-		return nil, nil, err
-	}
-	switch {
-	case cond == nil:
-	case cond.Absent:
+	live := func() (string, error) { return d.live(ctx, key) }
+
+	if cond != nil && cond.Absent {
+		if d.nativeAbsent {
+			return &blob.WriterOptions{IfNotExist: true}, live, nil
+		}
 		exists, err := d.b.Exists(ctx, key)
 		if err != nil {
 			return nil, nil, err
@@ -107,7 +110,14 @@ func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (
 		if exists {
 			return nil, nil, errPrecondition(key)
 		}
-	default:
+		return nil, live, nil
+	}
+
+	prevLive, err := d.live(ctx, key)
+	if err != nil && !errors.Is(err, ErrPreconditionFailed) {
+		return nil, nil, err
+	}
+	if cond != nil {
 		if !validLocalGeneration(cond.GenerationMatch) {
 			return nil, nil, fmt.Errorf("objectstore: key %q: malformed generation %q", key, cond.GenerationMatch)
 		}
@@ -115,27 +125,20 @@ func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (
 			return nil, nil, errPrecondition(key)
 		}
 	}
-	if prevLive != "" {
-		if mod, _, ok := strings.Cut(prevLive, "-"); ok {
-			if m, err := strconv.ParseInt(mod, 16, 64); err == nil && m > d.l.lastMod {
-				d.l.lastMod = m
-			}
-		}
+	waitPastGeneration(prevLive)
+	return nil, live, nil
+}
+
+func waitPastGeneration(prev string) {
+	mod, _, ok := strings.Cut(prev, "-")
+	if !ok {
+		return
 	}
-	for now := time.Now().UnixNano(); now <= d.l.lastMod+int64(2*time.Millisecond); now = time.Now().UnixNano() {
+	m, err := strconv.ParseInt(mod, 16, 64)
+	if err != nil {
+		return
+	}
+	for time.Now().UnixNano() <= m+int64(2*time.Millisecond) {
 		time.Sleep(time.Millisecond)
 	}
-	d.l.lastMod = time.Now().UnixNano()
-	return nil, func() (string, error) {
-		live, err := d.live(ctx, key)
-		if err != nil {
-			return "", err
-		}
-		if mod, _, ok := strings.Cut(live, "-"); ok {
-			if m, err := strconv.ParseInt(mod, 16, 64); err == nil && m > d.l.lastMod {
-				d.l.lastMod = m
-			}
-		}
-		return live, nil
-	}, nil
 }

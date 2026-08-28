@@ -65,9 +65,6 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader, cond *Conditio
 	if cond != nil && *cond == (Condition{}) {
 		cond = nil
 	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
 	defer s.bucket.lock()()
 	opts, generation, err := s.bucket.writeOptions(ctx, key, cond)
 	if err != nil {
@@ -88,9 +85,6 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader, cond *Conditio
 }
 
 func (s *Store) Delete(ctx context.Context, key string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	defer s.bucket.lock()()
 	if err := s.b.Delete(ctx, key); err != nil {
 		return translate(key, err)
@@ -108,7 +102,7 @@ func (s *Store) Exists(ctx context.Context, key string) (bool, error) {
 
 func (s *Store) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
 	var out []Object
-	it := s.b.List(&blob.ListOptions{Prefix: prefix})
+	it := s.b.List(s.bucket.listOptions(prefix, startAfter))
 	for {
 		if limit > 0 && len(out) == limit {
 			return out, nil
