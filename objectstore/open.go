@@ -39,7 +39,7 @@ func Open(ctx context.Context, rawURL string) (*Store, error) {
 		}
 		return &Store{b: b, bucket: &local{b: b, l: lock}}, nil
 	case "mem":
-		return &Store{b: b, bucket: &local{b: b, l: &diskLock{}}}, nil
+		return &Store{b: b, bucket: &local{b: b, l: &diskLock{}, nativeAbsent: true}}, nil
 	default:
 		b.Close()
 		return nil, fmt.Errorf("objectstore: unsupported scheme %q in %q (supported: file, gs, mem)", u.Scheme, rawURL)

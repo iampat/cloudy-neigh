@@ -16,9 +16,8 @@ import (
 )
 
 type diskLock struct {
-	dir     string
-	mu      sync.Mutex
-	lastMod int64
+	dir string
+	mu  sync.Mutex
 }
 
 var diskMus sync.Map
@@ -35,9 +34,13 @@ func diskMu(dir string) (*diskLock, error) {
 	return val.(*diskLock), nil
 }
 
+// fileblob gives every writer a fresh mutex and then renames over the target,
+// so its IfNotExist admits two winners. memblob checks and inserts under the
+// mutex of the bucket, so only memblob sets nativeAbsent.
 type local struct {
-	b *blob.Bucket
-	l *diskLock
+	b            *blob.Bucket
+	l            *diskLock
+	nativeAbsent bool
 }
 
 func (d *local) lock() func() {
@@ -97,9 +100,14 @@ func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (
 	if err != nil && !errors.Is(err, ErrPreconditionFailed) {
 		return nil, nil, err
 	}
+	var opts *blob.WriterOptions
 	switch {
 	case cond == nil:
 	case cond.Absent:
+		if d.nativeAbsent {
+			opts = &blob.WriterOptions{IfNotExist: true}
+			break
+		}
 		exists, err := d.b.Exists(ctx, key)
 		if err != nil {
 			return nil, nil, err
@@ -115,27 +123,24 @@ func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (
 			return nil, nil, errPrecondition(key)
 		}
 	}
-	if prevLive != "" {
-		if mod, _, ok := strings.Cut(prevLive, "-"); ok {
-			if m, err := strconv.ParseInt(mod, 16, 64); err == nil && m > d.l.lastMod {
-				d.l.lastMod = m
-			}
-		}
+	waitPastGeneration(prevLive)
+	return opts, func() (string, error) {
+		return d.live(ctx, key)
+	}, nil
+}
+
+// A local generation is the modification time with the size, so two writes of
+// one key must not land on the same stored time. A new key waits for nothing.
+func waitPastGeneration(prev string) {
+	mod, _, ok := strings.Cut(prev, "-")
+	if !ok {
+		return
 	}
-	for now := time.Now().UnixNano(); now <= d.l.lastMod+int64(2*time.Millisecond); now = time.Now().UnixNano() {
+	m, err := strconv.ParseInt(mod, 16, 64)
+	if err != nil {
+		return
+	}
+	for time.Now().UnixNano() <= m+int64(2*time.Millisecond) {
 		time.Sleep(time.Millisecond)
 	}
-	d.l.lastMod = time.Now().UnixNano()
-	return nil, func() (string, error) {
-		live, err := d.live(ctx, key)
-		if err != nil {
-			return "", err
-		}
-		if mod, _, ok := strings.Cut(live, "-"); ok {
-			if m, err := strconv.ParseInt(mod, 16, 64); err == nil && m > d.l.lastMod {
-				d.l.lastMod = m
-			}
-		}
-		return live, nil
-	}, nil
 }
