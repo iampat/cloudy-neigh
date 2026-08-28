@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"path"
@@ -40,8 +41,15 @@ func WithMaxRecordSize(max int) Option {
 
 const headListLimit = 1000
 
+type ObjectStore interface {
+	Put(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) (string, error)
+	Get(ctx context.Context, key string) (io.ReadCloser, error)
+	Exists(ctx context.Context, key string) (bool, error)
+	List(ctx context.Context, prefix, startAfter string, limit int) ([]objectstore.Object, error)
+}
+
 type Log struct {
-	store         *objectstore.Store
+	store         ObjectStore
 	stream        string
 	prefix        string
 	maxRecordSize int
@@ -50,7 +58,7 @@ type Log struct {
 	lastKnown uint64
 }
 
-func New(store *objectstore.Store, stream string, opts ...Option) (*Log, error) {
+func New(store ObjectStore, stream string, opts ...Option) (*Log, error) {
 	if !validStreamName(stream) {
 		return nil, fmt.Errorf("logstream: invalid stream name %q", stream)
 	}
@@ -111,7 +119,7 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 
 	for {
 		key := segmentKey(l.prefix, l.stream, seq)
-		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), &objectstore.Condition{Absent: true})
+		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{Absent: true})
 		if err == nil {
 			l.lastKnown = seq
 			slog.Debug("logstream append",
@@ -175,7 +183,7 @@ func (l *Log) Read(ctx context.Context, seq uint64) ([]Record, error) {
 		return nil, errors.New("logstream: sequence number must be greater than zero")
 	}
 	key := segmentKey(l.prefix, l.stream, seq)
-	rc, _, err := l.store.Get(ctx, key)
+	rc, err := l.store.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
 			return nil, ErrEndOfStream

@@ -304,7 +304,7 @@ func TestCorruptedSegment(t *testing.T) {
 		require.NoError(t, err)
 
 		key := fmt.Sprintf("wal/%s/%020d.recordio", stream, seq)
-		rc, _, err := s.Get(ctx, key)
+		rc, err := s.Get(ctx, key)
 		require.NoError(t, err)
 		validBytes, err := io.ReadAll(rc)
 		rc.Close()
@@ -313,7 +313,7 @@ func TestCorruptedSegment(t *testing.T) {
 		corruptHeader := bytes.Clone(validBytes)
 		corruptHeader[9] ^= 0xFF
 		require.NoError(t, s.Delete(ctx, key))
-		_, err = s.Put(ctx, key, bytes.NewReader(corruptHeader), nil)
+		_, err = s.Put(ctx, key, bytes.NewReader(corruptHeader), objectstore.Condition{})
 		require.NoError(t, err)
 
 		_, err = log.Read(ctx, seq)
@@ -322,7 +322,7 @@ func TestCorruptedSegment(t *testing.T) {
 		corruptData := bytes.Clone(validBytes)
 		corruptData[len(corruptData)-2] ^= 0xFF
 		require.NoError(t, s.Delete(ctx, key))
-		_, err = s.Put(ctx, key, bytes.NewReader(corruptData), nil)
+		_, err = s.Put(ctx, key, bytes.NewReader(corruptData), objectstore.Condition{})
 		require.NoError(t, err)
 
 		_, err = log.Read(ctx, seq)
@@ -330,7 +330,7 @@ func TestCorruptedSegment(t *testing.T) {
 
 		truncated := validBytes[:len(validBytes)-2]
 		require.NoError(t, s.Delete(ctx, key))
-		_, err = s.Put(ctx, key, bytes.NewReader(truncated), nil)
+		_, err = s.Put(ctx, key, bytes.NewReader(truncated), objectstore.Condition{})
 		require.NoError(t, err)
 
 		_, err = log.Read(ctx, seq)

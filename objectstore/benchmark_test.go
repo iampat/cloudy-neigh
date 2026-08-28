@@ -37,18 +37,18 @@ func benchStore(b *testing.B, open func(b *testing.B) *objectstore.Store) {
 		i := 0
 		for b.Loop() {
 			i++
-			if _, err := s.Put(ctx, fmt.Sprintf("%sput/%d", prefix, i), bytes.NewReader(payload), nil); err != nil {
+			if _, err := s.Put(ctx, fmt.Sprintf("%sput/%d", prefix, i), bytes.NewReader(payload), objectstore.Condition{}); err != nil {
 				b.Fatal(err)
 			}
 		}
 	})
 	b.Run("Get", func(b *testing.B) {
 		s := open(b)
-		if _, err := s.Put(ctx, prefix+"get", bytes.NewReader(payload), nil); err != nil {
+		if _, err := s.Put(ctx, prefix+"get", bytes.NewReader(payload), objectstore.Condition{}); err != nil {
 			b.Fatal(err)
 		}
 		for b.Loop() {
-			r, _, err := s.Get(ctx, prefix+"get")
+			r, err := s.Get(ctx, prefix+"get")
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -64,7 +64,7 @@ func benchStore(b *testing.B, open func(b *testing.B) *objectstore.Store) {
 		for b.Loop() {
 			i++
 			key := fmt.Sprintf("%sabsent/%d", prefix, i)
-			if _, err := s.Put(ctx, key, bytes.NewReader(payload), &objectstore.Condition{Absent: true}); err != nil {
+			if _, err := s.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{Absent: true}); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -72,12 +72,12 @@ func benchStore(b *testing.B, open func(b *testing.B) *objectstore.Store) {
 	b.Run("Put(GenerationMatch)", func(b *testing.B) {
 		s := open(b)
 		key := prefix + "cas"
-		gen, err := s.Put(ctx, key, bytes.NewReader(payload), nil)
+		gen, err := s.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{})
 		if err != nil {
 			b.Fatal(err)
 		}
 		for b.Loop() {
-			gen, err = s.Put(ctx, key, bytes.NewReader(payload), &objectstore.Condition{GenerationMatch: gen})
+			gen, err = s.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{GenerationMatch: gen})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -92,7 +92,7 @@ func benchSameKeyRate(b *testing.B, open func(b *testing.B) *objectstore.Store) 
 		payload := bytes.Repeat([]byte("x"), 1024)
 		key := b.Name() + "/hot"
 		clearPrefix(b, s, b.Name()+"/")
-		gen, err := s.Put(ctx, key, bytes.NewReader(payload), nil)
+		gen, err := s.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -104,7 +104,7 @@ func benchSameKeyRate(b *testing.B, open func(b *testing.B) *objectstore.Store) 
 				continue
 			}
 			start := time.Now()
-			gen, err = s.Put(ctx, key, bytes.NewReader(payload), &objectstore.Condition{GenerationMatch: gen})
+			gen, err = s.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{GenerationMatch: gen})
 			if err != nil {
 				b.Logf("stopped after %d mutations: %v", done, err)
 				failed = true

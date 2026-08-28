@@ -452,6 +452,17 @@ func TestZeroAllocations(t *testing.T) {
 		assert.Zero(t, allocs)
 	})
 
+	t.Run("Writer_WriteRecordFrom", func(t *testing.T) {
+		writer := recordio.NewWriter(io.Discard, recordio.WithWriterBufferSize(64*1024))
+		src := bytes.NewReader(record)
+
+		allocs := testing.AllocsPerRun(100, func() {
+			src.Reset(record)
+			_, _, _ = writer.WriteRecordFrom(src, int64(len(record)))
+		})
+		assert.Zero(t, allocs)
+	})
+
 	t.Run("Reader_ReadRecord", func(t *testing.T) {
 		var buf bytes.Buffer
 		writer := recordio.NewWriter(&buf)
@@ -527,6 +538,22 @@ func BenchmarkWriterWriteRecord(b *testing.B) {
 
 	for b.Loop() {
 		if _, _, err := writer.WriteRecord(record); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkWriterWriteRecordFrom(b *testing.B) {
+	record := make([]byte, 1024)
+	rand.Read(record)
+	writer := recordio.NewWriter(io.Discard, recordio.WithWriterBufferSize(64*1024))
+	src := bytes.NewReader(record)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(record) + 16))
+
+	for b.Loop() {
+		src.Reset(record)
+		if _, _, err := writer.WriteRecordFrom(src, int64(len(record))); err != nil {
 			b.Fatal(err)
 		}
 	}
