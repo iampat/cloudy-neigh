@@ -10,7 +10,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -41,55 +40,38 @@ func WithMaxRecordSize(max int) Option {
 
 const tailListLimit = 1000
 
-type streamState struct {
+// One Log owns one stream. The channel serializes the appends of this process,
+// so lastKnown needs no other lock.
+type Log struct {
+	store         *objectstore.Store
+	stream        string
+	prefix        string
+	maxRecordSize int
+
 	ch        chan struct{}
 	lastKnown uint64
 }
 
-type Log struct {
-	store         *objectstore.Store
-	prefix        string
-	maxRecordSize int
-
-	streamsMu sync.Mutex
-	streams   map[string]*streamState
-}
-
-func New(store *objectstore.Store, opts ...Option) *Log {
+func New(store *objectstore.Store, stream string, opts ...Option) (*Log, error) {
+	if !validStreamName(stream) {
+		return nil, fmt.Errorf("logstream: invalid stream name %q", stream)
+	}
 	l := &Log{
 		store:         store,
+		stream:        stream,
 		prefix:        "wal",
 		maxRecordSize: recordio.DefaultMaxRecordSize,
-		streams:       make(map[string]*streamState),
+		ch:            make(chan struct{}, 1),
 	}
 	for _, opt := range opts {
 		opt(l)
 	}
-	return l
+	return l, nil
 }
 
-func (l *Log) stream(name string) *streamState {
-	l.streamsMu.Lock()
-	defer l.streamsMu.Unlock()
-	s, ok := l.streams[name]
-	if !ok {
-		s = &streamState{
-			ch: make(chan struct{}, 1),
-		}
-		l.streams[name] = s
-	}
-	return s
-}
-
-func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint64, error) {
+func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 	if len(records) == 0 {
 		return 0, errors.New("logstream: batch is empty")
-	}
-	if !validStreamName(stream) {
-		return 0, fmt.Errorf("logstream: invalid stream name %q", stream)
-	}
-	if err := ctx.Err(); err != nil {
-		return 0, err
 	}
 	for _, r := range records {
 		if len(r) > l.maxRecordSize {
@@ -109,23 +91,22 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 	}
 	payload := buf.Bytes()
 
-	st := l.stream(stream)
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
-	case st.ch <- struct{}{}:
+	case l.ch <- struct{}{}:
 	}
-	defer func() { <-st.ch }()
+	defer func() { <-l.ch }()
 
-	if st.lastKnown == 0 {
-		t, err := l.Tail(ctx, stream)
+	if l.lastKnown == 0 {
+		t, err := l.Tail(ctx)
 		if err != nil {
 			return 0, err
 		}
-		st.lastKnown = t
+		l.lastKnown = t
 	}
 
-	seq := st.lastKnown + 1
+	seq := l.lastKnown + 1
 	runway := 3
 	tries := 0
 	first := seq
@@ -133,15 +114,17 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 	start := time.Now()
 
 	for {
-		if err := ctx.Err(); err != nil {
-			return 0, err
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		default:
 		}
-		key := segmentKey(l.prefix, stream, seq)
+		key := segmentKey(l.prefix, l.stream, seq)
 		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), &objectstore.Condition{Absent: true})
 		if err == nil {
-			st.lastKnown = seq
+			l.lastKnown = seq
 			slog.Debug("logstream append",
-				"stream", stream,
+				"stream", l.stream,
 				"seq", seq,
 				"first_try", first,
 				"collisions", collisions,
@@ -159,10 +142,7 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 		if tries < runway {
 			seq++
 		} else {
-			probe := func(ctx context.Context, s uint64) (bool, error) {
-				return l.store.Exists(ctx, segmentKey(l.prefix, stream, s))
-			}
-			head, probes, err := jump(ctx, seq, probe)
+			head, probes, err := jump(ctx, seq, l.probe)
 			jumpProbes += probes
 			if err != nil {
 				return 0, err
@@ -175,18 +155,15 @@ func (l *Log) Append(ctx context.Context, stream string, records []Record) (uint
 	}
 }
 
-func (l *Log) Read(ctx context.Context, stream string, seq uint64) ([]Record, error) {
-	if !validStreamName(stream) {
-		return nil, fmt.Errorf("logstream: invalid stream name %q", stream)
-	}
+func (l *Log) probe(ctx context.Context, seq uint64) (bool, error) {
+	return l.store.Exists(ctx, segmentKey(l.prefix, l.stream, seq))
+}
+
+func (l *Log) Read(ctx context.Context, seq uint64) ([]Record, error) {
 	if seq == 0 {
 		return nil, errors.New("logstream: sequence number must be greater than zero")
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	key := segmentKey(l.prefix, stream, seq)
+	key := segmentKey(l.prefix, l.stream, seq)
 	rc, _, err := l.store.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
@@ -217,15 +194,8 @@ func (l *Log) Read(ctx context.Context, stream string, seq uint64) ([]Record, er
 	return records, nil
 }
 
-func (l *Log) Tail(ctx context.Context, stream string) (uint64, error) {
-	if !validStreamName(stream) {
-		return 0, fmt.Errorf("logstream: invalid stream name %q", stream)
-	}
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-
-	prefix := fmt.Sprintf("%s/%s/", l.prefix, stream)
+func (l *Log) Tail(ctx context.Context) (uint64, error) {
+	prefix := fmt.Sprintf("%s/%s/", l.prefix, l.stream)
 	objs, err := l.store.List(ctx, prefix, "", tailListLimit)
 	if err != nil {
 		return 0, err
@@ -242,17 +212,11 @@ func (l *Log) Tail(ctx context.Context, stream string) (uint64, error) {
 		return lastSeq, nil
 	}
 
-	probe := func(ctx context.Context, s uint64) (bool, error) {
-		return l.store.Exists(ctx, segmentKey(l.prefix, stream, s))
-	}
-	head, _, err := jump(ctx, lastSeq, probe)
+	head, _, err := jump(ctx, lastSeq, l.probe)
 	return head, err
 }
 
 func jump(ctx context.Context, lo uint64, probe func(context.Context, uint64) (bool, error)) (uint64, int, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, 0, err
-	}
 	if lo == math.MaxUint64 {
 		return lo, 0, nil
 	}
@@ -271,9 +235,6 @@ func jump(ctx context.Context, lo uint64, probe func(context.Context, uint64) (b
 	var high uint64
 
 	for {
-		if err := ctx.Err(); err != nil {
-			return 0, probes, err
-		}
 		var target uint64
 		if d > math.MaxUint64-lo {
 			target = math.MaxUint64
@@ -302,9 +263,6 @@ func jump(ctx context.Context, lo uint64, probe func(context.Context, uint64) (b
 	}
 
 	for low+1 < high {
-		if err := ctx.Err(); err != nil {
-			return 0, probes, err
-		}
 		mid := low + (high-low)/2
 		probes++
 		ok, err := probe(ctx, mid)

@@ -55,10 +55,21 @@ into the smallest hook the library offers, such as the `As` escape hatch in
 - A function that does I/O, or calls one that does, takes `context.Context` as
   its first parameter and passes it down. Flag a call that drops one, and flag
   a `_ context.Context` parameter.
-- Context cancellation is best-effort, not a commitment. Do not add a manual
-  `ctx.Err()` check only to force cancellation on fast or local operations.
-- Check `ctx.Err()` where there is work worth abandoning: once per item in a
-  batch, and once more before a commit.
+- Context cancellation is best-effort, not a commitment. Do not check
+  cancellation before a call that already takes `ctx`. That call returns the
+  same error, so the check only moves the failure a few microseconds earlier.
+- Check cancellation in two places. The first is a wait on something that does
+  not take `ctx`. The second is a loop that can turn without a call that does.
+- Write every check as a `select` on `ctx.Done()`. A wait adds the arm it waits
+  on. A loop guard adds a `default` arm.
+
+  ```go
+  select {
+  case <-ctx.Done():
+      return ctx.Err()
+  case sem <- struct{}{}: // a wait: sync.Mutex gives no cancellation arm
+  }
+  ```
 - Never add a context that no implementation reads. It claims a cancellation
   that does not happen. `cas.Store` takes none, because `os.Rename` and
   `File.Sync` do not observe one.

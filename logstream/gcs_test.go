@@ -35,11 +35,12 @@ func TestGCS(t *testing.T) {
 		}
 	})
 
-	log := logstream.New(s)
-	seq, err := log.Append(ctx, stream, []logstream.Record{[]byte("gcs-test-record")})
+	log, err := logstream.New(s, stream)
+	require.NoError(t, err)
+	seq, err := log.Append(ctx, []logstream.Record{[]byte("gcs-test-record")})
 	require.NoError(t, err)
 	assert.Equal(t, uint64(1), seq)
-	records, err := log.Read(ctx, stream, 1)
+	records, err := log.Read(ctx, 1)
 	require.NoError(t, err)
 	assert.Equal(t, []logstream.Record{[]byte("gcs-test-record")}, records)
 }

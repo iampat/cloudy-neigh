@@ -165,10 +165,13 @@ func run(c config) error {
 		return err
 	}
 
-	probe := logstream.New(store)
 	for _, n := range counts {
 		name := streamName(c.prefix, n)
-		tail, err := probe.Tail(ctx, name)
+		probe, err := logstream.New(store, name)
+		if err != nil {
+			return err
+		}
+		tail, err := probe.Tail(ctx)
 		if err != nil {
 			return fmt.Errorf("tail %s: %w", name, err)
 		}
@@ -306,7 +309,10 @@ func benchmark(ctx context.Context, url, name string, n int, d time.Duration, mi
 	for i := range n {
 		id := i
 		g.Go(func() error {
-			log := logstream.New(stores[id])
+			log, err := logstream.New(stores[id], name)
+			if err != nil {
+				return err
+			}
 			for it := range work {
 				if stop.Load() {
 					return nil
@@ -314,7 +320,7 @@ func benchmark(ctx context.Context, url, name string, n int, d time.Duration, mi
 				binary.BigEndian.PutUint32(it.buf[16:20], uint32(id))
 
 				t0 := time.Now()
-				seq, err := log.Append(gctx, name, []logstream.Record{it.buf})
+				seq, err := log.Append(gctx, []logstream.Record{it.buf})
 				elapsed := time.Since(t0)
 				startAt := t0.Sub(start).Microseconds()
 				if err != nil {
@@ -556,7 +562,6 @@ func runSanity(path string, readers int) error {
 	}
 	defer store.Close()
 
-	log := logstream.New(store)
 	order := make([]int, 0, len(runs))
 	for n := range runs {
 		order = append(order, n)
@@ -565,7 +570,7 @@ func runSanity(path string, readers int) error {
 
 	failed := false
 	for _, n := range order {
-		ok, err := checkStream(ctx, log, runs[n], readers)
+		ok, err := checkStream(ctx, store, runs[n], readers)
 		if err != nil {
 			return err
 		}
@@ -580,10 +585,14 @@ func runSanity(path string, readers int) error {
 	return nil
 }
 
-func checkStream(ctx context.Context, log *logstream.Log, r *runResult, readers int) (bool, error) {
+func checkStream(ctx context.Context, store *objectstore.Store, r *runResult, readers int) (bool, error) {
 	stream := r.stream
+	log, err := logstream.New(store, stream)
+	if err != nil {
+		return false, err
+	}
 	acked := len(r.appends)
-	tail, err := log.Tail(ctx, stream)
+	tail, err := log.Tail(ctx)
 	if err != nil {
 		return false, fmt.Errorf("tail %s: %w", stream, err)
 	}
@@ -603,7 +612,7 @@ func checkStream(ctx context.Context, log *logstream.Log, r *runResult, readers 
 			defer wg.Done()
 			for seq := range work {
 				s := &segs[seq-1]
-				records, err := log.Read(ctx, stream, seq)
+				records, err := log.Read(ctx, seq)
 				if errors.Is(err, logstream.ErrEndOfStream) {
 					s.missing = true
 					continue
