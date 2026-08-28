@@ -8,11 +8,13 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"math/rand/v2"
 	"path"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/iampat/cloudy-neigh/internal/xtime"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	"github.com/iampat/cloudy-neigh/recordio"
 )
@@ -56,6 +58,8 @@ type Log struct {
 
 	ch        chan struct{}
 	lastKnown uint64
+	winStreak int
+	rttEMA    time.Duration
 }
 
 func New(store ObjectStore, stream string, opts ...Option) (*Log, error) {
@@ -119,6 +123,7 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 
 	for {
 		key := segmentKey(l.prefix, l.stream, seq)
+		putStart := time.Now()
 		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{Absent: true})
 		if err == nil {
 			l.lastKnown = seq
@@ -131,6 +136,7 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 				"jump_probes", jumpProbes,
 				"uploads", collisions+1,
 				"elapsed_ms", time.Since(start).Milliseconds())
+			_ = l.paceWinner(ctx, collisions, time.Since(putStart))
 			return seq, nil
 		}
 		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
@@ -146,6 +152,32 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 		}
 		seq = head + 1
 	}
+}
+
+func (l *Log) paceWinner(ctx context.Context, collisions int, putDuration time.Duration) error {
+	if l.rttEMA == 0 {
+		l.rttEMA = putDuration
+	} else {
+		l.rttEMA = (l.rttEMA*4 + putDuration) / 5
+	}
+
+	if collisions > 0 {
+		l.winStreak = 0
+		return nil
+	}
+
+	l.winStreak++
+	if l.winStreak <= 1 {
+		return nil
+	}
+
+	delayFactor := min(float64(l.winStreak-1)*0.25, 1.0)
+	baseDelay := time.Duration(float64(l.rttEMA) * delayFactor)
+	var jitter time.Duration
+	if l.rttEMA > 10 {
+		jitter = time.Duration(rand.Int64N(int64(l.rttEMA / 10)))
+	}
+	return xtime.Sleep(ctx, baseDelay+jitter)
 }
 
 func (l *Log) head(ctx context.Context, lo uint64) (uint64, int, error) {
