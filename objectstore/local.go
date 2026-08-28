@@ -34,9 +34,6 @@ func diskMu(dir string) (*diskLock, error) {
 	return val.(*diskLock), nil
 }
 
-// fileblob gives every writer a fresh mutex and then renames over the target,
-// so its IfNotExist admits two winners. memblob checks and inserts under the
-// mutex of the bucket, so only memblob sets nativeAbsent.
 type local struct {
 	b            *blob.Bucket
 	l            *diskLock
@@ -96,17 +93,11 @@ func (d *local) live(ctx context.Context, key string) (string, error) {
 }
 
 func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (*blob.WriterOptions, func() (string, error), error) {
-	prevLive, err := d.live(ctx, key)
-	if err != nil && !errors.Is(err, ErrPreconditionFailed) {
-		return nil, nil, err
-	}
-	var opts *blob.WriterOptions
-	switch {
-	case cond == nil:
-	case cond.Absent:
+	live := func() (string, error) { return d.live(ctx, key) }
+
+	if cond != nil && cond.Absent {
 		if d.nativeAbsent {
-			opts = &blob.WriterOptions{IfNotExist: true}
-			break
+			return &blob.WriterOptions{IfNotExist: true}, live, nil
 		}
 		exists, err := d.b.Exists(ctx, key)
 		if err != nil {
@@ -115,7 +106,14 @@ func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (
 		if exists {
 			return nil, nil, errPrecondition(key)
 		}
-	default:
+		return nil, live, nil
+	}
+
+	prevLive, err := d.live(ctx, key)
+	if err != nil && !errors.Is(err, ErrPreconditionFailed) {
+		return nil, nil, err
+	}
+	if cond != nil {
 		if !validLocalGeneration(cond.GenerationMatch) {
 			return nil, nil, fmt.Errorf("objectstore: key %q: malformed generation %q", key, cond.GenerationMatch)
 		}
@@ -124,13 +122,9 @@ func (d *local) writeOptions(ctx context.Context, key string, cond *Condition) (
 		}
 	}
 	waitPastGeneration(prevLive)
-	return opts, func() (string, error) {
-		return d.live(ctx, key)
-	}, nil
+	return nil, live, nil
 }
 
-// A local generation is the modification time with the size, so two writes of
-// one key must not land on the same stored time. A new key waits for nothing.
 func waitPastGeneration(prev string) {
 	mod, _, ok := strings.Cut(prev, "-")
 	if !ok {

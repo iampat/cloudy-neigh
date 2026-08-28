@@ -40,8 +40,6 @@ func WithMaxRecordSize(max int) Option {
 
 const tailListLimit = 1000
 
-// One Log owns one stream. The channel serializes the appends of this process,
-// so lastKnown needs no other lock.
 type Log struct {
 	store         *objectstore.Store
 	stream        string
@@ -114,11 +112,6 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 	start := time.Now()
 
 	for {
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		default:
-		}
 		key := segmentKey(l.prefix, l.stream, seq)
 		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), &objectstore.Condition{Absent: true})
 		if err == nil {
