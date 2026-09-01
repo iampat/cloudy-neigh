@@ -30,7 +30,7 @@ func (c Condition) validate(key string) error {
 	return nil
 }
 
-type ObjectStore interface {
+type Store interface {
 	io.Closer
 	Stat(ctx context.Context, key string) (Object, error)
 	Get(ctx context.Context, key string) (io.ReadCloser, Object, error)
@@ -40,37 +40,37 @@ type ObjectStore interface {
 	List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error)
 }
 
-type Store struct {
+type client struct {
 	d driver
 }
 
-func (s *Store) Close() error {
-	return s.d.Close()
+func (c *client) Close() error {
+	return c.d.Close()
 }
 
-func (s *Store) Stat(ctx context.Context, key string) (Object, error) {
-	return s.d.stat(ctx, key)
+func (c *client) Stat(ctx context.Context, key string) (Object, error) {
+	return c.d.stat(ctx, key)
 }
 
-func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
-	return s.d.get(ctx, key)
+func (c *client) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
+	return c.d.get(ctx, key)
 }
 
-func (s *Store) Put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
+func (c *client) Put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
 	if err := cond.validate(key); err != nil {
 		return "", err
 	}
-	return s.d.put(ctx, key, r, cond)
+	return c.d.put(ctx, key, r, cond)
 }
 
-func (s *Store) Delete(ctx context.Context, key string) error {
-	return s.d.delete(ctx, key)
+func (c *client) Delete(ctx context.Context, key string) error {
+	return c.d.delete(ctx, key)
 }
 
-func (s *Store) Exists(ctx context.Context, key string) (bool, error) {
-	return s.d.exists(ctx, key)
+func (c *client) Exists(ctx context.Context, key string) (bool, error) {
+	return c.d.exists(ctx, key)
 }
 
-func (s *Store) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
-	return s.d.list(ctx, prefix, startAfter, limit)
+func (c *client) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
+	return c.d.list(ctx, prefix, startAfter, limit)
 }

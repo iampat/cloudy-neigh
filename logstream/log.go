@@ -43,7 +43,7 @@ func WithMaxRecordSize(max int) Option {
 const headListLimit = 1000
 
 type Log struct {
-	store         objectstore.ObjectStore
+	store         objectstore.Store
 	stream        string
 	prefix        string
 	maxRecordSize int
@@ -54,7 +54,7 @@ type Log struct {
 	rttEMA    time.Duration
 }
 
-func New(store objectstore.ObjectStore, stream string, opts ...Option) (*Log, error) {
+func New(store objectstore.Store, stream string, opts ...Option) (*Log, error) {
 	if !validStreamName(stream) {
 		return nil, fmt.Errorf("logstream: invalid stream name %q", stream)
 	}

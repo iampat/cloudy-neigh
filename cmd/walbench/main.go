@@ -261,7 +261,7 @@ type item struct {
 }
 
 func benchmark(ctx context.Context, url, name string, n int, d time.Duration, minSize, maxSize int) (runResult, error) {
-	stores := make([]*objectstore.Store, n)
+	stores := make([]objectstore.Store, n)
 	for i := range stores {
 		s, err := objectstore.Open(ctx, url)
 		if err != nil {
@@ -585,7 +585,7 @@ func runSanity(path string, readers int) error {
 	return nil
 }
 
-func checkStream(ctx context.Context, store *objectstore.Store, r *runResult, readers int) (bool, error) {
+func checkStream(ctx context.Context, store objectstore.Store, r *runResult, readers int) (bool, error) {
 	stream := r.stream
 	log, err := logstream.New(store, stream)
 	if err != nil {

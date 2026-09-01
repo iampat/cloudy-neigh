@@ -20,7 +20,7 @@ func TestDiskSharedDirSerializes(t *testing.T) {
 	s2 := openURL(t, "file://"+link+"?create_dir=true")
 	defer s2.Close()
 
-	raceAbsentPut(t, []*objectstore.Store{s1, s2}, "race", 32)
+	raceAbsentPut(t, []objectstore.Store{s1, s2}, "race", 32)
 }
 
 func TestDiskReopen(t *testing.T) {
