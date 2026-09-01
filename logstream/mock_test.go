@@ -41,6 +41,18 @@ func (m *mockStore) Exists(ctx context.Context, key string) (bool, error) {
 	return false, nil
 }
 
+func (m *mockStore) Close() error {
+	return nil
+}
+
+func (m *mockStore) Stat(ctx context.Context, key string) (objectstore.Object, error) {
+	return objectstore.Object{}, nil
+}
+
+func (m *mockStore) Delete(ctx context.Context, key string) error {
+	return nil
+}
+
 func (m *mockStore) List(ctx context.Context, prefix, startAfter string, limit int) ([]objectstore.Object, error) {
 	if m.listFunc != nil {
 		return m.listFunc(ctx, prefix, startAfter, limit)
