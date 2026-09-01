@@ -48,7 +48,7 @@ func benchStore(b *testing.B, open func(b *testing.B) *objectstore.Store) {
 			b.Fatal(err)
 		}
 		for b.Loop() {
-			r, err := s.Get(ctx, prefix+"get")
+			r, _, err := s.Get(ctx, prefix+"get")
 			if err != nil {
 				b.Fatal(err)
 			}

@@ -304,7 +304,7 @@ func TestCorruptedSegment(t *testing.T) {
 		require.NoError(t, err)
 
 		key := fmt.Sprintf("wal/%s/%020d.recordio", stream, seq)
-		rc, err := s.Get(ctx, key)
+		rc, _, err := s.Get(ctx, key)
 		require.NoError(t, err)
 		validBytes, err := io.ReadAll(rc)
 		rc.Close()

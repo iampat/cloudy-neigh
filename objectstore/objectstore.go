@@ -38,11 +38,11 @@ func (s *Store) Close() error {
 	return s.d.Close()
 }
 
-func (s *Store) Head(ctx context.Context, key string) (Object, error) {
-	return s.d.head(ctx, key)
+func (s *Store) Stat(ctx context.Context, key string) (Object, error) {
+	return s.d.stat(ctx, key)
 }
 
-func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
 	return s.d.get(ctx, key)
 }
 

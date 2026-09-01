@@ -45,7 +45,7 @@ const headListLimit = 1000
 
 type ObjectStore interface {
 	Put(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) (string, error)
-	Get(ctx context.Context, key string) (io.ReadCloser, error)
+	Get(ctx context.Context, key string) (io.ReadCloser, objectstore.Object, error)
 	Exists(ctx context.Context, key string) (bool, error)
 	List(ctx context.Context, prefix, startAfter string, limit int) ([]objectstore.Object, error)
 }
@@ -215,7 +215,7 @@ func (l *Log) Read(ctx context.Context, seq uint64) ([]Record, error) {
 		return nil, errors.New("logstream: sequence number must be greater than zero")
 	}
 	key := segmentKey(l.prefix, l.stream, seq)
-	rc, err := l.store.Get(ctx, key)
+	rc, _, err := l.store.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
 			return nil, ErrEndOfStream
