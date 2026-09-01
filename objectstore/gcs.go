@@ -26,7 +26,7 @@ func (g *gcsDriver) bkt() *storage.BucketHandle {
 	return g.client.Bucket(g.bucket)
 }
 
-func (g *gcsDriver) head(ctx context.Context, key string) (Object, error) {
+func (g *gcsDriver) stat(ctx context.Context, key string) (Object, error) {
 	attrs, err := g.bkt().Object(key).Attrs(ctx)
 	if err != nil {
 		return Object{}, translateGCS(key, err)
@@ -38,12 +38,16 @@ func (g *gcsDriver) head(ctx context.Context, key string) (Object, error) {
 	}, nil
 }
 
-func (g *gcsDriver) get(ctx context.Context, key string) (io.ReadCloser, error) {
+func (g *gcsDriver) get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
 	r, err := g.bkt().Object(key).NewReader(ctx)
 	if err != nil {
-		return nil, translateGCS(key, err)
+		return nil, Object{}, translateGCS(key, err)
 	}
-	return r, nil
+	return r, Object{
+		Key:        key,
+		Generation: strconv.FormatInt(r.Attrs.Generation, 10),
+		Size:       r.Attrs.Size,
+	}, nil
 }
 
 func (g *gcsDriver) exists(ctx context.Context, key string) (bool, error) {

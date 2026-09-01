@@ -12,7 +12,7 @@ func TestGCS(t *testing.T) {
 	if bucket == "" {
 		t.Skip("OBJECTSTORE_TEST_GCS_BUCKET is not set")
 	}
-	runContract(t, func(t *testing.T) *objectstore.Store {
+	runContract(t, func(t *testing.T) objectstore.Store {
 		s := openURL(t, "gs://"+bucket)
 		t.Cleanup(func() { s.Close() })
 		return s

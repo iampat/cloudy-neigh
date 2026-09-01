@@ -12,7 +12,7 @@ import (
 	"github.com/iampat/cloudy-neigh/objectstore"
 )
 
-func clearPrefix(b *testing.B, s *objectstore.Store, prefix string) {
+func clearPrefix(b *testing.B, s objectstore.Store, prefix string) {
 	b.Helper()
 	ctx := context.Background()
 	objs, err := s.List(ctx, prefix, "", 0)
@@ -26,7 +26,7 @@ func clearPrefix(b *testing.B, s *objectstore.Store, prefix string) {
 	}
 }
 
-func benchStore(b *testing.B, open func(b *testing.B) *objectstore.Store) {
+func benchStore(b *testing.B, open func(b *testing.B) objectstore.Store) {
 	ctx := context.Background()
 	payload := bytes.Repeat([]byte("x"), 1024)
 	prefix := b.Name() + "/"
@@ -48,7 +48,7 @@ func benchStore(b *testing.B, open func(b *testing.B) *objectstore.Store) {
 			b.Fatal(err)
 		}
 		for b.Loop() {
-			r, err := s.Get(ctx, prefix+"get")
+			r, _, err := s.Get(ctx, prefix+"get")
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -85,7 +85,7 @@ func benchStore(b *testing.B, open func(b *testing.B) *objectstore.Store) {
 	})
 }
 
-func benchSameKeyRate(b *testing.B, open func(b *testing.B) *objectstore.Store) {
+func benchSameKeyRate(b *testing.B, open func(b *testing.B) objectstore.Store) {
 	b.Run("SameKeyMutationRate", func(b *testing.B) {
 		s := open(b)
 		ctx := context.Background()
@@ -120,7 +120,7 @@ func benchSameKeyRate(b *testing.B, open func(b *testing.B) *objectstore.Store) 
 }
 
 func BenchmarkMem(b *testing.B) {
-	benchStore(b, func(b *testing.B) *objectstore.Store {
+	benchStore(b, func(b *testing.B) objectstore.Store {
 		s := openURL(b, "mem://")
 		b.Cleanup(func() { s.Close() })
 		return s
@@ -128,7 +128,7 @@ func BenchmarkMem(b *testing.B) {
 }
 
 func BenchmarkDisk(b *testing.B) {
-	benchStore(b, func(b *testing.B) *objectstore.Store {
+	benchStore(b, func(b *testing.B) objectstore.Store {
 		s := openURL(b, "file://"+b.TempDir()+"/bucket?create_dir=true")
 		b.Cleanup(func() { s.Close() })
 		return s
@@ -140,7 +140,7 @@ func BenchmarkGCSSameKeyRate(b *testing.B) {
 	if bucket == "" {
 		b.Skip("OBJECTSTORE_TEST_GCS_BUCKET is not set")
 	}
-	benchSameKeyRate(b, func(b *testing.B) *objectstore.Store {
+	benchSameKeyRate(b, func(b *testing.B) objectstore.Store {
 		s := openURL(b, "gs://"+bucket)
 		b.Cleanup(func() { s.Close() })
 		return s
@@ -152,7 +152,7 @@ func BenchmarkGCS(b *testing.B) {
 	if bucket == "" {
 		b.Skip("OBJECTSTORE_TEST_GCS_BUCKET is not set")
 	}
-	benchStore(b, func(b *testing.B) *objectstore.Store {
+	benchStore(b, func(b *testing.B) objectstore.Store {
 		s := openURL(b, "gs://"+bucket)
 		b.Cleanup(func() { s.Close() })
 		return s

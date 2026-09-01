@@ -32,7 +32,7 @@ func (m *memDriver) Close() error {
 	return nil
 }
 
-func (m *memDriver) head(ctx context.Context, key string) (Object, error) {
+func (m *memDriver) stat(ctx context.Context, key string) (Object, error) {
 	if err := ctx.Err(); err != nil {
 		return Object{}, err
 	}
@@ -49,17 +49,21 @@ func (m *memDriver) head(ctx context.Context, key string) (Object, error) {
 	}, nil
 }
 
-func (m *memDriver) get(ctx context.Context, key string) (io.ReadCloser, error) {
+func (m *memDriver) get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, Object{}, err
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	e, ok := m.objects[key]
 	if !ok {
-		return nil, fmt.Errorf("key %q: %w", key, ErrNotFound)
+		return nil, Object{}, fmt.Errorf("key %q: %w", key, ErrNotFound)
 	}
-	return io.NopCloser(bytes.NewReader(e.data)), nil
+	return io.NopCloser(bytes.NewReader(e.data)), Object{
+		Key:        key,
+		Generation: e.generation,
+		Size:       int64(len(e.data)),
+	}, nil
 }
 
 func (m *memDriver) exists(ctx context.Context, key string) (bool, error) {

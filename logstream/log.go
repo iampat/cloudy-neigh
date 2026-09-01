@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"math/rand/v2"
@@ -43,15 +42,8 @@ func WithMaxRecordSize(max int) Option {
 
 const headListLimit = 1000
 
-type ObjectStore interface {
-	Put(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) (string, error)
-	Get(ctx context.Context, key string) (io.ReadCloser, error)
-	Exists(ctx context.Context, key string) (bool, error)
-	List(ctx context.Context, prefix, startAfter string, limit int) ([]objectstore.Object, error)
-}
-
 type Log struct {
-	store         ObjectStore
+	store         objectstore.Store
 	stream        string
 	prefix        string
 	maxRecordSize int
@@ -62,7 +54,7 @@ type Log struct {
 	rttEMA    time.Duration
 }
 
-func New(store ObjectStore, stream string, opts ...Option) (*Log, error) {
+func New(store objectstore.Store, stream string, opts ...Option) (*Log, error) {
 	if !validStreamName(stream) {
 		return nil, fmt.Errorf("logstream: invalid stream name %q", stream)
 	}
@@ -215,7 +207,7 @@ func (l *Log) Read(ctx context.Context, seq uint64) ([]Record, error) {
 		return nil, errors.New("logstream: sequence number must be greater than zero")
 	}
 	key := segmentKey(l.prefix, l.stream, seq)
-	rc, err := l.store.Get(ctx, key)
+	rc, _, err := l.store.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
 			return nil, ErrEndOfStream

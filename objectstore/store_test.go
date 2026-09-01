@@ -30,14 +30,14 @@ func read(t *testing.T, r io.ReadCloser) string {
 	return string(data)
 }
 
-func put(t *testing.T, s *objectstore.Store, key, value string) string {
+func put(t *testing.T, s objectstore.Store, key, value string) string {
 	t.Helper()
 	gen, err := s.Put(context.Background(), key, strings.NewReader(value), objectstore.Condition{})
 	require.NoError(t, err)
 	return gen
 }
 
-func raceAbsentPut(t *testing.T, stores []*objectstore.Store, key string, writers int) {
+func raceAbsentPut(t *testing.T, stores []objectstore.Store, key string, writers int) {
 	t.Helper()
 	var wins, losses atomic.Int32
 	errCh := make(chan error, writers)
@@ -67,9 +67,9 @@ func raceAbsentPut(t *testing.T, stores []*objectstore.Store, key string, writer
 	assert.Equal(t, int32(writers-1), losses.Load())
 }
 
-func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg contractConfig) {
+func runContract(t *testing.T, open func(t *testing.T) objectstore.Store, cfg contractConfig) {
 	ctx := context.Background()
-	prefix := func(t *testing.T, s *objectstore.Store) string {
+	prefix := func(t *testing.T, s objectstore.Store) string {
 		p := strings.ReplaceAll(t.Name(), "/", "_") + "/"
 		objs, err := s.List(ctx, p, "", 0)
 		require.NoError(t, err)
@@ -84,11 +84,15 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		k := prefix(t, s) + "k"
 		gen := put(t, s, k, "v1")
 		require.NotEmpty(t, gen)
-		r, err := s.Get(ctx, k)
+		r, obj, err := s.Get(ctx, k)
 		require.NoError(t, err)
+		assert.Equal(t, gen, obj.Generation)
+		assert.Equal(t, int64(2), obj.Size)
 		assert.Equal(t, "v1", read(t, r))
-		r, err = s.Get(ctx, k)
+		r, obj, err = s.Get(ctx, k)
 		require.NoError(t, err)
+		assert.Equal(t, gen, obj.Generation)
+		assert.Equal(t, int64(2), obj.Size)
 		assert.Equal(t, "v1", read(t, r))
 	})
 
@@ -109,14 +113,14 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		gen, err = s.Put(ctx, k, strings.NewReader("v2"), objectstore.Condition{Absent: true})
 		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
 		assert.Empty(t, gen)
-		r, err := s.Get(ctx, k)
+		r, _, err := s.Get(ctx, k)
 		require.NoError(t, err)
 		assert.Equal(t, "v1", read(t, r))
 	})
 
 	t.Run("AbsentConditionRace", func(t *testing.T) {
 		s := open(t)
-		raceAbsentPut(t, []*objectstore.Store{s}, prefix(t, s)+"k", cfg.raceWriters)
+		raceAbsentPut(t, []objectstore.Store{s}, prefix(t, s)+"k", cfg.raceWriters)
 	})
 
 	t.Run("CompareAndSwapCounter", func(t *testing.T) {
@@ -131,12 +135,7 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 				defer wg.Done()
 				for n := 0; n < cfg.casIters; n++ {
 					for {
-						obj, err := s.Head(ctx, k)
-						if err != nil {
-							errCh <- fmt.Errorf("Head: %w", err)
-							return
-						}
-						r, err := s.Get(ctx, k)
+						r, obj, err := s.Get(ctx, k)
 						if err != nil {
 							errCh <- fmt.Errorf("Get: %w", err)
 							return
@@ -169,7 +168,7 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		for err := range errCh {
 			t.Fatal(err)
 		}
-		r, err := s.Get(ctx, k)
+		r, _, err := s.Get(ctx, k)
 		require.NoError(t, err)
 		want := strconv.Itoa(cfg.casWriters * cfg.casIters)
 		assert.Equal(t, want, read(t, r))
@@ -198,7 +197,7 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 	t.Run("AbsentKey", func(t *testing.T) {
 		s := open(t)
 		k := prefix(t, s) + "nope"
-		_, err := s.Get(ctx, k)
+		_, _, err := s.Get(ctx, k)
 		assert.ErrorIs(t, err, objectstore.ErrNotFound)
 		assert.ErrorIs(t, s.Delete(ctx, k), objectstore.ErrNotFound)
 		gen := put(t, s, k, "v")
@@ -239,7 +238,7 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		assert.NoError(t, err)
 		_, err = s.Put(ctx, k, strings.NewReader("v2"), objectstore.Condition{})
 		assert.NoError(t, err)
-		r, err := s.Get(ctx, k)
+		r, _, err := s.Get(ctx, k)
 		require.NoError(t, err)
 		defer r.Close()
 		got, err := io.ReadAll(r)
@@ -272,10 +271,10 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		}
 		assert.Equal(t, []string{p + "a/1", p + "a/2", p + "a/3"}, keys)
 		require.NotEmpty(t, objs)
-		r, err := s.Get(ctx, objs[0].Key)
+		r, _, err := s.Get(ctx, objs[0].Key)
 		require.NoError(t, err)
 		r.Close()
-		obj, err := s.Head(ctx, objs[0].Key)
+		obj, err := s.Stat(ctx, objs[0].Key)
 		require.NoError(t, err)
 		assert.Equal(t, obj.Generation, objs[0].Generation)
 		objs, err = s.List(ctx, p+"a/", p+"a/1", 0)
@@ -304,22 +303,22 @@ func runContract(t *testing.T, open func(t *testing.T) *objectstore.Store, cfg c
 		assert.False(t, ok)
 	})
 
-	t.Run("Head", func(t *testing.T) {
+	t.Run("Stat", func(t *testing.T) {
 		s := open(t)
-		k := prefix(t, s) + "head"
+		k := prefix(t, s) + "stat"
 		gen := put(t, s, k, "hello")
-		obj, err := s.Head(ctx, k)
+		obj, err := s.Stat(ctx, k)
 		require.NoError(t, err)
 		assert.Equal(t, k, obj.Key)
 		assert.Equal(t, gen, obj.Generation)
 		assert.Equal(t, int64(5), obj.Size)
 
-		_, err = s.Head(ctx, prefix(t, s)+"nope")
+		_, err = s.Stat(ctx, prefix(t, s)+"nope")
 		assert.ErrorIs(t, err, objectstore.ErrNotFound)
 	})
 }
 
-func openURL(tb testing.TB, url string) *objectstore.Store {
+func openURL(tb testing.TB, url string) objectstore.Store {
 	tb.Helper()
 	s, err := objectstore.Open(context.Background(), url)
 	require.NoError(tb, err)
@@ -327,7 +326,7 @@ func openURL(tb testing.TB, url string) *objectstore.Store {
 }
 
 func TestMem(t *testing.T) {
-	runContract(t, func(t *testing.T) *objectstore.Store {
+	runContract(t, func(t *testing.T) objectstore.Store {
 		s := openURL(t, "mem://")
 		t.Cleanup(func() { s.Close() })
 		return s
@@ -335,7 +334,7 @@ func TestMem(t *testing.T) {
 }
 
 func TestDisk(t *testing.T) {
-	runContract(t, func(t *testing.T) *objectstore.Store {
+	runContract(t, func(t *testing.T) objectstore.Store {
 		s := openURL(t, "file://"+t.TempDir()+"/bucket?create_dir=true")
 		t.Cleanup(func() { s.Close() })
 		return s

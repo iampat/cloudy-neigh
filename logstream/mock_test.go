@@ -15,7 +15,7 @@ import (
 
 type mockStore struct {
 	putFunc    func(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) (string, error)
-	getFunc    func(ctx context.Context, key string) (io.ReadCloser, error)
+	getFunc    func(ctx context.Context, key string) (io.ReadCloser, objectstore.Object, error)
 	existsFunc func(ctx context.Context, key string) (bool, error)
 	listFunc   func(ctx context.Context, prefix, startAfter string, limit int) ([]objectstore.Object, error)
 }
@@ -27,11 +27,11 @@ func (m *mockStore) Put(ctx context.Context, key string, r io.Reader, cond objec
 	return "gen-1", nil
 }
 
-func (m *mockStore) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+func (m *mockStore) Get(ctx context.Context, key string) (io.ReadCloser, objectstore.Object, error) {
 	if m.getFunc != nil {
 		return m.getFunc(ctx, key)
 	}
-	return nil, objectstore.ErrNotFound
+	return nil, objectstore.Object{}, objectstore.ErrNotFound
 }
 
 func (m *mockStore) Exists(ctx context.Context, key string) (bool, error) {
@@ -39,6 +39,18 @@ func (m *mockStore) Exists(ctx context.Context, key string) (bool, error) {
 		return m.existsFunc(ctx, key)
 	}
 	return false, nil
+}
+
+func (m *mockStore) Close() error {
+	return nil
+}
+
+func (m *mockStore) Stat(ctx context.Context, key string) (objectstore.Object, error) {
+	return objectstore.Object{}, nil
+}
+
+func (m *mockStore) Delete(ctx context.Context, key string) error {
+	return nil
 }
 
 func (m *mockStore) List(ctx context.Context, prefix, startAfter string, limit int) ([]objectstore.Object, error) {
@@ -99,8 +111,8 @@ func TestAppendPutFailure(t *testing.T) {
 func TestReadGetFailure(t *testing.T) {
 	t.Run("NotFoundBecomesEndOfStream", func(t *testing.T) {
 		mock := &mockStore{
-			getFunc: func(ctx context.Context, key string) (io.ReadCloser, error) {
-				return nil, objectstore.ErrNotFound
+			getFunc: func(ctx context.Context, key string) (io.ReadCloser, objectstore.Object, error) {
+				return nil, objectstore.Object{}, objectstore.ErrNotFound
 			},
 		}
 
@@ -114,8 +126,8 @@ func TestReadGetFailure(t *testing.T) {
 	t.Run("GeneralError", func(t *testing.T) {
 		injectedErr := errors.New("read fault")
 		mock := &mockStore{
-			getFunc: func(ctx context.Context, key string) (io.ReadCloser, error) {
-				return nil, injectedErr
+			getFunc: func(ctx context.Context, key string) (io.ReadCloser, objectstore.Object, error) {
+				return nil, objectstore.Object{}, injectedErr
 			},
 		}
 

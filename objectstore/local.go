@@ -132,7 +132,7 @@ func (d *localDriver) path(key string) (string, error) {
 	return filepath.Join(d.dir, clean), nil
 }
 
-func (d *localDriver) head(ctx context.Context, key string) (Object, error) {
+func (d *localDriver) stat(ctx context.Context, key string) (Object, error) {
 	if err := ctx.Err(); err != nil {
 		return Object{}, err
 	}
@@ -157,22 +157,35 @@ func (d *localDriver) head(ctx context.Context, key string) (Object, error) {
 	}, nil
 }
 
-func (d *localDriver) get(ctx context.Context, key string) (io.ReadCloser, error) {
+func (d *localDriver) get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, Object{}, err
 	}
 	target, err := d.path(key)
 	if err != nil {
-		return nil, err
+		return nil, Object{}, err
 	}
 	f, err := os.Open(target)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("key %q: %w", key, ErrNotFound)
+			return nil, Object{}, fmt.Errorf("key %q: %w", key, ErrNotFound)
 		}
-		return nil, err
+		return nil, Object{}, err
 	}
-	return f, nil
+	fi, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, Object{}, err
+	}
+	if fi.IsDir() {
+		_ = f.Close()
+		return nil, Object{}, fmt.Errorf("key %q: %w", key, ErrNotFound)
+	}
+	return f, Object{
+		Key:        key,
+		Generation: localGeneration(fi.ModTime().UnixNano(), fi.Size()),
+		Size:       fi.Size(),
+	}, nil
 }
 
 func (d *localDriver) exists(ctx context.Context, key string) (bool, error) {

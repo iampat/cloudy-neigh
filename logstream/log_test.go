@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func forEachBackend(t *testing.T, fn func(t *testing.T, s *objectstore.Store)) {
+func forEachBackend(t *testing.T, fn func(t *testing.T, s objectstore.Store)) {
 	t.Helper()
 	t.Run("mem", func(t *testing.T) {
 		s, err := objectstore.Open(context.Background(), "mem://")
@@ -33,7 +33,7 @@ func forEachBackend(t *testing.T, fn func(t *testing.T, s *objectstore.Store)) {
 	})
 }
 
-func newLog(t *testing.T, s *objectstore.Store, stream string, opts ...logstream.Option) *logstream.Log {
+func newLog(t *testing.T, s objectstore.Store, stream string, opts ...logstream.Option) *logstream.Log {
 	t.Helper()
 	l, err := logstream.New(s, stream, opts...)
 	require.NoError(t, err)
@@ -41,7 +41,7 @@ func newLog(t *testing.T, s *objectstore.Store, stream string, opts ...logstream
 }
 
 func TestStreamValidation(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		tests := []struct {
 			name    string
 			stream  string
@@ -77,7 +77,7 @@ func TestStreamValidation(t *testing.T) {
 }
 
 func TestAppendAndRead(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		stream := "test-stream"
 		log := newLog(t, s, stream)
@@ -117,7 +117,7 @@ func TestAppendAndRead(t *testing.T) {
 }
 
 func TestAppendValidation(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		stream := "validation-stream"
 		log := newLog(t, s, stream, logstream.WithMaxRecordSize(10))
@@ -139,7 +139,7 @@ func TestAppendValidation(t *testing.T) {
 }
 
 func TestReadSharesBackingArray(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		stream := "backing-stream"
 		log := newLog(t, s, stream)
@@ -167,7 +167,7 @@ func TestReadSharesBackingArray(t *testing.T) {
 }
 
 func TestTailJumpColdStart(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		stream := "cold-jump"
 		log := newLog(t, s, stream)
@@ -187,7 +187,7 @@ func TestTailJumpColdStart(t *testing.T) {
 }
 
 func TestAppendDriftRecovery(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		stream := "drift-stream"
 
@@ -211,7 +211,7 @@ func TestAppendDriftRecovery(t *testing.T) {
 }
 
 func TestConcurrentAppends(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		tests := []struct {
 			name      string
 			stream    string
@@ -295,7 +295,7 @@ func TestConcurrentAppends(t *testing.T) {
 }
 
 func TestCorruptedSegment(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s *objectstore.Store) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		stream := "corrupt-stream"
 		log := newLog(t, s, stream)
@@ -304,7 +304,7 @@ func TestCorruptedSegment(t *testing.T) {
 		require.NoError(t, err)
 
 		key := fmt.Sprintf("wal/%s/%020d.recordio", stream, seq)
-		rc, err := s.Get(ctx, key)
+		rc, _, err := s.Get(ctx, key)
 		require.NoError(t, err)
 		validBytes, err := io.ReadAll(rc)
 		rc.Close()

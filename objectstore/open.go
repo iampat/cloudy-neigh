@@ -10,14 +10,14 @@ import (
 	"cloud.google.com/go/storage"
 )
 
-func Open(ctx context.Context, rawURL string) (*Store, error) {
+func Open(ctx context.Context, rawURL string) (Store, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
 	}
 	switch u.Scheme {
 	case "mem":
-		return &Store{d: newMemDriver()}, nil
+		return &client{d: newMemDriver()}, nil
 	case "file":
 		path := u.Path
 		if path == "" && u.Host != "" {
@@ -35,7 +35,7 @@ func Open(ctx context.Context, rawURL string) (*Store, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Store{d: d}, nil
+		return &client{d: d}, nil
 	case "gs":
 		bucket := u.Host
 		if bucket == "" {
@@ -44,11 +44,11 @@ func Open(ctx context.Context, rawURL string) (*Store, error) {
 		if bucket == "" {
 			return nil, fmt.Errorf("objectstore: gs URL requires a bucket name: %q", rawURL)
 		}
-		client, err := storage.NewClient(ctx)
+		clientHandle, err := storage.NewClient(ctx)
 		if err != nil {
 			return nil, err
 		}
-		return &Store{d: &gcsDriver{client: client, bucket: bucket}}, nil
+		return &client{d: &gcsDriver{client: clientHandle, bucket: bucket}}, nil
 	default:
 		return nil, fmt.Errorf("objectstore: unsupported scheme %q in %q (supported: file, gs, mem)", u.Scheme, rawURL)
 	}
