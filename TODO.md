@@ -73,6 +73,7 @@
       override when rules_go pins v0.44.0 or later.
 - [ ] Replace custom cancellable sleeps across the codebase with `xtime.Sleep`.
       `walbench` and other tools use ad-hoc timer and select patterns.
+- [ ] Hedged sequence discovery: probe candidate sequence numbers concurrently in LogStream.
 
 ## Done
 
