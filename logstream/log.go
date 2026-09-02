@@ -22,16 +22,11 @@ var ErrEndOfStream = errors.New("logstream: end of stream")
 
 type Record []byte
 
-type Options struct {
-	MaxRecordSize int
-}
-
 const headListLimit = 1000
 
 type Log struct {
-	store         objectstore.Store
-	prefix        string
-	maxRecordSize int
+	store  objectstore.Store
+	prefix string
 
 	ch        chan struct{}
 	lastKnown uint64
@@ -39,34 +34,23 @@ type Log struct {
 	rttEMA    time.Duration
 }
 
-func New(store objectstore.Store, prefix string, opts *Options) (*Log, error) {
+func New(store objectstore.Store, prefix string) (*Log, error) {
 	if store == nil {
 		return nil, errors.New("logstream: nil store")
 	}
 	if !validPrefix(prefix) {
 		return nil, fmt.Errorf("logstream: invalid prefix %q", prefix)
 	}
-	maxRecordSize := recordio.DefaultMaxRecordSize
-	if opts != nil && opts.MaxRecordSize > 0 {
-		maxRecordSize = opts.MaxRecordSize
-	}
-	l := &Log{
-		store:         store,
-		prefix:        prefix,
-		maxRecordSize: maxRecordSize,
-		ch:            make(chan struct{}, 1),
-	}
-	return l, nil
+	return &Log{
+		store:  store,
+		prefix: prefix,
+		ch:     make(chan struct{}, 1),
+	}, nil
 }
 
 func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 	if len(records) == 0 {
 		return 0, errors.New("logstream: batch is empty")
-	}
-	for _, r := range records {
-		if len(r) > l.maxRecordSize {
-			return 0, fmt.Errorf("logstream: record size %d exceeds max %d", len(r), l.maxRecordSize)
-		}
 	}
 
 	var buf bytes.Buffer
@@ -165,7 +149,7 @@ func (l *Log) head(ctx context.Context, lo uint64) (uint64, int, error) {
 	if lo > 0 {
 		start = segmentKey(l.prefix, lo)
 	}
-	objs, err := l.store.List(ctx, l.listPrefix(), start, headListLimit)
+	objs, err := l.store.List(ctx, l.prefix+"/", start, headListLimit)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -180,10 +164,6 @@ func (l *Log) head(ctx context.Context, lo uint64) (uint64, int, error) {
 		return last, 0, nil
 	}
 	return jump(ctx, last, l.probe)
-}
-
-func (l *Log) listPrefix() string {
-	return l.prefix + "/"
 }
 
 func (l *Log) probe(ctx context.Context, seq uint64) (bool, error) {
@@ -204,7 +184,7 @@ func (l *Log) Read(ctx context.Context, seq uint64) ([]Record, error) {
 	}
 	defer rc.Close()
 
-	s := recordio.NewScanner(rc, recordio.WithScannerMaxRecordSize(l.maxRecordSize))
+	s := recordio.NewScanner(rc)
 	var all []byte
 	var lens []int
 	for s.Scan() {
