@@ -78,6 +78,10 @@
 - [ ] Replace custom cancellable sleeps across the codebase with `xtime.Sleep`.
       `walbench` and other tools use ad-hoc timer and select patterns.
 - [ ] Hedged sequence discovery: probe candidate sequence numbers concurrently in LogStream.
+- [ ] Plan and execute deterministic simulation testing from `docs/design/testing.md`.
+  - [ ] Implement injectable `Clock` interface in `internal/xtime`.
+  - [ ] Build deterministic `FaultStore` proxy wrapping `objectstore.memDriver`.
+  - [ ] Implement shadow invariant differential test harness for `logstream` and `kvfs`.
 
 ## Done
 
