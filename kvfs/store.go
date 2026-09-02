@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"strconv"
 	"sync"
 	"time"
 
@@ -31,10 +32,7 @@ var (
 	NoSync = &WriteOptions{Sync: false}
 )
 
-const (
-	defaultSyncWrite        = true
-	defaultWALFlushInterval = 500 * time.Millisecond
-)
+const defaultWALFlushInterval = 500 * time.Millisecond
 
 type Options struct {
 	WALFlushInterval time.Duration
@@ -131,13 +129,6 @@ func (c *client) backgroundFlusher() {
 }
 
 func (c *client) Flush(ctx context.Context) error {
-	_, err, _ := c.flushGroup.Do("", func() (any, error) {
-		return nil, c.doFlush(ctx)
-	})
-	return err
-}
-
-func (c *client) doFlush(ctx context.Context) error {
 	tail, err := c.log.Tail(ctx)
 	if err != nil {
 		return err
@@ -145,8 +136,20 @@ func (c *client) doFlush(ctx context.Context) error {
 	if tail == 0 {
 		return nil
 	}
+	_, err, _ = c.flushGroup.Do(strconv.FormatUint(tail, 10), func() (any, error) {
+		return nil, c.doFlush(ctx, tail)
+	})
+	return err
+}
 
+func (c *client) doFlush(ctx context.Context, targetTail uint64) error {
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		manifestHash, gen, err := resolveBranch(ctx, c.store, c.branch)
 		if err != nil && !errors.Is(err, objectstore.ErrNotFound) {
 			return err
@@ -168,14 +171,14 @@ func (c *client) doFlush(ctx context.Context) error {
 			lastWalSeq = parentManifest.LastWalSeq
 		}
 
-		if tail <= lastWalSeq {
+		if targetTail <= lastWalSeq {
 			return nil
 		}
 
 		newEntries := make(map[string]*kvfspb.ManifestEntry, len(parentManifest.Entries))
 		maps.Copy(newEntries, parentManifest.Entries)
 
-		for seq := lastWalSeq + 1; seq <= tail; seq++ {
+		for seq := lastWalSeq + 1; seq <= targetTail; seq++ {
 			records, err := c.log.Read(ctx, seq)
 			if err != nil {
 				if errors.Is(err, logstream.ErrEndOfStream) {
@@ -200,7 +203,7 @@ func (c *client) doFlush(ctx context.Context) error {
 		}
 
 		newManifest := &kvfspb.Manifest{
-			LastWalSeq: tail,
+			LastWalSeq: targetTail,
 			Entries:    newEntries,
 		}
 
@@ -278,87 +281,18 @@ func (c *client) mutate(ctx context.Context, mut *kvfspb.Mutation, opts *WriteOp
 		return ErrInvalidKey
 	}
 
-	syncWrite := defaultSyncWrite
-	if opts != nil {
-		syncWrite = opts.Sync
+	data, err := proto.Marshal(mut)
+	if err != nil {
+		return err
+	}
+	if _, err := c.log.Append(ctx, []logstream.Record{data}); err != nil {
+		return err
 	}
 
-	if !syncWrite {
-		data, err := proto.Marshal(mut)
-		if err != nil {
-			return err
-		}
-		if _, err := c.log.Append(ctx, []logstream.Record{data}); err != nil {
-			return err
-		}
-		return nil
+	if opts == nil || opts.Sync {
+		return c.Flush(ctx)
 	}
-
-	for {
-		manifestHash, gen, err := resolveBranch(ctx, c.store, c.branch)
-		if err != nil && !errors.Is(err, objectstore.ErrNotFound) {
-			return err
-		}
-
-		var (
-			newEntries map[string]*kvfspb.ManifestEntry
-			lastWalSeq uint64
-		)
-
-		if errors.Is(err, objectstore.ErrNotFound) {
-			if mut.Tombstone {
-				return objectstore.ErrNotFound
-			}
-			newEntries = map[string]*kvfspb.ManifestEntry{
-				mut.Key: {
-					CasHash:   mut.CasHash,
-					SizeBytes: mut.SizeBytes,
-				},
-			}
-		} else {
-			parentManifest, err := getManifest(ctx, c.store, manifestHash)
-			if err != nil {
-				return err
-			}
-			if mut.Tombstone {
-				if _, ok := parentManifest.Entries[mut.Key]; !ok {
-					return objectstore.ErrNotFound
-				}
-				newEntries = make(map[string]*kvfspb.ManifestEntry, len(parentManifest.Entries)-1)
-				for k, v := range parentManifest.Entries {
-					if k != mut.Key {
-						newEntries[k] = v
-					}
-				}
-			} else {
-				newEntries = make(map[string]*kvfspb.ManifestEntry, len(parentManifest.Entries)+1)
-				maps.Copy(newEntries, parentManifest.Entries)
-				newEntries[mut.Key] = &kvfspb.ManifestEntry{
-					CasHash:   mut.CasHash,
-					SizeBytes: mut.SizeBytes,
-				}
-			}
-			lastWalSeq = parentManifest.LastWalSeq
-		}
-
-		newManifest := &kvfspb.Manifest{
-			LastWalSeq: lastWalSeq,
-			Entries:    newEntries,
-		}
-
-		newManifestHash, err := putManifest(ctx, c.store, newManifest)
-		if err != nil {
-			return err
-		}
-
-		_, err = updateBranch(ctx, c.store, c.branch, newManifestHash, gen)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
-			return err
-		}
-	}
+	return nil
 }
 
 func (c *client) Set(ctx context.Context, key string, r io.Reader, opts *WriteOptions) error {

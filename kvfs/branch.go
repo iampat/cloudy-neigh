@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/iampat/cloudy-neigh/objectstore"
+	kvfspb "github.com/iampat/cloudy-neigh/proto/kvfs/v1"
 )
 
 var (
@@ -106,12 +107,30 @@ func createBranch(ctx context.Context, store objectstore.Store, newBranch, paren
 		return "", "", fmt.Errorf("kvfs: resolve parent branch %s: %w", parentBranch, err)
 	}
 
-	gen, err := store.Put(ctx, branchKey(newBranch), strings.NewReader(parentHash), objectstore.Condition{Absent: true})
+	parentManifest, err := getManifest(ctx, store, parentHash)
+	if err != nil {
+		return "", "", fmt.Errorf("kvfs: read parent manifest %s: %w", parentBranch, err)
+	}
+
+	branchHash := parentHash
+	if parentManifest.LastWalSeq > 0 {
+		forkManifest := &kvfspb.Manifest{
+			LastWalSeq: 0,
+			Entries:    parentManifest.Entries,
+		}
+		var err error
+		branchHash, err = putManifest(ctx, store, forkManifest)
+		if err != nil {
+			return "", "", fmt.Errorf("kvfs: put fork manifest %s: %w", newBranch, err)
+		}
+	}
+
+	gen, err := store.Put(ctx, branchKey(newBranch), strings.NewReader(branchHash), objectstore.Condition{Absent: true})
 	if err != nil {
 		if errors.Is(err, objectstore.ErrPreconditionFailed) {
 			return "", "", ErrBranchAlreadyExists
 		}
 		return "", "", fmt.Errorf("kvfs: create branch %s: %w", newBranch, err)
 	}
-	return parentHash, gen, nil
+	return branchHash, gen, nil
 }
