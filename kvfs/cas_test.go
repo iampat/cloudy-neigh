@@ -186,25 +186,43 @@ func FuzzBlobRoundTrip(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		ctx := context.Background()
-		store, err := objectstore.Open(ctx, "mem://")
-		require.NoError(t, err)
-		defer store.Close()
-
 		h := sha256.Sum256(data)
 		expectedHash := hex.EncodeToString(h[:])
 
-		hash, n, err := kvfs.PutBlob(ctx, store, bytes.NewReader(data))
+		// 1. In-memory backend
+		memStore, err := objectstore.Open(ctx, "mem://")
 		require.NoError(t, err)
-		assert.Equal(t, expectedHash, hash)
-		assert.Equal(t, int64(len(data)), n)
+		defer memStore.Close()
 
-		rc, size, err := kvfs.GetBlob(ctx, store, hash)
+		memHash, memN, err := kvfs.PutBlob(ctx, memStore, bytes.NewReader(data))
 		require.NoError(t, err)
-		defer rc.Close()
-		assert.Equal(t, int64(len(data)), size)
+		assert.Equal(t, expectedHash, memHash)
+		assert.Equal(t, int64(len(data)), memN)
 
-		out, err := io.ReadAll(rc)
+		memRC, memSize, err := kvfs.GetBlob(ctx, memStore, memHash)
 		require.NoError(t, err)
-		assert.Equal(t, data, out)
+		assert.Equal(t, int64(len(data)), memSize)
+		memOut, err := io.ReadAll(memRC)
+		memRC.Close()
+		require.NoError(t, err)
+		assert.Equal(t, data, memOut)
+
+		// 2. Disk backend
+		diskStore, err := objectstore.Open(ctx, "file://"+t.TempDir()+"/bucket?create_dir=true")
+		require.NoError(t, err)
+		defer diskStore.Close()
+
+		diskHash, diskN, err := kvfs.PutBlob(ctx, diskStore, bytes.NewReader(data))
+		require.NoError(t, err)
+		assert.Equal(t, expectedHash, diskHash)
+		assert.Equal(t, int64(len(data)), diskN)
+
+		diskRC, diskSize, err := kvfs.GetBlob(ctx, diskStore, diskHash)
+		require.NoError(t, err)
+		assert.Equal(t, int64(len(data)), diskSize)
+		diskOut, err := io.ReadAll(diskRC)
+		diskRC.Close()
+		require.NoError(t, err)
+		assert.Equal(t, data, diskOut)
 	})
 }
