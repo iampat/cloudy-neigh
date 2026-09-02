@@ -13,8 +13,8 @@ Todo tracker for simplifying cloudy-neigh, eliminating dead code, removing prema
 - [x] Delete `recordio.Writer.WriteRecordFrom` and remove 64 KB `copyBuf` pre-allocation.
 - [x] Update build files and test suites.
 - [x] Run `bazel test --config=race //...` and formatting tools.
-- [ ] Open/Update PR 1 and run `/petr` code review.
-- [ ] Address all review comments.
+- [x] Open/Update PR 1 and run `/petr` code review.
+- [x] Address all review comments.
 
 ## PR 2: Logstream & xtime Cleanup (`ali/logstream-simplification`)
 

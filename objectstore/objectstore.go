@@ -39,4 +39,3 @@ type Store interface {
 	Exists(ctx context.Context, key string) (bool, error)
 	List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error)
 }
-

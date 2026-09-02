@@ -142,9 +142,7 @@ Masking protects against checksum collisions with file system signatures.
 
 ### Read path
 
-1. **Interface segregation:**
-   - `Scanner` manages a reusable buffer with sub-slice borrowing (`Record()`).
-   - `Reader` reads directly into caller-managed buffers (`ReadRecord(dst)`).
+1. **Sequential scanning:** `Scanner` manages a reusable buffer with sub-slice borrowing (`Record()`).
 2. **Sub-slice borrowing:** `Scanner.Record()` returns a slice pointing into the
    internal buffer. It is valid only until the next call to `Scan()`.
 3. **Memory limit protection:** Before allocating memory, the scanner verifies
@@ -166,7 +164,6 @@ type Writer struct {
 
 func NewWriter(w io.Writer, opts ...WriterOption) *Writer
 func (w *Writer) WriteRecord(record []byte) (n int, offset int64, err error)
-func (w *Writer) WriteRecordFrom(r io.Reader, length int64) (n int64, offset int64, err error)
 func (w *Writer) Offset() int64
 func (w *Writer) Flush() error
 func (w *Writer) Sync() error
@@ -175,35 +172,9 @@ func (w *Writer) Close() error
 
 `WriteRecord` returns the total bytes written and the record start offset.
 
-`WriteRecordFrom` streams a record of known length from `r`. If `r` fails before
-reading `length` bytes, the writer transitions to a poisoned error state
-(`ErrUnexpectedEOF`). The stream can end with a torn frame that recovery
-truncates.
-
 `Sync` flushes user-space buffers and invokes `Sync()` on the destination if it
 implements `interface{ Sync() error }` (such as `*os.File`). A failed sync
 poisons the writer.
-
-### Reader
-
-```go
-type Reader struct {
-	// unexported fields
-}
-
-func NewReader(r io.Reader, opts ...ReaderOption) *Reader
-func (r *Reader) ReadRecord(dst []byte) (n int, err error)
-func (r *Reader) Offset() int64
-func (r *Reader) LastValidOffset() int64
-```
-
-`ReadRecord` reads the next payload into `dst`. If `len(dst)` is less than the
-payload length, it leaves the stream at the record start and returns
-`(int(length), ErrBufferTooSmall)`.
-
-`Offset` returns the start offset of the current record.
-
-`LastValidOffset` returns the offset up to which records were validated.
 
 ### Scanner
 
@@ -215,7 +186,6 @@ type Scanner struct {
 func NewScanner(r io.Reader, opts ...ScannerOption) *Scanner
 func (s *Scanner) Scan() bool
 func (s *Scanner) Record() []byte
-func (s *Scanner) RecordCopy() []byte
 func (s *Scanner) Offset() int64
 func (s *Scanner) LastValidOffset() int64
 func (s *Scanner) Skip() bool
@@ -223,8 +193,6 @@ func (s *Scanner) Err() error
 ```
 
 `Record` returns a borrowed slice valid until the next `Scan()` call.
-
-`RecordCopy` returns an independent copy of the record.
 
 `Skip` advances past the next record, validating `LengthCRC` while bypassing the
 payload read and data checksum. It reads the footer to detect mid-payload
@@ -241,11 +209,7 @@ const (
 func WithWriterBufferSize(size int) WriterOption
 func WithWriterSyncOnFlush(sync bool) WriterOption
 
-func WithReaderBufferSize(size int) ReaderOption
-func WithReaderMaxRecordSize(max int) ReaderOption
-
 func WithScannerBufferSize(size int) ScannerOption
-func WithScannerInitialBufferSize(size int) ScannerOption
 func WithScannerMaxRecordSize(max int) ScannerOption
 ```
 
