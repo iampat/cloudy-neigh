@@ -39,6 +39,11 @@ func newLog(t *testing.T, s objectstore.Store, prefix string) *logstream.Log {
 	return l
 }
 
+func TestNewNilStore(t *testing.T) {
+	_, err := logstream.New(nil, "main")
+	assert.Error(t, err)
+}
+
 func TestPrefixValidation(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		tests := []struct {
