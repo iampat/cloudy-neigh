@@ -49,35 +49,7 @@ func (e *errReader) Read(p []byte) (int, error) {
 	return 0, e.err
 }
 
-type faultyReader struct {
-	data   []byte
-	pos    int
-	failAt int
-	failed bool
-	err    error
-}
-
-func (f *faultyReader) Read(p []byte) (int, error) {
-	if !f.failed && f.pos >= f.failAt {
-		f.failed = true
-		return 0, f.err
-	}
-	if f.pos >= len(f.data) {
-		return 0, io.EOF
-	}
-	n := len(p)
-	if !f.failed && f.pos+n > f.failAt {
-		n = f.failAt - f.pos
-	}
-	if f.pos+n > len(f.data) {
-		n = len(f.data) - f.pos
-	}
-	copy(p, f.data[f.pos:f.pos+n])
-	f.pos += n
-	return n, nil
-}
-
-func TestWriterReaderRoundTrip(t *testing.T) {
+func TestWriterScannerRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	writer := recordio.NewWriter(&buf)
 
@@ -99,56 +71,16 @@ func TestWriterReaderRoundTrip(t *testing.T) {
 
 	require.NoError(t, writer.Flush())
 
-	reader := recordio.NewReader(bytes.NewReader(buf.Bytes()))
-	dst := make([]byte, 256*1024)
-
+	scanner := recordio.NewScanner(bytes.NewReader(buf.Bytes()))
 	for i, expected := range records {
-		n, err := reader.ReadRecord(dst)
-		require.NoError(t, err)
-		assert.Equal(t, len(expected), n)
-		assert.Equal(t, expected, dst[:n])
-		assert.Equal(t, expectedOffsets[i], reader.Offset())
+		require.True(t, scanner.Scan())
+		assert.Equal(t, expected, scanner.Record())
+		assert.Equal(t, expectedOffsets[i], scanner.Offset())
 	}
 
-	_, err := reader.ReadRecord(dst)
-	assert.ErrorIs(t, err, io.EOF)
-	assert.Equal(t, writer.Offset(), reader.LastValidOffset())
-}
-
-func TestWriterWriteRecordFrom(t *testing.T) {
-	t.Run("HappyPath", func(t *testing.T) {
-		var buf bytes.Buffer
-		writer := recordio.NewWriter(&buf)
-
-		payload := []byte("streamed-payload-content")
-		src := bytes.NewReader(payload)
-
-		startOffset := writer.Offset()
-		n, offset, err := writer.WriteRecordFrom(src, int64(len(payload)))
-		require.NoError(t, err)
-		assert.Equal(t, startOffset, offset)
-		assert.Equal(t, int64(len(payload)+16), n)
-		require.NoError(t, writer.Flush())
-
-		scanner := recordio.NewScanner(&buf)
-		require.True(t, scanner.Scan())
-		assert.NoError(t, scanner.Err())
-		assert.Equal(t, payload, scanner.Record())
-	})
-
-	t.Run("ShortRead_PoisonContract", func(t *testing.T) {
-		var buf bytes.Buffer
-		writer := recordio.NewWriter(&buf)
-
-		shortPayload := []byte("short")
-		src := bytes.NewReader(shortPayload)
-
-		_, _, err := writer.WriteRecordFrom(src, 100)
-		assert.ErrorIs(t, err, recordio.ErrUnexpectedEOF)
-
-		_, _, err = writer.WriteRecord([]byte("after poison"))
-		assert.ErrorIs(t, err, recordio.ErrUnexpectedEOF)
-	})
+	assert.False(t, scanner.Scan())
+	assert.NoError(t, scanner.Err())
+	assert.Equal(t, writer.Offset(), scanner.LastValidOffset())
 }
 
 func TestWriterSyncAndClose(t *testing.T) {
@@ -182,56 +114,21 @@ func TestWriterSyncFailurePoison(t *testing.T) {
 	assert.ErrorIs(t, err, syncErr)
 }
 
-func TestReaderBufferLimitsAndRetry(t *testing.T) {
+func TestScannerRecordLimits(t *testing.T) {
 	var buf bytes.Buffer
 	writer := recordio.NewWriter(&buf)
-	payload1 := []byte("first-1234567890")
-	payload2 := []byte("second-record")
-	_, _, _ = writer.WriteRecord(payload1)
-	_, _, _ = writer.WriteRecord(payload2)
+	payload := []byte("payload-12345")
+	_, _, _ = writer.WriteRecord(payload)
 	_ = writer.Flush()
 
-	t.Run("BufferTooSmall_Retryable", func(t *testing.T) {
-		reader := recordio.NewReader(bytes.NewReader(buf.Bytes()))
-		smallDst := make([]byte, 5)
-
-		needed, err := reader.ReadRecord(smallDst)
-		assert.ErrorIs(t, err, recordio.ErrBufferTooSmall)
-		assert.Equal(t, len(payload1), needed)
-
-		largeDst := make([]byte, needed)
-		n, err := reader.ReadRecord(largeDst)
-		require.NoError(t, err)
-		assert.Equal(t, payload1, largeDst[:n])
-
-		n, err = reader.ReadRecord(largeDst)
-		require.NoError(t, err)
-		assert.Equal(t, payload2, largeDst[:n])
-	})
-
 	t.Run("RecordTooLarge", func(t *testing.T) {
-		reader := recordio.NewReader(bytes.NewReader(buf.Bytes()), recordio.WithReaderMaxRecordSize(5))
-		dst := make([]byte, 20)
-		_, err := reader.ReadRecord(dst)
-		assert.ErrorIs(t, err, recordio.ErrRecordTooLarge)
-	})
-
-	t.Run("ScannerRecordTooLarge", func(t *testing.T) {
 		scanner := recordio.NewScanner(bytes.NewReader(buf.Bytes()), recordio.WithScannerMaxRecordSize(5))
 		assert.False(t, scanner.Scan())
 		assert.ErrorIs(t, scanner.Err(), recordio.ErrRecordTooLarge)
 	})
-
-	t.Run("NonPositiveMaxRecordSizeIgnored", func(t *testing.T) {
-		reader := recordio.NewReader(bytes.NewReader(buf.Bytes()), recordio.WithReaderMaxRecordSize(-10))
-		dst := make([]byte, 20)
-		n, err := reader.ReadRecord(dst)
-		require.NoError(t, err)
-		assert.Equal(t, len(payload1), n)
-	})
 }
 
-func TestScannerScanAndRecordCopy(t *testing.T) {
+func TestScannerScan(t *testing.T) {
 	var buf bytes.Buffer
 	writer := recordio.NewWriter(&buf)
 
@@ -247,14 +144,14 @@ func TestScannerScanAndRecordCopy(t *testing.T) {
 	}
 	require.NoError(t, writer.Flush())
 
-	scanner := recordio.NewScanner(bytes.NewReader(buf.Bytes()), recordio.WithScannerInitialBufferSize(8))
+	scanner := recordio.NewScanner(bytes.NewReader(buf.Bytes()))
 
 	var copies [][]byte
 	idx := 0
 	for scanner.Scan() {
 		require.Less(t, idx, len(data))
 		assert.Equal(t, data[idx], scanner.Record())
-		copies = append(copies, scanner.RecordCopy())
+		copies = append(copies, bytes.Clone(scanner.Record()))
 		idx++
 	}
 
@@ -391,53 +288,9 @@ func TestCorruptionDetection(t *testing.T) {
 
 func TestRealIOErrorsPreserved(t *testing.T) {
 	customErr := errors.New("network timeout")
-	reader := recordio.NewReader(&errReader{err: customErr})
-	dst := make([]byte, 64)
-	_, err := reader.ReadRecord(dst)
-	assert.ErrorIs(t, err, customErr)
-
 	scanner := recordio.NewScanner(&errReader{err: customErr})
 	assert.False(t, scanner.Scan())
 	assert.ErrorIs(t, scanner.Err(), customErr)
-}
-
-func TestReaderTransientErrorPoisons(t *testing.T) {
-	var buf bytes.Buffer
-	writer := recordio.NewWriter(&buf)
-	payload := bytes.Repeat([]byte("x"), 64)
-	for i := 0; i < 2; i++ {
-		_, _, err := writer.WriteRecord(payload)
-		require.NoError(t, err)
-	}
-	require.NoError(t, writer.Flush())
-
-	const headerBytes = 12
-
-	tests := []struct {
-		name   string
-		failAt int
-	}{
-		{"InPayload", headerBytes + 8},
-		{"AtFooter", headerBytes + len(payload)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			transient := errors.New("connection reset by peer")
-			src := &faultyReader{data: buf.Bytes(), failAt: tt.failAt, err: transient}
-			reader := recordio.NewReader(src, recordio.WithReaderBufferSize(16))
-			dst := make([]byte, 128)
-
-			_, err := reader.ReadRecord(dst)
-			assert.ErrorIs(t, err, transient)
-			assert.True(t, src.failed)
-
-			// ReadRecord consumed the header, so a retry would read payload
-			// bytes as a header and report corruption for a transient fault.
-			_, err = reader.ReadRecord(dst)
-			assert.ErrorIs(t, err, transient)
-		})
-	}
 }
 
 func TestZeroAllocations(t *testing.T) {
@@ -452,34 +305,6 @@ func TestZeroAllocations(t *testing.T) {
 		assert.Zero(t, allocs)
 	})
 
-	t.Run("Writer_WriteRecordFrom", func(t *testing.T) {
-		writer := recordio.NewWriter(io.Discard, recordio.WithWriterBufferSize(64*1024))
-		src := bytes.NewReader(record)
-
-		allocs := testing.AllocsPerRun(100, func() {
-			src.Reset(record)
-			_, _, _ = writer.WriteRecordFrom(src, int64(len(record)))
-		})
-		assert.Zero(t, allocs)
-	})
-
-	t.Run("Reader_ReadRecord", func(t *testing.T) {
-		var buf bytes.Buffer
-		writer := recordio.NewWriter(&buf)
-		for i := 0; i < 200; i++ {
-			_, _, _ = writer.WriteRecord(record)
-		}
-		_ = writer.Flush()
-
-		reader := recordio.NewReader(bytes.NewReader(buf.Bytes()), recordio.WithReaderBufferSize(64*1024))
-		dst := make([]byte, 512)
-
-		allocs := testing.AllocsPerRun(100, func() {
-			_, _ = reader.ReadRecord(dst)
-		})
-		assert.Zero(t, allocs)
-	})
-
 	t.Run("Scanner_Scan", func(t *testing.T) {
 		var buf bytes.Buffer
 		writer := recordio.NewWriter(&buf)
@@ -488,7 +313,7 @@ func TestZeroAllocations(t *testing.T) {
 		}
 		_ = writer.Flush()
 
-		scanner := recordio.NewScanner(bytes.NewReader(buf.Bytes()), recordio.WithScannerInitialBufferSize(512))
+		scanner := recordio.NewScanner(bytes.NewReader(buf.Bytes()))
 
 		allocs := testing.AllocsPerRun(100, func() {
 			if scanner.Scan() {
@@ -543,48 +368,6 @@ func BenchmarkWriterWriteRecord(b *testing.B) {
 	}
 }
 
-func BenchmarkWriterWriteRecordFrom(b *testing.B) {
-	record := make([]byte, 1024)
-	rand.Read(record)
-	writer := recordio.NewWriter(io.Discard, recordio.WithWriterBufferSize(64*1024))
-	src := bytes.NewReader(record)
-	b.ReportAllocs()
-	b.SetBytes(int64(len(record) + 16))
-
-	for b.Loop() {
-		src.Reset(record)
-		if _, _, err := writer.WriteRecordFrom(src, int64(len(record))); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkReaderReadRecord(b *testing.B) {
-	record := make([]byte, 1024)
-	rand.Read(record)
-
-	var buf bytes.Buffer
-	writer := recordio.NewWriter(&buf)
-	for i := 0; i < 5000; i++ {
-		_, _, _ = writer.WriteRecord(record)
-	}
-	_ = writer.Flush()
-
-	raw := buf.Bytes()
-	dst := make([]byte, 2048)
-	b.ReportAllocs()
-	b.SetBytes(int64(len(record) + 16))
-
-	reader := recordio.NewReader(bytes.NewReader(raw))
-	for b.Loop() {
-		_, err := reader.ReadRecord(dst)
-		if err != nil {
-			reader = recordio.NewReader(bytes.NewReader(raw))
-			_, _ = reader.ReadRecord(dst)
-		}
-	}
-}
-
 func BenchmarkScannerScan(b *testing.B) {
 	record := make([]byte, 1024)
 	rand.Read(record)
@@ -600,10 +383,10 @@ func BenchmarkScannerScan(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(record) + 16))
 
-	scanner := recordio.NewScanner(bytes.NewReader(raw), recordio.WithScannerInitialBufferSize(2048))
+	scanner := recordio.NewScanner(bytes.NewReader(raw))
 	for b.Loop() {
 		if !scanner.Scan() {
-			scanner = recordio.NewScanner(bytes.NewReader(raw), recordio.WithScannerInitialBufferSize(2048))
+			scanner = recordio.NewScanner(bytes.NewReader(raw))
 			_ = scanner.Scan()
 		}
 		_ = scanner.Record()

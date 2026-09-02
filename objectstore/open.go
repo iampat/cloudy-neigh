@@ -17,7 +17,7 @@ func Open(ctx context.Context, rawURL string) (Store, error) {
 	}
 	switch u.Scheme {
 	case "mem":
-		return &client{d: newMemDriver()}, nil
+		return newMemStore(), nil
 	case "file":
 		path := u.Path
 		if path == "" && u.Host != "" {
@@ -31,11 +31,7 @@ func Open(ctx context.Context, rawURL string) (Store, error) {
 				return nil, err
 			}
 		}
-		d, err := newLocalDriver(path)
-		if err != nil {
-			return nil, err
-		}
-		return &client{d: d}, nil
+		return newLocalStore(path)
 	case "gs":
 		bucket := u.Host
 		if bucket == "" {
@@ -48,7 +44,7 @@ func Open(ctx context.Context, rawURL string) (Store, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &client{d: &gcsDriver{client: clientHandle, bucket: bucket}}, nil
+		return &gcsStore{client: clientHandle, bucket: bucket}, nil
 	default:
 		return nil, fmt.Errorf("objectstore: unsupported scheme %q in %q (supported: file, gs, mem)", u.Scheme, rawURL)
 	}

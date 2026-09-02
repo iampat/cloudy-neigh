@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
 
 type memEntry struct {
@@ -16,28 +15,28 @@ type memEntry struct {
 	generation string
 }
 
-type memDriver struct {
-	mu      sync.RWMutex
+type memStore struct {
+	mu      sync.Mutex
 	objects map[string]memEntry
-	genSeq  atomic.Int64
+	genSeq  int64
 }
 
-func newMemDriver() *memDriver {
-	return &memDriver{
+func newMemStore() *memStore {
+	return &memStore{
 		objects: make(map[string]memEntry),
 	}
 }
 
-func (m *memDriver) Close() error {
+func (m *memStore) Close() error {
 	return nil
 }
 
-func (m *memDriver) stat(ctx context.Context, key string) (Object, error) {
+func (m *memStore) Stat(ctx context.Context, key string) (Object, error) {
 	if err := ctx.Err(); err != nil {
 		return Object{}, err
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	e, ok := m.objects[key]
 	if !ok {
 		return Object{}, fmt.Errorf("key %q: %w", key, ErrNotFound)
@@ -49,34 +48,34 @@ func (m *memDriver) stat(ctx context.Context, key string) (Object, error) {
 	}, nil
 }
 
-func (m *memDriver) get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
+func (m *memStore) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, Object{}, err
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	e, ok := m.objects[key]
 	if !ok {
 		return nil, Object{}, fmt.Errorf("key %q: %w", key, ErrNotFound)
 	}
-	return io.NopCloser(bytes.NewReader(e.data)), Object{
+	return io.NopCloser(bytes.NewReader(bytes.Clone(e.data))), Object{
 		Key:        key,
 		Generation: e.generation,
 		Size:       int64(len(e.data)),
 	}, nil
 }
 
-func (m *memDriver) exists(ctx context.Context, key string) (bool, error) {
+func (m *memStore) Exists(ctx context.Context, key string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	_, ok := m.objects[key]
 	return ok, nil
 }
 
-func (m *memDriver) delete(ctx context.Context, key string) error {
+func (m *memStore) Delete(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -89,8 +88,11 @@ func (m *memDriver) delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (m *memDriver) put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
+func (m *memStore) Put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
 	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := cond.validate(key); err != nil {
 		return "", err
 	}
 	if cond.GenerationMatch != "" && !validLocalGeneration(cond.GenerationMatch) {
@@ -98,9 +100,6 @@ func (m *memDriver) put(ctx context.Context, key string, r io.Reader, cond Condi
 	}
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return "", err
-	}
-	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 
@@ -118,17 +117,18 @@ func (m *memDriver) put(ctx context.Context, key string, r io.Reader, cond Condi
 		}
 	}
 
-	gen := localGeneration(m.genSeq.Add(1), int64(len(data)))
+	m.genSeq++
+	gen := localGeneration(m.genSeq, int64(len(data)))
 	m.objects[key] = memEntry{data: data, generation: gen}
 	return gen, nil
 }
 
-func (m *memDriver) list(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
+func (m *memStore) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	var keys []string
 	for k := range m.objects {

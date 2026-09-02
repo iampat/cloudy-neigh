@@ -2,7 +2,6 @@ package recordio
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -14,14 +13,6 @@ func WithScannerBufferSize(size int) ScannerOption {
 	return func(s *Scanner) {
 		if size > 0 {
 			s.bufSize = size
-		}
-	}
-}
-
-func WithScannerInitialBufferSize(size int) ScannerOption {
-	return func(s *Scanner) {
-		if size > 0 {
-			s.buf = make([]byte, size)
 		}
 	}
 }
@@ -107,7 +98,7 @@ func (s *Scanner) Scan() bool {
 	}
 
 	reqLen := int(length)
-	if cap(s.buf) < reqLen {
+	if cap(s.buf) < reqLen || s.buf == nil {
 		s.buf = make([]byte, reqLen)
 	} else {
 		s.buf = s.buf[:reqLen]
@@ -147,10 +138,6 @@ func (s *Scanner) Scan() bool {
 
 func (s *Scanner) Record() []byte {
 	return s.buf[:s.recordLen]
-}
-
-func (s *Scanner) RecordCopy() []byte {
-	return bytes.Clone(s.Record())
 }
 
 func (s *Scanner) Offset() int64 {

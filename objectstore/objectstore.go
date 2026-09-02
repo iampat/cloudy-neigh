@@ -40,37 +40,3 @@ type Store interface {
 	List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error)
 }
 
-type client struct {
-	d driver
-}
-
-func (c *client) Close() error {
-	return c.d.Close()
-}
-
-func (c *client) Stat(ctx context.Context, key string) (Object, error) {
-	return c.d.stat(ctx, key)
-}
-
-func (c *client) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
-	return c.d.get(ctx, key)
-}
-
-func (c *client) Put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
-	if err := cond.validate(key); err != nil {
-		return "", err
-	}
-	return c.d.put(ctx, key, r, cond)
-}
-
-func (c *client) Delete(ctx context.Context, key string) error {
-	return c.d.delete(ctx, key)
-}
-
-func (c *client) Exists(ctx context.Context, key string) (bool, error) {
-	return c.d.exists(ctx, key)
-}
-
-func (c *client) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
-	return c.d.list(ctx, prefix, startAfter, limit)
-}
