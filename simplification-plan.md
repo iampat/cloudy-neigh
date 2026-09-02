@@ -26,8 +26,8 @@ Todo tracker for simplifying cloudy-neigh, eliminating dead code, removing prema
 - [x] Clean up single-caller math helpers and loop syntax in `cmd/walbench/main.go`.
 - [x] Update build files and test suites.
 - [x] Run `bazel test --config=race //...` and formatting tools.
-- [ ] Open PR 2 and run `/petr` code review.
-- [ ] Address all review comments.
+- [x] Open PR 2 and run `/petr` code review.
+- [x] Address all review comments.
 
 ## PR 3: KVFS Concurrency & Context Correctness (`ali/kvfs-simplification`)
 

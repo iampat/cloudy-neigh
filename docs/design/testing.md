@@ -82,6 +82,6 @@ The harness continuously checks these invariants:
 
 ## Implementation Plan
 
-1. Define `Clock` interface in `internal/xtime`.
+1. Define `Clock` interface for simulation testing.
 2. Implement `FaultStore` decorator in `objectstore`.
 3. Add randomized multi-writer differential tests for `logstream` and `kvfs`.
