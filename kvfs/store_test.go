@@ -16,7 +16,7 @@ import (
 
 func TestStoreOpen(t *testing.T) {
 	_, err := kvfs.Open(nil)
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, kvfs.ErrNilStore)
 
 	s, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestStoreValidationErrors(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.ErrorIs(t, ks.Set(ctx, "main", "", bytes.NewReader([]byte("x"))), kvfs.ErrInvalidKey)
-		assert.Error(t, ks.Set(ctx, "main", "k", nil))
+		assert.ErrorIs(t, ks.Set(ctx, "main", "k", nil), kvfs.ErrNilReader)
 		assert.ErrorIs(t, ks.Delete(ctx, "main", ""), kvfs.ErrInvalidKey)
 
 		_, err = ks.Get(ctx, "main", "")

@@ -13,7 +13,7 @@ import (
 
 const manifestPrefix = "manifests/"
 
-func PutManifest(ctx context.Context, store objectstore.Store, m *kvfspb.Manifest) (string, error) {
+func putManifest(ctx context.Context, store objectstore.Store, m *kvfspb.Manifest) (string, error) {
 	data, err := proto.Marshal(m)
 	if err != nil {
 		return "", fmt.Errorf("kvfs: marshal manifest: %w", err)
@@ -25,7 +25,7 @@ func PutManifest(ctx context.Context, store objectstore.Store, m *kvfspb.Manifes
 	return hash, nil
 }
 
-func GetManifest(ctx context.Context, store objectstore.Store, hash string) (*kvfspb.Manifest, error) {
+func getManifest(ctx context.Context, store objectstore.Store, hash string) (*kvfspb.Manifest, error) {
 	rc, _, err := getCAS(ctx, store, manifestPrefix, hash)
 	if err != nil {
 		return nil, err

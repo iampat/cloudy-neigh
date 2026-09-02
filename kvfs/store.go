@@ -10,7 +10,11 @@ import (
 	kvfspb "github.com/iampat/cloudy-neigh/proto/kvfs/v1"
 )
 
-var ErrInvalidKey = errors.New("kvfs: empty key")
+var (
+	ErrInvalidKey = errors.New("kvfs: empty key")
+	ErrNilStore   = errors.New("kvfs: nil objectstore")
+	ErrNilReader  = errors.New("kvfs: nil reader")
+)
 
 type Value struct {
 	Data io.ReadCloser
@@ -31,7 +35,7 @@ type client struct {
 
 func Open(store objectstore.Store) (Store, error) {
 	if store == nil {
-		return nil, errors.New("kvfs: nil objectstore")
+		return nil, ErrNilStore
 	}
 	return &client{store: store}, nil
 }
@@ -41,7 +45,7 @@ func (c *client) Close() error {
 }
 
 func (c *client) Branch(ctx context.Context, newBranch, parentBranch string) error {
-	_, _, err := CreateBranch(ctx, c.store, newBranch, parentBranch)
+	_, _, err := createBranch(ctx, c.store, newBranch, parentBranch)
 	return err
 }
 
@@ -50,12 +54,12 @@ func (c *client) Get(ctx context.Context, branch, key string) (Value, error) {
 		return Value{}, ErrInvalidKey
 	}
 
-	manifestHash, _, err := ResolveBranch(ctx, c.store, branch)
+	manifestHash, _, err := resolveBranch(ctx, c.store, branch)
 	if err != nil {
 		return Value{}, err
 	}
 
-	manifest, err := GetManifest(ctx, c.store, manifestHash)
+	manifest, err := getManifest(ctx, c.store, manifestHash)
 	if err != nil {
 		return Value{}, err
 	}
@@ -65,7 +69,7 @@ func (c *client) Get(ctx context.Context, branch, key string) (Value, error) {
 		return Value{}, objectstore.ErrNotFound
 	}
 
-	rc, size, err := GetBlob(ctx, c.store, entry.CasHash)
+	rc, size, err := getBlob(ctx, c.store, entry.CasHash)
 	if err != nil {
 		return Value{}, err
 	}
@@ -73,14 +77,17 @@ func (c *client) Get(ctx context.Context, branch, key string) (Value, error) {
 }
 
 func (c *client) Set(ctx context.Context, branch, key string, r io.Reader) error {
+	if err := validateBranch(branch); err != nil {
+		return err
+	}
 	if key == "" {
 		return ErrInvalidKey
 	}
 	if r == nil {
-		return errors.New("kvfs: nil reader")
+		return ErrNilReader
 	}
 
-	casHash, size, err := PutBlob(ctx, c.store, r)
+	casHash, size, err := putBlob(ctx, c.store, r)
 	if err != nil {
 		return err
 	}
@@ -91,7 +98,7 @@ func (c *client) Set(ctx context.Context, branch, key string, r io.Reader) error
 	}
 
 	for {
-		manifestHash, gen, err := ResolveBranch(ctx, c.store, branch)
+		manifestHash, gen, err := resolveBranch(ctx, c.store, branch)
 		if err != nil && !errors.Is(err, objectstore.ErrNotFound) {
 			return err
 		}
@@ -104,7 +111,7 @@ func (c *client) Set(ctx context.Context, branch, key string, r io.Reader) error
 		if errors.Is(err, objectstore.ErrNotFound) {
 			newEntries = map[string]*kvfspb.ManifestEntry{key: entry}
 		} else {
-			parentManifest, err := GetManifest(ctx, c.store, manifestHash)
+			parentManifest, err := getManifest(ctx, c.store, manifestHash)
 			if err != nil {
 				return err
 			}
@@ -119,12 +126,12 @@ func (c *client) Set(ctx context.Context, branch, key string, r io.Reader) error
 			Entries:    newEntries,
 		}
 
-		newManifestHash, err := PutManifest(ctx, c.store, newManifest)
+		newManifestHash, err := putManifest(ctx, c.store, newManifest)
 		if err != nil {
 			return err
 		}
 
-		_, err = UpdateBranch(ctx, c.store, branch, newManifestHash, gen)
+		_, err = updateBranch(ctx, c.store, branch, newManifestHash, gen)
 		if err == nil {
 			return nil
 		}
@@ -140,12 +147,12 @@ func (c *client) Delete(ctx context.Context, branch, key string) error {
 	}
 
 	for {
-		manifestHash, gen, err := ResolveBranch(ctx, c.store, branch)
+		manifestHash, gen, err := resolveBranch(ctx, c.store, branch)
 		if err != nil {
 			return err
 		}
 
-		parentManifest, err := GetManifest(ctx, c.store, manifestHash)
+		parentManifest, err := getManifest(ctx, c.store, manifestHash)
 		if err != nil {
 			return err
 		}
@@ -166,12 +173,12 @@ func (c *client) Delete(ctx context.Context, branch, key string) error {
 			Entries:    newEntries,
 		}
 
-		newManifestHash, err := PutManifest(ctx, c.store, newManifest)
+		newManifestHash, err := putManifest(ctx, c.store, newManifest)
 		if err != nil {
 			return err
 		}
 
-		_, err = UpdateBranch(ctx, c.store, branch, newManifestHash, gen)
+		_, err = updateBranch(ctx, c.store, branch, newManifestHash, gen)
 		if err == nil {
 			return nil
 		}

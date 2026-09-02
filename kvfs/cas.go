@@ -73,14 +73,14 @@ func existsCAS(ctx context.Context, store objectstore.Store, prefix, hash string
 	return store.Exists(ctx, shardedKey(prefix, hash))
 }
 
-func PutBlob(ctx context.Context, store objectstore.Store, r io.Reader) (string, int64, error) {
+func putBlob(ctx context.Context, store objectstore.Store, r io.Reader) (string, int64, error) {
 	return putCAS(ctx, store, casPrefix, r)
 }
 
-func GetBlob(ctx context.Context, store objectstore.Store, hash string) (io.ReadCloser, int64, error) {
+func getBlob(ctx context.Context, store objectstore.Store, hash string) (io.ReadCloser, int64, error) {
 	return getCAS(ctx, store, casPrefix, hash)
 }
 
-func ExistsBlob(ctx context.Context, store objectstore.Store, hash string) (bool, error) {
+func existsBlob(ctx context.Context, store objectstore.Store, hash string) (bool, error) {
 	return existsCAS(ctx, store, casPrefix, hash)
 }
