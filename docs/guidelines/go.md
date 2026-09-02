@@ -109,10 +109,10 @@ Use stdlib `log/slog` for structured logging.
 
 ## Tests
 
-- An external test package tests a package: `package index_test` for
-  `package index`. The test then proves the exported API is enough. Use an
-  internal test only to reach something unexported, and say why in the commit.
-  Flag an identifier exported only to let a test see it.
+- Tests must use an external test package (`package <name>_test`): `package kvfs_test` tests `package kvfs`.
+- External tests verify that the exported API is sufficient.
+- Use internal tests (`package <name>`) only for unexported internals that public APIs cannot exercise. Every internal test requires justification.
+- Never export an identifier solely for tests.
 - Never `time.Sleep` to synchronize a test. Poll, or use channels or
   `sync.WaitGroup`.
 - A benchmark loop is `for b.Loop()`, never `for i := 0; i < b.N; i++`.

@@ -1,4 +1,4 @@
-package kvfs
+package kvfs_test
 
 import (
 	"bytes"
@@ -12,27 +12,11 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func forEachBackend(t *testing.T, fn func(t *testing.T, s objectstore.Store)) {
-	t.Helper()
-	t.Run("mem", func(t *testing.T) {
-		s, err := objectstore.Open(context.Background(), "mem://")
-		require.NoError(t, err)
-		t.Cleanup(func() { s.Close() })
-		fn(t, s)
-	})
-	t.Run("file", func(t *testing.T) {
-		dir := t.TempDir()
-		s, err := objectstore.Open(context.Background(), "file://"+dir+"?create_dir=true")
-		require.NoError(t, err)
-		t.Cleanup(func() { s.Close() })
-		fn(t, s)
-	})
-}
 
 func TestPutAndGetBlob(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
@@ -56,12 +40,12 @@ func TestPutAndGetBlob(t *testing.T) {
 				h := sha256.Sum256(data)
 				expectedHash := hex.EncodeToString(h[:])
 
-				hash, n, err := putBlob(ctx, s, bytes.NewReader(data))
+				hash, n, err := kvfs.PutBlob(ctx, s, bytes.NewReader(data))
 				require.NoError(t, err)
 				assert.Equal(t, expectedHash, hash)
 				assert.Equal(t, int64(tt.size), n)
 
-				rc, size, err := getBlob(ctx, s, hash)
+				rc, size, err := kvfs.GetBlob(ctx, s, hash)
 				require.NoError(t, err)
 				defer rc.Close()
 				assert.Equal(t, int64(tt.size), size)
@@ -79,14 +63,14 @@ func TestBlobDeduplication(t *testing.T) {
 		ctx := context.Background()
 		data := []byte("deduplicated payload")
 
-		h1, _, err := putBlob(ctx, s, bytes.NewReader(data))
+		h1, _, err := kvfs.PutBlob(ctx, s, bytes.NewReader(data))
 		require.NoError(t, err)
 
-		h2, _, err := putBlob(ctx, s, bytes.NewReader(data))
+		h2, _, err := kvfs.PutBlob(ctx, s, bytes.NewReader(data))
 		require.NoError(t, err)
 		assert.Equal(t, h1, h2)
 
-		rc, _, err := getBlob(ctx, s, h1)
+		rc, _, err := kvfs.GetBlob(ctx, s, h1)
 		require.NoError(t, err)
 		defer rc.Close()
 		readData, err := io.ReadAll(rc)
@@ -98,7 +82,7 @@ func TestBlobDeduplication(t *testing.T) {
 func TestGetBlobNotFound(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		_, _, err := getBlob(ctx, s, "0000000000000000000000000000000000000000000000000000000000000000")
+		_, _, err := kvfs.GetBlob(ctx, s, "0000000000000000000000000000000000000000000000000000000000000000")
 		assert.True(t, errors.Is(err, objectstore.ErrNotFound))
 	})
 }
@@ -115,8 +99,8 @@ func TestGetBlobInvalidHash(t *testing.T) {
 		}
 		for _, hash := range badHashes {
 			t.Run(hash, func(t *testing.T) {
-				_, _, err := getBlob(ctx, s, hash)
-				assert.ErrorIs(t, err, ErrInvalidHash)
+				_, _, err := kvfs.GetBlob(ctx, s, hash)
+				assert.ErrorIs(t, err, kvfs.ErrInvalidHash)
 			})
 		}
 	})
@@ -141,7 +125,7 @@ func TestConcurrentBlobUploads(t *testing.T) {
 				} else {
 					payload = []byte(fmt.Sprintf("unique-%d", idx))
 				}
-				hash, n, err := putBlob(ctx, s, bytes.NewReader(payload))
+				hash, n, err := kvfs.PutBlob(ctx, s, bytes.NewReader(payload))
 				if err != nil {
 					errCh <- err
 					return
@@ -150,7 +134,7 @@ func TestConcurrentBlobUploads(t *testing.T) {
 					errCh <- fmt.Errorf("unexpected size: %d != %d", n, len(payload))
 					return
 				}
-				rc, _, err := getBlob(ctx, s, hash)
+				rc, _, err := kvfs.GetBlob(ctx, s, hash)
 				if err != nil {
 					errCh <- err
 					return
@@ -183,12 +167,12 @@ func FuzzBlobRoundTrip(f *testing.F) {
 		require.NoError(t, err)
 		defer memStore.Close()
 
-		memHash, memN, err := putBlob(ctx, memStore, bytes.NewReader(data))
+		memHash, memN, err := kvfs.PutBlob(ctx, memStore, bytes.NewReader(data))
 		require.NoError(t, err)
 		assert.Equal(t, expectedHash, memHash)
 		assert.Equal(t, int64(len(data)), memN)
 
-		memRC, memSize, err := getBlob(ctx, memStore, memHash)
+		memRC, memSize, err := kvfs.GetBlob(ctx, memStore, memHash)
 		require.NoError(t, err)
 		assert.Equal(t, int64(len(data)), memSize)
 		memOut, err := io.ReadAll(memRC)
@@ -200,12 +184,12 @@ func FuzzBlobRoundTrip(f *testing.F) {
 		require.NoError(t, err)
 		defer diskStore.Close()
 
-		diskHash, diskN, err := putBlob(ctx, diskStore, bytes.NewReader(data))
+		diskHash, diskN, err := kvfs.PutBlob(ctx, diskStore, bytes.NewReader(data))
 		require.NoError(t, err)
 		assert.Equal(t, expectedHash, diskHash)
 		assert.Equal(t, int64(len(data)), diskN)
 
-		diskRC, diskSize, err := getBlob(ctx, diskStore, diskHash)
+		diskRC, diskSize, err := kvfs.GetBlob(ctx, diskStore, diskHash)
 		require.NoError(t, err)
 		assert.Equal(t, int64(len(data)), diskSize)
 		diskOut, err := io.ReadAll(diskRC)
@@ -228,7 +212,7 @@ func BenchmarkPutBlob(b *testing.B) {
 			b.ReportAllocs()
 
 			for b.Loop() {
-				_, _, err := putBlob(ctx, s, bytes.NewReader(data))
+				_, _, err := kvfs.PutBlob(ctx, s, bytes.NewReader(data))
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -244,14 +228,14 @@ func BenchmarkGetBlob(b *testing.B) {
 	ctx := context.Background()
 
 	data := make([]byte, 64*1024)
-	hash, _, err := putBlob(ctx, s, bytes.NewReader(data))
+	hash, _, err := kvfs.PutBlob(ctx, s, bytes.NewReader(data))
 	require.NoError(b, err)
 
 	b.SetBytes(int64(len(data)))
 	b.ReportAllocs()
 
 	for b.Loop() {
-		rc, _, err := getBlob(ctx, s, hash)
+		rc, _, err := kvfs.GetBlob(ctx, s, hash)
 		if err != nil {
 			b.Fatal(err)
 		}
