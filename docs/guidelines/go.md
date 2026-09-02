@@ -129,6 +129,8 @@ Use stdlib `log/slog` for structured logging.
 - Cover failure modes, not only the happy path: crash mid-write, partial
   write, concurrent writers, cancelled context.
 - Table-driven with named cases.
+- Always run tests with race detection: `bazel test --config=race //...`. Never
+  run tests without `--config=race`.
 
 ## Comments
 
