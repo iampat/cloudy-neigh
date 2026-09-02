@@ -3,9 +3,11 @@
 - [ ] Refactor the storage layer.
   - [ ] Replace the cloud SDK with a shim around GCS. Use the atomic-file
         package from Tailscale.
-  - [ ] Revisit the ObjectStore API. Add a `Head` call, because the LogStream
-        tail search probes with `List` today and pays list pricing. Drop the
-        generation token from a conditional create, which no caller reads.
+  - [X] Revisit the ObjectStore API and `Head` probing in LogStream.
+        Napkin math shows 1 `List` RTT (~35 ms) beats 6 sequential `Head` RTTs (~90 ms) on collisions (delta=5).
+        Cost difference is negligible ($5.00 vs $2.40 per 1M collisions, and $0.000005 per cold start).
+        Parked until high collision QPS or list pricing becomes an operational bottleneck.
+  - [ ] Drop the generation token from a conditional create, which no caller reads.
 - [ ] Settle the fileblob conditional write. `objectstore` never asks fileblob
       to enforce `Absent`. A read of `gocloud.dev@v0.46.0` shows a fresh mutex
       for every writer, then a rename over the target.
@@ -78,6 +80,10 @@
 - [ ] Replace custom cancellable sleeps across the codebase with `xtime.Sleep`.
       `walbench` and other tools use ad-hoc timer and select patterns.
 - [ ] Hedged sequence discovery: probe candidate sequence numbers concurrently in LogStream.
+- [ ] Plan and execute deterministic simulation testing from `docs/design/testing.md`.
+  - [ ] Implement injectable `Clock` interface in `internal/xtime`.
+  - [ ] Build deterministic `FaultStore` proxy wrapping `objectstore.memDriver`.
+  - [ ] Implement shadow invariant differential test harness for `logstream` and `kvfs`.
 
 ## Done
 
