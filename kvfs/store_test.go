@@ -495,13 +495,17 @@ func TestStoreReadCacheWriteThrough(t *testing.T) {
 func TestStoreReadConcurrentSingleflight(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
+		ksWriter, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
-		defer ks.Close()
+		defer ksWriter.Close()
 
 		val := []byte("singleflight payload")
-		err = ks.Set(ctx, "shared", bytes.NewReader(val), kvfs.Sync)
+		err = ksWriter.Set(ctx, "shared", bytes.NewReader(val), kvfs.Sync)
 		require.NoError(t, err)
+
+		ksReader, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
+		require.NoError(t, err)
+		defer ksReader.Close()
 
 		const readers = 16
 		var wg sync.WaitGroup
@@ -511,7 +515,7 @@ func TestStoreReadConcurrentSingleflight(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				v, err := ks.Get(ctx, "shared")
+				v, err := ksReader.Get(ctx, "shared")
 				if err != nil {
 					errCh <- err
 					return
@@ -533,6 +537,60 @@ func TestStoreReadConcurrentSingleflight(t *testing.T) {
 		for err := range errCh {
 			t.Error(err)
 		}
+	})
+}
+
+func TestStoreReadSingleflightContextCancellation(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		ksWriter, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
+		require.NoError(t, err)
+		defer ksWriter.Close()
+
+		val := []byte("cancel test payload")
+		err = ksWriter.Set(ctx, "k", bytes.NewReader(val), kvfs.Sync)
+		require.NoError(t, err)
+
+		ksReader, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
+		require.NoError(t, err)
+		defer ksReader.Close()
+
+		ctxCancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		var err1, err2 error
+		var val2 []byte
+
+		go func() {
+			defer wg.Done()
+			v, err := ksReader.Get(ctxCancelled, "k")
+			if err == nil {
+				_ = v.Data.Close()
+			}
+			err1 = err
+		}()
+
+		go func() {
+			defer wg.Done()
+			v, err := ksReader.Get(ctx, "k")
+			if err != nil {
+				err2 = err
+				return
+			}
+			defer v.Data.Close()
+			val2, err2 = io.ReadAll(v.Data)
+		}()
+
+		wg.Wait()
+
+		if err1 != nil {
+			assert.ErrorIs(t, err1, context.Canceled)
+		}
+		require.NoError(t, err2)
+		assert.Equal(t, val, val2)
 	})
 }
 
