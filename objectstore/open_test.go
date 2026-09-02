@@ -19,9 +19,31 @@ func TestOpen(t *testing.T) {
 	s.Close()
 }
 
-func TestOpenRejectsS3(t *testing.T) {
-	for _, u := range []string{"s3://bucket/key", "azblob://c", "bogus://x", "relative/path"} {
-		_, err := objectstore.Open(context.Background(), u)
-		assert.Error(t, err, "Open(%q)", u)
+func TestOpenValidationErrors(t *testing.T) {
+	ctx := context.Background()
+	invalidURLs := []string{
+		"file://",
+		"file://?create_dir=true",
+		"gs://",
+		"gs:///",
+		"s3://bucket/key",
+		"azblob://c",
+		"bogus://x",
+		"relative/path",
+		"://control-char\x7f",
 	}
+	for _, raw := range invalidURLs {
+		t.Run(raw, func(t *testing.T) {
+			_, err := objectstore.Open(ctx, raw)
+			assert.Error(t, err)
+		})
+	}
+}
+
+func TestOpenFileHostFallback(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := objectstore.Open(ctx, "file://"+dir+"?create_dir=true")
+	require.NoError(t, err)
+	s.Close()
 }

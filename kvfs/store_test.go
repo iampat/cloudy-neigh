@@ -223,6 +223,27 @@ func TestStoreValidationErrors(t *testing.T) {
 
 		_, err = ks.Get(ctx, "")
 		assert.ErrorIs(t, err, kvfs.ErrInvalidKey)
+
+		_, err = ks.Fork(ctx, "invalid//branch")
+		assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
+
+		require.NoError(t, ks.Set(ctx, "seed", bytes.NewReader([]byte("v")), kvfs.Sync))
+		ksForked, err := ks.Fork(ctx, "dev")
+		require.NoError(t, err)
+		defer ksForked.Close()
+
+		_, err = ks.Fork(ctx, "dev")
+		assert.ErrorIs(t, err, kvfs.ErrBranchAlreadyExists)
+	})
+}
+
+func TestStoreCloseIdempotent(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
+		require.NoError(t, err)
+		require.NoError(t, ks.Close())
+		require.NoError(t, ks.Close())
 	})
 }
 

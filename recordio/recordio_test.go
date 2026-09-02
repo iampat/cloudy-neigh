@@ -354,6 +354,40 @@ func FuzzScanner(f *testing.F) {
 	})
 }
 
+func TestWriterReset(t *testing.T) {
+	var buf1, buf2 bytes.Buffer
+	w := recordio.NewWriter(&buf1)
+	_, _, err := w.WriteRecord([]byte("first"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	w.Reset(&buf2)
+	_, _, err = w.WriteRecord([]byte("second"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	s := recordio.NewScanner(&buf2)
+	require.True(t, s.Scan())
+	assert.Equal(t, []byte("second"), s.Record())
+}
+
+func TestWriterWriteAfterClose(t *testing.T) {
+	var buf bytes.Buffer
+	w := recordio.NewWriter(&buf)
+	require.NoError(t, w.Close())
+
+	_, _, err := w.WriteRecord([]byte("fail"))
+	assert.ErrorIs(t, err, os.ErrClosed)
+}
+
+func TestWriterOptions(t *testing.T) {
+	var buf bytes.Buffer
+	w := recordio.NewWriter(&buf, recordio.WithWriterBufferSize(1024))
+	_, _, err := w.WriteRecord([]byte("custom-size"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+}
+
 func BenchmarkWriterWriteRecord(b *testing.B) {
 	record := make([]byte, 1024)
 	rand.Read(record)
