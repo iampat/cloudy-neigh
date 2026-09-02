@@ -120,7 +120,7 @@ message Manifest {
   map<string, ManifestEntry> entries = 2;
 }
 
-message KVMutation {
+message Mutation {
   string key = 1;
   string blob_hash = 2;
   uint64 size_bytes = 3;
@@ -162,7 +162,7 @@ mutations append to LogStream at `wal/<branch>/`.
 
 When committing an asynchronous batch:
 1. The batch uploads all staged payloads to `objects/` concurrently.
-2. The batch serializes each staged mutation into a `kvfs.v1.KVMutation` protobuf record.
+2. The batch serializes each staged mutation into a `kvfs.v1.Mutation` protobuf record.
 3. The batch passes all serialized records to `LogStream.Append(ctx, records...)` in a single call.
 4. LogStream writes all records into one `.recordio` WAL segment in one round-trip.
 5. A background committer periodically reads new WAL segments and applies them to new manifest snapshots.

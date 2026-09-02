@@ -13,3 +13,6 @@ build:race --@io_bazel_rules_go//go/config:race
 # //:gazelle-runner, where cgo is off, and the check is a hard analysis failure.
 # Restrict a race run to the test targets so tool targets are never instrumented.
 test:race --build_tests_only
+
+test:fuzz --test_arg=-test.fuzz=.
+test:fuzz --test_arg=-test.fuzztime=10s

@@ -37,20 +37,20 @@ func forEachBackend(t *testing.T, fn func(t *testing.T, s objectstore.Store)) {
 
 func TestBlobKey(t *testing.T) {
 	tests := []struct {
+		name string
 		hash string
 		want string
 	}{
-		{"", "objects/"},
-		{"a", "objects/a"},
-		{"ab", "objects/ab"},
-		{"abcdef", "objects/ab/cd/abcdef"},
+		{"empty", "", "objects/"},
+		{"short", "abcdef", "objects/abcdef"},
 		{
+			"valid_sha256",
 			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			"objects/e3/b0/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.hash, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, kvfs.BlobKey(tt.hash))
 		})
 	}
@@ -97,24 +97,6 @@ func TestPutAndGetBlob(t *testing.T) {
 				assert.Equal(t, data, readData)
 			})
 		}
-	})
-}
-
-func TestPutBlobBytes(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
-		ctx := context.Background()
-		data := []byte("hello cas storage")
-		hash, err := kvfs.PutBlobBytes(ctx, s, data)
-		require.NoError(t, err)
-
-		rc, size, err := kvfs.GetBlob(ctx, s, hash)
-		require.NoError(t, err)
-		defer rc.Close()
-		assert.Equal(t, int64(len(data)), size)
-
-		readData, err := io.ReadAll(rc)
-		require.NoError(t, err)
-		assert.Equal(t, data, readData)
 	})
 }
 
@@ -192,5 +174,37 @@ func TestConcurrentBlobUploads(t *testing.T) {
 		for err := range errCh {
 			t.Error(err)
 		}
+	})
+}
+
+func FuzzBlobRoundTrip(f *testing.F) {
+	f.Add([]byte(""))
+	f.Add([]byte("a"))
+	f.Add([]byte("hello cas storage"))
+	f.Add(bytes.Repeat([]byte("x"), 4096))
+	f.Add(bytes.Repeat([]byte("large content payload"), 500))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		ctx := context.Background()
+		store, err := objectstore.Open(ctx, "mem://")
+		require.NoError(t, err)
+		defer store.Close()
+
+		h := sha256.Sum256(data)
+		expectedHash := hex.EncodeToString(h[:])
+
+		hash, n, err := kvfs.PutBlob(ctx, store, bytes.NewReader(data))
+		require.NoError(t, err)
+		assert.Equal(t, expectedHash, hash)
+		assert.Equal(t, int64(len(data)), n)
+
+		rc, size, err := kvfs.GetBlob(ctx, store, hash)
+		require.NoError(t, err)
+		defer rc.Close()
+		assert.Equal(t, int64(len(data)), size)
+
+		out, err := io.ReadAll(rc)
+		require.NoError(t, err)
+		assert.Equal(t, data, out)
 	})
 }

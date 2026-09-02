@@ -12,23 +12,16 @@ import (
 	"github.com/iampat/cloudy-neigh/objectstore"
 )
 
+const (
+	ObjectsPrefix = "objects/"
+	HashHexLen    = sha256.Size * 2
+)
+
 func BlobKey(hash string) string {
-	if len(hash) < 4 {
-		return "objects/" + hash
+	if len(hash) != HashHexLen {
+		return ObjectsPrefix + hash
 	}
-	return fmt.Sprintf("objects/%s/%s/%s", hash[:2], hash[2:4], hash)
-}
-
-func PutBlobBytes(ctx context.Context, store objectstore.Store, data []byte) (string, error) {
-	h := sha256.Sum256(data)
-	hash := hex.EncodeToString(h[:])
-	key := BlobKey(hash)
-
-	_, err := store.Put(ctx, key, bytes.NewReader(data), objectstore.Condition{Absent: true})
-	if err != nil && !errors.Is(err, objectstore.ErrPreconditionFailed) {
-		return "", fmt.Errorf("kvfs: put blob %s: %w", hash, err)
-	}
-	return hash, nil
+	return ObjectsPrefix + hash[:2] + "/" + hash[2:4] + "/" + hash
 }
 
 func PutBlob(ctx context.Context, store objectstore.Store, r io.Reader) (string, int64, error) {
