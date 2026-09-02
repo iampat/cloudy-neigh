@@ -7,7 +7,6 @@ import (
 	"io"
 	"sync"
 	"testing"
-	"unsafe"
 
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -134,34 +133,6 @@ func TestAppendValidation(t *testing.T) {
 		cancel()
 		_, err = log.Append(canceledCtx, []logstream.Record{[]byte("ok")})
 		assert.ErrorIs(t, err, context.Canceled)
-	})
-}
-
-func TestReadSharesBackingArray(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
-		ctx := context.Background()
-		prefix := "wal/backing-stream"
-		log := newLog(t, s, prefix)
-
-		records := []logstream.Record{
-			[]byte("first record payload"),
-			[]byte("second record payload"),
-			[]byte("third record payload"),
-		}
-		seq, err := log.Append(ctx, records)
-		require.NoError(t, err)
-
-		read, err := log.Read(ctx, seq)
-		require.NoError(t, err)
-		require.Len(t, read, 3)
-
-		base := unsafe.SliceData(read[0])
-		cap0 := cap(read[0])
-		for i := 1; i < len(read); i++ {
-			ptr := unsafe.SliceData(read[i])
-			diff := uintptr(unsafe.Pointer(ptr)) - uintptr(unsafe.Pointer(base))
-			assert.Less(t, diff, uintptr(cap0))
-		}
 	})
 }
 

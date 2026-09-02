@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/iampat/cloudy-neigh/logstream",
     visibility = ["//visibility:public"],
     deps = [
-        "//internal/xtime",
         "//objectstore",
         "//recordio",
     ],
