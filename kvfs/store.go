@@ -13,6 +13,7 @@ import (
 	"github.com/iampat/cloudy-neigh/objectstore"
 	kvfspb "github.com/iampat/cloudy-neigh/proto/kvfs/v1"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -59,8 +60,9 @@ type client struct {
 	activeBranches map[string]struct{}
 	closed         bool
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	flushGroup singleflight.Group
+	stopCh     chan struct{}
+	wg         sync.WaitGroup
 }
 
 func Open(store objectstore.Store, opts *Options) (Store, error) {
@@ -140,16 +142,22 @@ func (c *client) flushActiveBranches() {
 	var g errgroup.Group
 	for _, branch := range branches {
 		g.Go(func() error {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = c.flushBranch(ctx, branch)
-			return nil
+			return c.flushBranch(branch)
 		})
 	}
 	_ = g.Wait()
 }
 
-func (c *client) flushBranch(ctx context.Context, branch string) error {
+func (c *client) flushBranch(branch string) error {
+	_, err, _ := c.flushGroup.Do(branch, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return nil, c.doFlushBranch(ctx, branch)
+	})
+	return err
+}
+
+func (c *client) doFlushBranch(ctx context.Context, branch string) error {
 	log, err := c.getOrCreateLog(branch)
 	if err != nil {
 		return err
@@ -258,10 +266,7 @@ func (c *client) Close() error {
 	var g errgroup.Group
 	for _, branch := range branches {
 		g.Go(func() error {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = c.flushBranch(ctx, branch)
-			return nil
+			return c.flushBranch(branch)
 		})
 	}
 	_ = g.Wait()
