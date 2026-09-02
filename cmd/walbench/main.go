@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/iampat/cloudy-neigh/internal/xtime"
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 )
@@ -346,12 +347,7 @@ func benchmark(ctx context.Context, url, name string, n int, d time.Duration, mi
 		})
 	}
 
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-	case <-ctx.Done():
-	}
+	_ = xtime.Sleep(ctx, d)
 	stop.Store(true)
 	stopped := time.Now()
 
