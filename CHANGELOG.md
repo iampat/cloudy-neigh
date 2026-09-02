@@ -7,6 +7,8 @@
     and `Mutation`.
   - `kvfs/cas.go`: Content-Addressed Storage (CAS) blob engine with SHA-256
     hashing, automatic deduplication, and 2-byte prefix sharding (`cas/<h0>/<h1>/<hash>`).
+  - `kvfs/manifest.go`: Immutable Protobuf manifest storage under `manifests/<h0>/<h1>/<hash>`.
+  - `kvfs/branch.go`: Branch pointer resolution, generation CAS updates, and atomic branch creation under `refs/heads/<branch>`.
 - `recordio`: an append-only record framing engine. A frame holds a 12-byte
   header with the payload length and a length CRC, then the payload, then a
   4-byte payload CRC. Both CRCs use Castagnoli and a rotation mask.

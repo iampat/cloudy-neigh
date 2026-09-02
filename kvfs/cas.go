@@ -32,43 +32,55 @@ func validateHash(hash string) error {
 	return nil
 }
 
-func casKey(hash string) string {
-	return casPrefix + hash[:2] + "/" + hash[2:4] + "/" + hash
+func shardedKey(prefix, hash string) string {
+	return prefix + hash[:2] + "/" + hash[2:4] + "/" + hash
 }
 
-func PutBlob(ctx context.Context, store objectstore.Store, r io.Reader) (string, int64, error) {
+func putCAS(ctx context.Context, store objectstore.Store, prefix string, r io.Reader) (string, int64, error) {
 	var buf bytes.Buffer
 	h := sha256.New()
 	w := io.MultiWriter(&buf, h)
 	n, err := io.Copy(w, r)
 	if err != nil {
-		return "", 0, fmt.Errorf("kvfs: read blob payload: %w", err)
+		return "", 0, fmt.Errorf("kvfs: read payload: %w", err)
 	}
 
 	hash := hex.EncodeToString(h.Sum(nil))
-	key := casKey(hash)
+	key := shardedKey(prefix, hash)
 
 	_, err = store.Put(ctx, key, &buf, objectstore.Condition{Absent: true})
 	if err != nil && !errors.Is(err, objectstore.ErrPreconditionFailed) {
-		return "", 0, fmt.Errorf("kvfs: put blob %s: %w", hash, err)
+		return "", 0, fmt.Errorf("kvfs: put %s %s: %w", prefix, hash, err)
 	}
 	return hash, n, nil
 }
 
-func GetBlob(ctx context.Context, store objectstore.Store, hash string) (io.ReadCloser, int64, error) {
+func getCAS(ctx context.Context, store objectstore.Store, prefix, hash string) (io.ReadCloser, int64, error) {
 	if err := validateHash(hash); err != nil {
 		return nil, 0, err
 	}
-	rc, obj, err := store.Get(ctx, casKey(hash))
+	rc, obj, err := store.Get(ctx, shardedKey(prefix, hash))
 	if err != nil {
 		return nil, 0, err
 	}
 	return rc, obj.Size, nil
 }
 
-func ExistsBlob(ctx context.Context, store objectstore.Store, hash string) (bool, error) {
+func existsCAS(ctx context.Context, store objectstore.Store, prefix, hash string) (bool, error) {
 	if err := validateHash(hash); err != nil {
 		return false, err
 	}
-	return store.Exists(ctx, casKey(hash))
+	return store.Exists(ctx, shardedKey(prefix, hash))
+}
+
+func PutBlob(ctx context.Context, store objectstore.Store, r io.Reader) (string, int64, error) {
+	return putCAS(ctx, store, casPrefix, r)
+}
+
+func GetBlob(ctx context.Context, store objectstore.Store, hash string) (io.ReadCloser, int64, error) {
+	return getCAS(ctx, store, casPrefix, hash)
+}
+
+func ExistsBlob(ctx context.Context, store objectstore.Store, hash string) (bool, error) {
+	return existsCAS(ctx, store, casPrefix, hash)
 }
