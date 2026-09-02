@@ -13,15 +13,16 @@ triggers the skill and approves every edit it makes.
 ## Build: Bazel only
 
 Never invoke `go build`/`go test` or run scripts directly. Go through Bazel so
-the toolchain and the dependency graph stay authoritative.
+the toolchain and the dependency graph stay authoritative. Always run tests
+with `--config=race`.
 
 | Plain Go | Here |
 | --- | --- |
 | `go build ./...` | `bazel build //...` |
-| `go test ./...` | `bazel test //...` (race: `--config=race`) |
-| `go test -run TestX ./pkg` | `bazel test //pkg:pkg_test --test_filter=TestX` |
-| `go test -v` | `bazel test //... --test_output=all` |
-| `go test -bench=.` | `bazel test //... --test_arg=-test.bench=. --test_output=all` |
+| `go test ./...` | `bazel test --config=race //...` |
+| `go test -run TestX ./pkg` | `bazel test --config=race //pkg:pkg_test --test_filter=TestX` |
+| `go test -v` | `bazel test --config=race //... --test_output=all` |
+| `go test -bench=.` | `bazel test --config=race //... --test_arg=-test.bench=. --test_output=all` |
 | add a dependency | add the import, then `bazel run @io_bazel_rules_go//go -- mod tidy` |
 | `go mod tidy` | `bazel run @io_bazel_rules_go//go -- mod tidy` (also runs `bazel mod tidy`) |
 | `go fmt ./...` | `bazel run //:format` (check-only: `//:format.check`) |
