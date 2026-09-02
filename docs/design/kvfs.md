@@ -111,7 +111,7 @@ package kvfs.v1;
 option go_package = "github.com/iampat/cloudy-neigh/proto/kvfs/v1;kvfspb";
 
 message ManifestEntry {
-  string blob_hash = 1;
+  string cas_hash = 1;
   uint64 size_bytes = 2;
 }
 
@@ -122,7 +122,7 @@ message Manifest {
 
 message Mutation {
   string key = 1;
-  string blob_hash = 2;
+  string cas_hash = 2;
   uint64 size_bytes = 3;
   bool tombstone = 4;
 }
