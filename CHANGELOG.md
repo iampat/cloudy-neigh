@@ -27,6 +27,10 @@
   `LastValidOffset` gives the truncation point.
 - `docs/design/recordio.md`: the design note for the format and the API.
 
+### Changed
+
+- `logstream`: Unified stream and prefix into a single prefix path parameter in `logstream.New`. Removed `WithPrefix` option.
+
 ### Fixed
 
 - `recordio.Reader`: a non-EOF read error inside a payload or footer now

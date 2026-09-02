@@ -146,7 +146,7 @@ func TestTailAndHeadJump(t *testing.T) {
 				return nil, nil
 			},
 		}
-		log, err := logstream.New(mock, "stream")
+		log, err := logstream.New(mock, "wal/stream")
 		require.NoError(t, err)
 
 		tail, err := log.Tail(context.Background())
@@ -164,7 +164,7 @@ func TestTailAndHeadJump(t *testing.T) {
 				}, nil
 			},
 		}
-		log, err := logstream.New(mock, "stream")
+		log, err := logstream.New(mock, "wal/stream")
 		require.NoError(t, err)
 
 		tail, err := log.Tail(context.Background())
@@ -195,7 +195,7 @@ func TestTailAndHeadJump(t *testing.T) {
 				return seq <= targetHead, nil
 			},
 		}
-		log, err := logstream.New(mock, "stream")
+		log, err := logstream.New(mock, "wal/stream")
 		require.NoError(t, err)
 
 		tail, err := log.Tail(context.Background())

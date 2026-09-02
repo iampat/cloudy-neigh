@@ -22,63 +22,39 @@ var ErrEndOfStream = errors.New("logstream: end of stream")
 
 type Record []byte
 
-type Option func(*Log)
-
-func WithPrefix(prefix string) Option {
-	return func(l *Log) {
-		if prefix != "" {
-			l.prefix = strings.Trim(prefix, "/")
-		}
-	}
-}
-
-func WithMaxRecordSize(max int) Option {
-	return func(l *Log) {
-		if max > 0 {
-			l.maxRecordSize = max
-		}
-	}
-}
-
-const headListLimit = 1000
+// Winner pacing yields time on consecutive uncontested appends so competing writers
+// have a window to claim sequence slots without starvation.
+const (
+	headListLimit = 1000
+	basePacingRTT = 20 * time.Millisecond
+)
 
 type Log struct {
-	store         objectstore.Store
-	stream        string
-	prefix        string
-	maxRecordSize int
+	store  objectstore.Store
+	prefix string
 
 	ch        chan struct{}
 	lastKnown uint64
 	winStreak int
-	rttEMA    time.Duration
 }
 
-func New(store objectstore.Store, stream string, opts ...Option) (*Log, error) {
-	if !validStreamName(stream) {
-		return nil, fmt.Errorf("logstream: invalid stream name %q", stream)
+func New(store objectstore.Store, prefix string) (*Log, error) {
+	if store == nil {
+		return nil, errors.New("logstream: nil store")
 	}
-	l := &Log{
-		store:         store,
-		stream:        stream,
-		prefix:        "wal",
-		maxRecordSize: recordio.DefaultMaxRecordSize,
-		ch:            make(chan struct{}, 1),
+	if !validPrefix(prefix) {
+		return nil, fmt.Errorf("logstream: invalid prefix %q", prefix)
 	}
-	for _, opt := range opts {
-		opt(l)
-	}
-	return l, nil
+	return &Log{
+		store:  store,
+		prefix: prefix,
+		ch:     make(chan struct{}, 1),
+	}, nil
 }
 
 func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 	if len(records) == 0 {
 		return 0, errors.New("logstream: batch is empty")
-	}
-	for _, r := range records {
-		if len(r) > l.maxRecordSize {
-			return 0, fmt.Errorf("logstream: record size %d exceeds max %d", len(r), l.maxRecordSize)
-		}
 	}
 
 	var buf bytes.Buffer
@@ -114,13 +90,12 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 	start := time.Now()
 
 	for {
-		key := segmentKey(l.prefix, l.stream, seq)
-		putStart := time.Now()
+		key := segmentKey(l.prefix, seq)
 		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{Absent: true})
 		if err == nil {
 			l.lastKnown = seq
 			slog.Debug("logstream append",
-				"stream", l.stream,
+				"prefix", l.prefix,
 				"seq", seq,
 				"first_try", first,
 				"collisions", collisions,
@@ -128,7 +103,7 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 				"jump_probes", jumpProbes,
 				"uploads", collisions+1,
 				"elapsed_ms", time.Since(start).Milliseconds())
-			_ = l.paceWinner(ctx, collisions, time.Since(putStart))
+			_ = l.paceWinner(ctx, collisions)
 			return seq, nil
 		}
 		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
@@ -146,13 +121,7 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 	}
 }
 
-func (l *Log) paceWinner(ctx context.Context, collisions int, putDuration time.Duration) error {
-	if l.rttEMA == 0 {
-		l.rttEMA = putDuration
-	} else {
-		l.rttEMA = (l.rttEMA*4 + putDuration) / 5
-	}
-
+func (l *Log) paceWinner(ctx context.Context, collisions int) error {
 	if collisions > 0 {
 		l.winStreak = 0
 		return nil
@@ -164,10 +133,10 @@ func (l *Log) paceWinner(ctx context.Context, collisions int, putDuration time.D
 	}
 
 	delayFactor := min(float64(l.winStreak-1)*0.25, 1.0)
-	baseDelay := time.Duration(float64(l.rttEMA) * delayFactor)
+	baseDelay := time.Duration(float64(basePacingRTT) * delayFactor)
 	var jitter time.Duration
-	if l.rttEMA > 10 {
-		jitter = time.Duration(rand.Int64N(int64(l.rttEMA / 10)))
+	if basePacingRTT > 10 {
+		jitter = time.Duration(rand.Int64N(int64(basePacingRTT / 10)))
 	}
 	return xtime.Sleep(ctx, baseDelay+jitter)
 }
@@ -175,9 +144,9 @@ func (l *Log) paceWinner(ctx context.Context, collisions int, putDuration time.D
 func (l *Log) head(ctx context.Context, lo uint64) (uint64, int, error) {
 	var start string
 	if lo > 0 {
-		start = segmentKey(l.prefix, l.stream, lo)
+		start = segmentKey(l.prefix, lo)
 	}
-	objs, err := l.store.List(ctx, l.streamPrefix(), start, headListLimit)
+	objs, err := l.store.List(ctx, l.prefix+"/", start, headListLimit)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -194,19 +163,15 @@ func (l *Log) head(ctx context.Context, lo uint64) (uint64, int, error) {
 	return jump(ctx, last, l.probe)
 }
 
-func (l *Log) streamPrefix() string {
-	return fmt.Sprintf("%s/%s/", l.prefix, l.stream)
-}
-
 func (l *Log) probe(ctx context.Context, seq uint64) (bool, error) {
-	return l.store.Exists(ctx, segmentKey(l.prefix, l.stream, seq))
+	return l.store.Exists(ctx, segmentKey(l.prefix, seq))
 }
 
 func (l *Log) Read(ctx context.Context, seq uint64) ([]Record, error) {
 	if seq == 0 {
 		return nil, errors.New("logstream: sequence number must be greater than zero")
 	}
-	key := segmentKey(l.prefix, l.stream, seq)
+	key := segmentKey(l.prefix, seq)
 	rc, _, err := l.store.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
@@ -216,7 +181,7 @@ func (l *Log) Read(ctx context.Context, seq uint64) ([]Record, error) {
 	}
 	defer rc.Close()
 
-	s := recordio.NewScanner(rc, recordio.WithScannerMaxRecordSize(l.maxRecordSize))
+	s := recordio.NewScanner(rc)
 	var all []byte
 	var lens []int
 	for s.Scan() {
@@ -255,36 +220,30 @@ func jump(ctx context.Context, lo uint64, probe func(context.Context, uint64) (b
 		return lo, 1, nil
 	}
 
-	probes := 1
+	step := uint64(1)
 	low := lo + 1
-	d := uint64(2)
-	var high uint64
+	high := lo + 1
+	probes := 1
 
 	for {
-		var target uint64
-		if d > math.MaxUint64-lo {
-			target = math.MaxUint64
+		if step > (math.MaxUint64-high)/2 {
+			high = math.MaxUint64
 		} else {
-			target = lo + d
+			high += step * 2
+			step *= 2
 		}
 
-		ex, err := probe(ctx, target)
 		probes++
+		ok, err := probe(ctx, high)
 		if err != nil {
 			return 0, probes, err
 		}
-		if !ex {
-			high = target
+		if !ok {
 			break
 		}
-		low = target
-		if target == math.MaxUint64 {
-			return target, probes, nil
-		}
-		if d > math.MaxUint64/2 {
-			d = math.MaxUint64
-		} else {
-			d *= 2
+		low = high
+		if high == math.MaxUint64 {
+			return high, probes, nil
 		}
 	}
 
@@ -304,8 +263,8 @@ func jump(ctx context.Context, lo uint64, probe func(context.Context, uint64) (b
 	return low, probes, nil
 }
 
-func segmentKey(prefix, stream string, seq uint64) string {
-	return fmt.Sprintf("%s/%s/%020d.recordio", prefix, stream, seq)
+func segmentKey(prefix string, seq uint64) string {
+	return fmt.Sprintf("%s/%020d.recordio", prefix, seq)
 }
 
 func parseSeq(key string) (uint64, error) {
@@ -327,13 +286,13 @@ func parseSeq(key string) (uint64, error) {
 	return seq, nil
 }
 
-func validStreamName(name string) bool {
-	if len(name) == 0 {
+func validPrefix(prefix string) bool {
+	if len(prefix) == 0 || prefix[0] == '/' || prefix[len(prefix)-1] == '/' || strings.Contains(prefix, "//") {
 		return false
 	}
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
+	for i := 0; i < len(prefix); i++ {
+		c := prefix[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '/' {
 			continue
 		}
 		return false
