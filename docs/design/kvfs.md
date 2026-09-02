@@ -158,8 +158,14 @@ Client -> Batch.Set(k1, v1) -> Upload objects/<hash1> (parallel)
 ### Asynchronous log streaming
 
 For high-concurrency ingestion where multiple writers exceed 3 writes per second,
-mutations append to LogStream at `wal/<branch>/`. A background committer folds
-log records into new manifest snapshots periodically.
+mutations append to LogStream at `wal/<branch>/`.
+
+When committing an asynchronous batch:
+1. The batch uploads all staged payloads to `objects/` concurrently.
+2. The batch serializes each staged mutation into a `kvfs.v1.KVMutation` protobuf record.
+3. The batch passes all serialized records to `LogStream.Append(ctx, records...)` in a single call.
+4. LogStream writes all records into one `.recordio` WAL segment in one round-trip.
+5. A background committer periodically reads new WAL segments and applies them to new manifest snapshots.
 
 ## Read path and multi-layer caching
 
