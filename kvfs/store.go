@@ -12,7 +12,6 @@ import (
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	kvfspb "github.com/iampat/cloudy-neigh/proto/kvfs/v1"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/protobuf/proto"
 )
@@ -47,30 +46,41 @@ type Value struct {
 }
 
 type Store interface {
-	Get(ctx context.Context, branch, key string) (Value, error)
-	Set(ctx context.Context, branch, key string, r io.Reader, opts *WriteOptions) error
-	Delete(ctx context.Context, branch, key string, opts *WriteOptions) error
-	Branch(ctx context.Context, newBranch, parentBranch string) error
+	Branch() string
+	Get(ctx context.Context, key string) (Value, error)
+	Set(ctx context.Context, key string, r io.Reader, opts *WriteOptions) error
+	Delete(ctx context.Context, key string, opts *WriteOptions) error
+	Flush(ctx context.Context) error
+	Fork(ctx context.Context, newBranch string) (Store, error)
 	Close() error
 }
 
 type client struct {
 	store            objectstore.Store
+	branch           string
 	walFlushInterval time.Duration
+	log              *logstream.Log
 
-	mu             sync.Mutex
-	logs           map[string]*logstream.Log
-	activeBranches map[string]struct{}
-	closed         bool
+	mu     sync.Mutex
+	closed bool
 
 	flushGroup singleflight.Group
 	stopCh     chan struct{}
 	wg         sync.WaitGroup
 }
 
-func Open(store objectstore.Store, opts *Options) (Store, error) {
+func Open(ctx context.Context, store objectstore.Store, branch string, opts *Options) (Store, error) {
 	if store == nil {
 		return nil, ErrNilStore
+	}
+	if err := validateBranch(branch); err != nil {
+		return nil, err
+	}
+
+	if branch != "main" {
+		if _, _, err := resolveBranch(ctx, store, branch); err != nil {
+			return nil, err
+		}
 	}
 
 	flushInterval := defaultWALFlushInterval
@@ -78,11 +88,16 @@ func Open(store objectstore.Store, opts *Options) (Store, error) {
 		flushInterval = opts.WALFlushInterval
 	}
 
+	l, err := logstream.New(store, "wal/"+branch)
+	if err != nil {
+		return nil, err
+	}
+
 	c := &client{
 		store:            store,
+		branch:           branch,
 		walFlushInterval: flushInterval,
-		logs:             make(map[string]*logstream.Log),
-		activeBranches:   make(map[string]struct{}),
+		log:              l,
 		stopCh:           make(chan struct{}),
 	}
 
@@ -92,26 +107,8 @@ func Open(store objectstore.Store, opts *Options) (Store, error) {
 	return c, nil
 }
 
-func (c *client) getOrCreateLog(branch string) (*logstream.Log, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if l, ok := c.logs[branch]; ok {
-		return l, nil
-	}
-
-	l, err := logstream.New(c.store, "wal/"+branch)
-	if err != nil {
-		return nil, err
-	}
-	c.logs[branch] = l
-	return l, nil
-}
-
-func (c *client) markBranchActive(branch string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.activeBranches[branch] = struct{}{}
+func (c *client) Branch() string {
+	return c.branch
 }
 
 func (c *client) backgroundFlusher() {
@@ -124,46 +121,24 @@ func (c *client) backgroundFlusher() {
 		case <-c.stopCh:
 			return
 		case <-ticker.C:
-			c.flushActiveBranches()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := c.Flush(ctx); err != nil {
+				slog.Error("kvfs: background wal flush failed", "branch", c.branch, "err", err)
+			}
+			cancel()
 		}
 	}
 }
 
-func (c *client) flushActiveBranches() {
-	c.mu.Lock()
-	branches := make([]string, 0, len(c.activeBranches))
-	for b := range c.activeBranches {
-		branches = append(branches, b)
-	}
-	c.mu.Unlock()
-
-	var g errgroup.Group
-	for _, branch := range branches {
-		g.Go(func() error {
-			return c.flushBranch(branch)
-		})
-	}
-	if err := g.Wait(); err != nil {
-		slog.Error("kvfs: flush active branches failed", "err", err)
-	}
-}
-
-func (c *client) flushBranch(branch string) error {
-	_, err, _ := c.flushGroup.Do(branch, func() (any, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return nil, c.doFlushBranch(ctx, branch)
+func (c *client) Flush(ctx context.Context) error {
+	_, err, _ := c.flushGroup.Do("", func() (any, error) {
+		return nil, c.doFlush(ctx)
 	})
 	return err
 }
 
-func (c *client) doFlushBranch(ctx context.Context, branch string) error {
-	log, err := c.getOrCreateLog(branch)
-	if err != nil {
-		return err
-	}
-
-	tail, err := log.Tail(ctx)
+func (c *client) doFlush(ctx context.Context) error {
+	tail, err := c.log.Tail(ctx)
 	if err != nil {
 		return err
 	}
@@ -172,7 +147,7 @@ func (c *client) doFlushBranch(ctx context.Context, branch string) error {
 	}
 
 	for {
-		manifestHash, gen, err := resolveBranch(ctx, c.store, branch)
+		manifestHash, gen, err := resolveBranch(ctx, c.store, c.branch)
 		if err != nil && !errors.Is(err, objectstore.ErrNotFound) {
 			return err
 		}
@@ -201,7 +176,7 @@ func (c *client) doFlushBranch(ctx context.Context, branch string) error {
 		maps.Copy(newEntries, parentManifest.Entries)
 
 		for seq := lastWalSeq + 1; seq <= tail; seq++ {
-			records, err := log.Read(ctx, seq)
+			records, err := c.log.Read(ctx, seq)
 			if err != nil {
 				if errors.Is(err, logstream.ErrEndOfStream) {
 					break
@@ -234,7 +209,7 @@ func (c *client) doFlushBranch(ctx context.Context, branch string) error {
 			return err
 		}
 
-		_, err = updateBranch(ctx, c.store, branch, newManifestHash, gen)
+		_, err = updateBranch(ctx, c.store, c.branch, newManifestHash, gen)
 		if err == nil {
 			return nil
 		}
@@ -256,37 +231,27 @@ func (c *client) Close() error {
 
 	c.wg.Wait()
 
-	c.mu.Lock()
-	branches := make([]string, 0, len(c.activeBranches))
-	for b := range c.activeBranches {
-		branches = append(branches, b)
-	}
-	c.mu.Unlock()
-
-	var g errgroup.Group
-	for _, branch := range branches {
-		g.Go(func() error {
-			return c.flushBranch(branch)
-		})
-	}
-	if err := g.Wait(); err != nil {
-		slog.Error("kvfs: close flush branches failed", "err", err)
-	}
-
-	return c.store.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return c.Flush(ctx)
 }
 
-func (c *client) Branch(ctx context.Context, newBranch, parentBranch string) error {
-	_, _, err := createBranch(ctx, c.store, newBranch, parentBranch)
-	return err
+func (c *client) Fork(ctx context.Context, newBranch string) (Store, error) {
+	if err := c.Flush(ctx); err != nil {
+		return nil, err
+	}
+	if _, _, err := createBranch(ctx, c.store, newBranch, c.branch); err != nil {
+		return nil, err
+	}
+	return Open(ctx, c.store, newBranch, &Options{WALFlushInterval: c.walFlushInterval})
 }
 
-func (c *client) Get(ctx context.Context, branch, key string) (Value, error) {
+func (c *client) Get(ctx context.Context, key string) (Value, error) {
 	if key == "" {
 		return Value{}, ErrInvalidKey
 	}
 
-	manifestHash, _, err := resolveBranch(ctx, c.store, branch)
+	manifestHash, _, err := resolveBranch(ctx, c.store, c.branch)
 	if err != nil {
 		return Value{}, err
 	}
@@ -308,10 +273,7 @@ func (c *client) Get(ctx context.Context, branch, key string) (Value, error) {
 	return Value{Data: rc, Size: size}, nil
 }
 
-func (c *client) mutate(ctx context.Context, branch string, mut *kvfspb.Mutation, opts *WriteOptions) error {
-	if err := validateBranch(branch); err != nil {
-		return err
-	}
+func (c *client) mutate(ctx context.Context, mut *kvfspb.Mutation, opts *WriteOptions) error {
 	if mut.Key == "" {
 		return ErrInvalidKey
 	}
@@ -326,19 +288,14 @@ func (c *client) mutate(ctx context.Context, branch string, mut *kvfspb.Mutation
 		if err != nil {
 			return err
 		}
-		log, err := c.getOrCreateLog(branch)
-		if err != nil {
+		if _, err := c.log.Append(ctx, []logstream.Record{data}); err != nil {
 			return err
 		}
-		if _, err := log.Append(ctx, []logstream.Record{data}); err != nil {
-			return err
-		}
-		c.markBranchActive(branch)
 		return nil
 	}
 
 	for {
-		manifestHash, gen, err := resolveBranch(ctx, c.store, branch)
+		manifestHash, gen, err := resolveBranch(ctx, c.store, c.branch)
 		if err != nil && !errors.Is(err, objectstore.ErrNotFound) {
 			return err
 		}
@@ -394,7 +351,7 @@ func (c *client) mutate(ctx context.Context, branch string, mut *kvfspb.Mutation
 			return err
 		}
 
-		_, err = updateBranch(ctx, c.store, branch, newManifestHash, gen)
+		_, err = updateBranch(ctx, c.store, c.branch, newManifestHash, gen)
 		if err == nil {
 			return nil
 		}
@@ -404,12 +361,9 @@ func (c *client) mutate(ctx context.Context, branch string, mut *kvfspb.Mutation
 	}
 }
 
-func (c *client) Set(ctx context.Context, branch, key string, r io.Reader, opts *WriteOptions) error {
+func (c *client) Set(ctx context.Context, key string, r io.Reader, opts *WriteOptions) error {
 	if r == nil {
 		return ErrNilReader
-	}
-	if err := validateBranch(branch); err != nil {
-		return err
 	}
 	if key == "" {
 		return ErrInvalidKey
@@ -420,15 +374,15 @@ func (c *client) Set(ctx context.Context, branch, key string, r io.Reader, opts 
 		return err
 	}
 
-	return c.mutate(ctx, branch, &kvfspb.Mutation{
+	return c.mutate(ctx, &kvfspb.Mutation{
 		Key:       key,
 		CasHash:   casHash,
 		SizeBytes: uint64(size),
 	}, opts)
 }
 
-func (c *client) Delete(ctx context.Context, branch, key string, opts *WriteOptions) error {
-	return c.mutate(ctx, branch, &kvfspb.Mutation{
+func (c *client) Delete(ctx context.Context, key string, opts *WriteOptions) error {
+	return c.mutate(ctx, &kvfspb.Mutation{
 		Key:       key,
 		Tombstone: true,
 	}, opts)
