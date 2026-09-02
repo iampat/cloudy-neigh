@@ -13,20 +13,20 @@ import (
 	"google.golang.org/api/iterator"
 )
 
-type gcsDriver struct {
+type gcsStore struct {
 	client *storage.Client
 	bucket string
 }
 
-func (g *gcsDriver) Close() error {
+func (g *gcsStore) Close() error {
 	return g.client.Close()
 }
 
-func (g *gcsDriver) bkt() *storage.BucketHandle {
+func (g *gcsStore) bkt() *storage.BucketHandle {
 	return g.client.Bucket(g.bucket)
 }
 
-func (g *gcsDriver) stat(ctx context.Context, key string) (Object, error) {
+func (g *gcsStore) Stat(ctx context.Context, key string) (Object, error) {
 	attrs, err := g.bkt().Object(key).Attrs(ctx)
 	if err != nil {
 		return Object{}, translateGCS(key, err)
@@ -38,7 +38,7 @@ func (g *gcsDriver) stat(ctx context.Context, key string) (Object, error) {
 	}, nil
 }
 
-func (g *gcsDriver) get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
+func (g *gcsStore) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
 	r, err := g.bkt().Object(key).NewReader(ctx)
 	if err != nil {
 		return nil, Object{}, translateGCS(key, err)
@@ -50,7 +50,7 @@ func (g *gcsDriver) get(ctx context.Context, key string) (io.ReadCloser, Object,
 	}, nil
 }
 
-func (g *gcsDriver) exists(ctx context.Context, key string) (bool, error) {
+func (g *gcsStore) Exists(ctx context.Context, key string) (bool, error) {
 	_, err := g.bkt().Object(key).Attrs(ctx)
 	if err == nil {
 		return true, nil
@@ -65,7 +65,7 @@ func (g *gcsDriver) exists(ctx context.Context, key string) (bool, error) {
 	return false, err
 }
 
-func (g *gcsDriver) delete(ctx context.Context, key string) error {
+func (g *gcsStore) Delete(ctx context.Context, key string) error {
 	err := g.bkt().Object(key).Delete(ctx)
 	if err != nil {
 		return translateGCS(key, err)
@@ -73,7 +73,10 @@ func (g *gcsDriver) delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (g *gcsDriver) put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
+func (g *gcsStore) Put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
+	if err := cond.validate(key); err != nil {
+		return "", err
+	}
 	obj := g.bkt().Object(key)
 	switch {
 	case cond.Absent:
@@ -88,7 +91,7 @@ func (g *gcsDriver) put(ctx context.Context, key string, r io.Reader, cond Condi
 	w := obj.NewWriter(ctx)
 	if _, err := io.Copy(w, r); err != nil {
 		_ = w.Close()
-		return "", err
+		return "", translateGCS(key, err)
 	}
 	if err := w.Close(); err != nil {
 		return "", translateGCS(key, err)
@@ -96,7 +99,7 @@ func (g *gcsDriver) put(ctx context.Context, key string, r io.Reader, cond Condi
 	return strconv.FormatInt(w.Attrs().Generation, 10), nil
 }
 
-func (g *gcsDriver) list(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
+func (g *gcsStore) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
 	query := &storage.Query{Prefix: prefix}
 	if startAfter != "" {
 		query.StartOffset = startAfter

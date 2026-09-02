@@ -4,7 +4,6 @@ go_library(
     name = "recordio",
     srcs = [
         "crc.go",
-        "reader.go",
         "scanner.go",
         "writer.go",
     ],

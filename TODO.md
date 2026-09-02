@@ -8,15 +8,9 @@
         Cost difference is negligible ($5.00 vs $2.40 per 1M collisions, and $0.000005 per cold start).
         Parked until high collision QPS or list pricing becomes an operational bottleneck.
   - [ ] Drop the generation token from a conditional create, which no caller reads.
-- [ ] Settle the fileblob conditional write. `objectstore` never asks fileblob
-      to enforce `Absent`. A read of `gocloud.dev@v0.46.0` shows a fresh mutex
-      for every writer, then a rename over the target.
-  - [ ] Reproduce it, or reject it. Race two writers with `IfNotExist` straight
-        at fileblob, outside our lock. Our lock hides the fault today, so
-        nothing in the repository proves it.
-  - [ ] Report it upstream when it reproduces, and record the issue number.
-  - [ ] Improve the implementation on the outcome. Drop `nativeAbsent` and the
-        lock when fileblob holds. Keep both and cite the issue when it does not.
+- [X] Settle the fileblob conditional write. `gocloud.dev/blob/fileblob` was dropped and
+      replaced by direct `localDriver` using POSIX `os.Link(2)` for atomic `Absent: true`
+      and `flock(2)` + `rename(2)` for generation-matched updates.
 - [ ] Publish the benchmarks, the code coverage, and the build health on the
       front page of the repository. A number nobody sees changes no decision.
   - [ ] Show the state of the build and the tests as a badge in `README.md`.
@@ -77,8 +71,8 @@
 - [ ] Remove the `golang.org/x/tools` override in `MODULE.bazel`. rules_go
       0.62.0 pins v0.34.0, which reads export data version 2 at most. Drop the
       override when rules_go pins v0.44.0 or later.
-- [ ] Replace custom cancellable sleeps across the codebase with `xtime.Sleep`.
-      `walbench` and other tools use ad-hoc timer and select patterns.
+- [X] Replace custom cancellable sleeps across the codebase with `xtime.Sleep`.
+      `walbench` now uses `xtime.Sleep`.
 - [ ] Hedged sequence discovery: probe candidate sequence numbers concurrently in LogStream.
 - [ ] Plan and execute deterministic simulation testing from `docs/design/testing.md`.
   - [ ] Implement injectable `Clock` interface in `internal/xtime`.

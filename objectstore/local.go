@@ -97,12 +97,12 @@ func nextLocalModTime() time.Time {
 	}
 }
 
-type localDriver struct {
+type localStore struct {
 	dir string
 	l   *diskLock
 }
 
-func newLocalDriver(dir string) (*localDriver, error) {
+func newLocalStore(dir string) (*localStore, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
@@ -114,14 +114,14 @@ func newLocalDriver(dir string) (*localDriver, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &localDriver{dir: abs, l: l}, nil
+	return &localStore{dir: abs, l: l}, nil
 }
 
-func (d *localDriver) Close() error {
+func (d *localStore) Close() error {
 	return nil
 }
 
-func (d *localDriver) path(key string) (string, error) {
+func (d *localStore) path(key string) (string, error) {
 	if key == "" {
 		return "", errors.New("objectstore: empty key")
 	}
@@ -132,7 +132,7 @@ func (d *localDriver) path(key string) (string, error) {
 	return filepath.Join(d.dir, clean), nil
 }
 
-func (d *localDriver) stat(ctx context.Context, key string) (Object, error) {
+func (d *localStore) Stat(ctx context.Context, key string) (Object, error) {
 	if err := ctx.Err(); err != nil {
 		return Object{}, err
 	}
@@ -157,7 +157,7 @@ func (d *localDriver) stat(ctx context.Context, key string) (Object, error) {
 	}, nil
 }
 
-func (d *localDriver) get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
+func (d *localStore) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, Object{}, err
 	}
@@ -188,7 +188,7 @@ func (d *localDriver) get(ctx context.Context, key string) (io.ReadCloser, Objec
 	}, nil
 }
 
-func (d *localDriver) exists(ctx context.Context, key string) (bool, error) {
+func (d *localStore) Exists(ctx context.Context, key string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -206,7 +206,7 @@ func (d *localDriver) exists(ctx context.Context, key string) (bool, error) {
 	return !fi.IsDir(), nil
 }
 
-func (d *localDriver) delete(ctx context.Context, key string) error {
+func (d *localStore) Delete(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -231,8 +231,11 @@ func (d *localDriver) delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (d *localDriver) put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
+func (d *localStore) Put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
 	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := cond.validate(key); err != nil {
 		return "", err
 	}
 	target, err := d.path(key)
@@ -316,7 +319,7 @@ func (d *localDriver) put(ctx context.Context, key string, r io.Reader, cond Con
 	return localGeneration(newFi.ModTime().UnixNano(), newFi.Size()), nil
 }
 
-func (d *localDriver) list(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
+func (d *localStore) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
