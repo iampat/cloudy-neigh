@@ -15,7 +15,7 @@ build:race --@io_bazel_rules_go//go/config:race
 test:race --build_tests_only
 
 test:fuzz --test_arg=-test.fuzz=.
-test:fuzz --test_arg=-test.fuzztime=10s
+test:fuzz --test_arg=-test.fuzztime=600s
 test:fuzz --test_arg=-test.fuzzcachedir=/tmp/fuzzcache
 test:fuzz --test_output=streamed
 test:fuzz --nocache_test_results
