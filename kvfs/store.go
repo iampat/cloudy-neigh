@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	ErrInvalidKey = errors.New("kvfs: empty key")
-	ErrNilStore   = errors.New("kvfs: nil objectstore")
-	ErrNilReader  = errors.New("kvfs: nil reader")
+	ErrInvalidKey  = errors.New("kvfs: empty key")
+	ErrNilStore    = errors.New("kvfs: nil objectstore")
+	ErrNilReader   = errors.New("kvfs: nil reader")
+	ErrBatchClosed = errors.New("kvfs: batch closed")
 )
 
 type WriteOptions struct {
@@ -50,6 +51,7 @@ type Store interface {
 	Delete(ctx context.Context, key string, opts *WriteOptions) error
 	Flush(ctx context.Context) error
 	Fork(ctx context.Context, newBranch string) (Store, error)
+	NewBatch() *Batch
 	Close() error
 }
 
@@ -276,26 +278,18 @@ func (c *client) Get(ctx context.Context, key string) (Value, error) {
 	return Value{Data: rc, Size: size}, nil
 }
 
-func (c *client) mutate(ctx context.Context, mut *kvfspb.Mutation, opts *WriteOptions) error {
-	if mut.Key == "" {
-		return ErrInvalidKey
-	}
-
-	data, err := proto.Marshal(mut)
-	if err != nil {
-		return err
-	}
-	if _, err := c.log.Append(ctx, []logstream.Record{data}); err != nil {
-		return err
-	}
-
-	if opts == nil || opts.Sync {
-		return c.Flush(ctx)
-	}
-	return nil
+type Batch struct {
+	client *client
+	mu     sync.Mutex
+	muts   []*kvfspb.Mutation
+	closed bool
 }
 
-func (c *client) Set(ctx context.Context, key string, r io.Reader, opts *WriteOptions) error {
+func (c *client) NewBatch() *Batch {
+	return &Batch{client: c}
+}
+
+func (b *Batch) Set(ctx context.Context, key string, r io.Reader) error {
 	if r == nil {
 		return ErrNilReader
 	}
@@ -303,21 +297,105 @@ func (c *client) Set(ctx context.Context, key string, r io.Reader, opts *WriteOp
 		return ErrInvalidKey
 	}
 
-	casHash, size, err := putBlob(ctx, c.store, r)
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return ErrBatchClosed
+	}
+	b.mu.Unlock()
+
+	casHash, size, err := putBlob(ctx, b.client.store, r)
 	if err != nil {
 		return err
 	}
 
-	return c.mutate(ctx, &kvfspb.Mutation{
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return ErrBatchClosed
+	}
+
+	b.muts = append(b.muts, &kvfspb.Mutation{
 		Key:       key,
 		CasHash:   casHash,
 		SizeBytes: uint64(size),
-	}, opts)
+	})
+	return nil
+}
+
+func (b *Batch) Delete(key string) error {
+	if key == "" {
+		return ErrInvalidKey
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return ErrBatchClosed
+	}
+
+	b.muts = append(b.muts, &kvfspb.Mutation{
+		Key:       key,
+		Tombstone: true,
+	})
+	return nil
+}
+
+func (b *Batch) Commit(ctx context.Context, opts *WriteOptions) error {
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return ErrBatchClosed
+	}
+	if len(b.muts) == 0 {
+		b.closed = true
+		b.mu.Unlock()
+		return nil
+	}
+	muts := b.muts
+	b.muts = nil
+	b.closed = true
+	b.mu.Unlock()
+
+	records := make([]logstream.Record, len(muts))
+	for i, mut := range muts {
+		data, err := proto.Marshal(mut)
+		if err != nil {
+			return err
+		}
+		records[i] = data
+	}
+
+	if _, err := b.client.log.Append(ctx, records); err != nil {
+		return err
+	}
+
+	if opts == nil || opts.Sync {
+		return b.client.Flush(ctx)
+	}
+	return nil
+}
+
+func (b *Batch) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closed = true
+	b.muts = nil
+	return nil
+}
+
+func (c *client) Set(ctx context.Context, key string, r io.Reader, opts *WriteOptions) error {
+	b := c.NewBatch()
+	if err := b.Set(ctx, key, r); err != nil {
+		return err
+	}
+	return b.Commit(ctx, opts)
 }
 
 func (c *client) Delete(ctx context.Context, key string, opts *WriteOptions) error {
-	return c.mutate(ctx, &kvfspb.Mutation{
-		Key:       key,
-		Tombstone: true,
-	}, opts)
+	b := c.NewBatch()
+	if err := b.Delete(key); err != nil {
+		return err
+	}
+	return b.Commit(ctx, opts)
 }

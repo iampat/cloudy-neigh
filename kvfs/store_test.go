@@ -263,6 +263,155 @@ func TestStoreConcurrentSets(t *testing.T) {
 	})
 }
 
+func TestBatchKeyOrdering(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		ks, err := kvfs.Open(ctx, s, "main", nil)
+		require.NoError(t, err)
+		defer ks.Close()
+
+		b := ks.NewBatch()
+		require.NoError(t, b.Set(ctx, "k1", bytes.NewReader([]byte("v1"))))
+		require.NoError(t, b.Set(ctx, "k1", bytes.NewReader([]byte("v2"))))
+		require.NoError(t, b.Set(ctx, "k2", bytes.NewReader([]byte("v-temp"))))
+		require.NoError(t, b.Delete("k2"))
+		require.NoError(t, b.Commit(ctx, kvfs.Sync))
+
+		v1, err := ks.Get(ctx, "k1")
+		require.NoError(t, err)
+		got1, err := io.ReadAll(v1.Data)
+		require.NoError(t, err)
+		v1.Data.Close()
+		assert.Equal(t, []byte("v2"), got1)
+
+		_, err = ks.Get(ctx, "k2")
+		assert.ErrorIs(t, err, objectstore.ErrNotFound)
+	})
+}
+
+func TestBatchSync(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		ks, err := kvfs.Open(ctx, s, "main", nil)
+		require.NoError(t, err)
+		defer ks.Close()
+
+		b := ks.NewBatch()
+		require.NoError(t, b.Set(ctx, "k1", bytes.NewReader([]byte("v1"))))
+		require.NoError(t, b.Set(ctx, "k2", bytes.NewReader([]byte("v2"))))
+		require.NoError(t, b.Commit(ctx, kvfs.Sync))
+
+		v1, err := ks.Get(ctx, "k1")
+		require.NoError(t, err)
+		got1, err := io.ReadAll(v1.Data)
+		require.NoError(t, err)
+		v1.Data.Close()
+		assert.Equal(t, []byte("v1"), got1)
+
+		v2, err := ks.Get(ctx, "k2")
+		require.NoError(t, err)
+		got2, err := io.ReadAll(v2.Data)
+		require.NoError(t, err)
+		v2.Data.Close()
+		assert.Equal(t, []byte("v2"), got2)
+
+		b2 := ks.NewBatch()
+		require.NoError(t, b2.Delete("k1"))
+		require.NoError(t, b2.Set(ctx, "k2", bytes.NewReader([]byte("v2-updated"))))
+		require.NoError(t, b2.Commit(ctx, nil))
+
+		_, err = ks.Get(ctx, "k1")
+		assert.ErrorIs(t, err, objectstore.ErrNotFound)
+
+		v2Up, err := ks.Get(ctx, "k2")
+		require.NoError(t, err)
+		got2Up, err := io.ReadAll(v2Up.Data)
+		require.NoError(t, err)
+		v2Up.Data.Close()
+		assert.Equal(t, []byte("v2-updated"), got2Up)
+	})
+}
+
+func TestBatchAsync(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{WALFlushInterval: 20 * time.Millisecond})
+		require.NoError(t, err)
+		defer ks.Close()
+
+		b := ks.NewBatch()
+		require.NoError(t, b.Set(ctx, "k1", bytes.NewReader([]byte("async1"))))
+		require.NoError(t, b.Set(ctx, "k2", bytes.NewReader([]byte("async2"))))
+		require.NoError(t, b.Commit(ctx, kvfs.NoSync))
+
+		require.Eventually(t, func() bool {
+			v, err := ks.Get(ctx, "k1")
+			if err != nil {
+				return false
+			}
+			got, err := io.ReadAll(v.Data)
+			v.Data.Close()
+			return err == nil && bytes.Equal([]byte("async1"), got)
+		}, 1*time.Second, 10*time.Millisecond)
+
+		v2, err := ks.Get(ctx, "k2")
+		require.NoError(t, err)
+		got2, err := io.ReadAll(v2.Data)
+		require.NoError(t, err)
+		v2.Data.Close()
+		assert.Equal(t, []byte("async2"), got2)
+	})
+}
+
+func TestBatchEmptyCommit(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		ks, err := kvfs.Open(ctx, s, "main", nil)
+		require.NoError(t, err)
+		defer ks.Close()
+
+		b := ks.NewBatch()
+		require.NoError(t, b.Commit(ctx, kvfs.Sync))
+	})
+}
+
+func TestBatchClosed(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		ks, err := kvfs.Open(ctx, s, "main", nil)
+		require.NoError(t, err)
+		defer ks.Close()
+
+		b := ks.NewBatch()
+		require.NoError(t, b.Set(ctx, "k", bytes.NewReader([]byte("v"))))
+		require.NoError(t, b.Commit(ctx, kvfs.Sync))
+
+		assert.ErrorIs(t, b.Set(ctx, "k", bytes.NewReader([]byte("v"))), kvfs.ErrBatchClosed)
+		assert.ErrorIs(t, b.Delete("k"), kvfs.ErrBatchClosed)
+		assert.ErrorIs(t, b.Commit(ctx, kvfs.Sync), kvfs.ErrBatchClosed)
+
+		b2 := ks.NewBatch()
+		require.NoError(t, b2.Close())
+		assert.ErrorIs(t, b2.Set(ctx, "k", bytes.NewReader([]byte("v"))), kvfs.ErrBatchClosed)
+		assert.ErrorIs(t, b2.Delete("k"), kvfs.ErrBatchClosed)
+		assert.ErrorIs(t, b2.Commit(ctx, kvfs.Sync), kvfs.ErrBatchClosed)
+	})
+}
+
+func TestBatchValidationErrors(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		ks, err := kvfs.Open(ctx, s, "main", nil)
+		require.NoError(t, err)
+		defer ks.Close()
+
+		b := ks.NewBatch()
+		assert.ErrorIs(t, b.Set(ctx, "", bytes.NewReader([]byte("v"))), kvfs.ErrInvalidKey)
+		assert.ErrorIs(t, b.Set(ctx, "k", nil), kvfs.ErrNilReader)
+		assert.ErrorIs(t, b.Delete(""), kvfs.ErrInvalidKey)
+	})
+}
+
 func BenchmarkStoreSetSync(b *testing.B) {
 	s, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(b, err)
