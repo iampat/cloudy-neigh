@@ -1,0 +1,138 @@
+package kvfs_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"testing"
+
+	"github.com/iampat/cloudy-neigh/kvfs"
+	"github.com/iampat/cloudy-neigh/objectstore"
+	kvfspb "github.com/iampat/cloudy-neigh/proto/kvfs/v1"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestBranchOperations(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+
+		// 1. Setup root manifest
+		m := &kvfspb.Manifest{
+			LastWalSeq: 1,
+			Entries: map[string]*kvfspb.ManifestEntry{
+				"root.txt": {CasHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", SizeBytes: 100},
+			},
+		}
+		rootHash, err := kvfs.PutManifest(ctx, s, m)
+		require.NoError(t, err)
+
+		// 2. Initialize main branch
+		gen1, err := kvfs.UpdateBranch(ctx, s, "main", rootHash, "")
+		require.NoError(t, err)
+		assert.NotEmpty(t, gen1)
+
+		// 3. Resolve main branch
+		resolvedHash, resolvedGen, err := kvfs.ResolveBranch(ctx, s, "main")
+		require.NoError(t, err)
+		assert.Equal(t, rootHash, resolvedHash)
+		assert.Equal(t, gen1, resolvedGen)
+
+		// 4. Create child branch from main
+		childHash, childGen, err := kvfs.CreateBranch(ctx, s, "feature-x", "main")
+		require.NoError(t, err)
+		assert.Equal(t, rootHash, childHash)
+		assert.NotEmpty(t, childGen)
+
+		// 5. Creating existing branch fails with ErrBranchAlreadyExists
+		_, _, err = kvfs.CreateBranch(ctx, s, "feature-x", "main")
+		assert.ErrorIs(t, err, kvfs.ErrBranchAlreadyExists)
+
+		// 6. Creating branch from non-existent parent fails
+		_, _, err = kvfs.CreateBranch(ctx, s, "new-feat", "non-existent")
+		assert.Error(t, err)
+
+		// 7. Update main branch with matching generation succeeds
+		m2 := &kvfspb.Manifest{LastWalSeq: 2}
+		hash2, err := kvfs.PutManifest(ctx, s, m2)
+		require.NoError(t, err)
+
+		gen2, err := kvfs.UpdateBranch(ctx, s, "main", hash2, gen1)
+		require.NoError(t, err)
+		assert.NotEqual(t, gen1, gen2)
+
+		// 8. Update main branch with stale generation fails
+		_, err = kvfs.UpdateBranch(ctx, s, "main", hash2, gen1)
+		assert.True(t, errors.Is(err, objectstore.ErrPreconditionFailed))
+	})
+}
+
+func TestResolveBranchNotFound(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		_, _, err := kvfs.ResolveBranch(ctx, s, "non-existent")
+		assert.True(t, errors.Is(err, objectstore.ErrNotFound))
+	})
+}
+
+func TestBranchNameValidation(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		invalidNames := []string{"", "/main", "main/", "a//b"}
+
+		for _, name := range invalidNames {
+			t.Run(name, func(t *testing.T) {
+				_, _, err := kvfs.ResolveBranch(ctx, s, name)
+				assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
+
+				_, err = kvfs.UpdateBranch(ctx, s, name, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "")
+				assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
+
+				_, _, err = kvfs.CreateBranch(ctx, s, name, "main")
+				assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
+			})
+		}
+	})
+}
+
+func TestConcurrentBranchUpdates(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		rootHash := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+		initGen, err := kvfs.UpdateBranch(ctx, s, "race-branch", rootHash, "")
+		require.NoError(t, err)
+
+		const writers = 16
+		var (
+			wg      sync.WaitGroup
+			winners atomic.Int32
+			errCh   = make(chan error, writers)
+		)
+
+		for i := 0; i < writers; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				newHash := fmt.Sprintf("%064d", idx+1)
+				_, err := kvfs.UpdateBranch(ctx, s, "race-branch", newHash, initGen)
+				if err == nil {
+					winners.Add(1)
+					return
+				}
+				if !errors.Is(err, objectstore.ErrPreconditionFailed) {
+					errCh <- fmt.Errorf("unexpected error for writer %d: %w", idx, err)
+				}
+			}(i)
+		}
+
+		wg.Wait()
+		close(errCh)
+		for err := range errCh {
+			t.Error(err)
+		}
+
+		assert.Equal(t, int32(1), winners.Load(), "exactly one writer should win the generation CAS")
+	})
+}
