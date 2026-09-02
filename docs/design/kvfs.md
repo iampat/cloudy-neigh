@@ -167,42 +167,31 @@ When committing an asynchronous batch:
 4. LogStream writes all records into one `.recordio` WAL segment in one round-trip.
 5. A background committer periodically reads new WAL segments and applies them to new manifest snapshots.
 
-## Read path and multi-layer caching
+## Read path and manifest caching
 
-Reads check local caches in sequence before making cloud requests:
+Reads check cached branch generation before fetching manifests:
 
 ```text
 Read Key
    │
-   ├─► 1. L1 Memory Cache (Hit ──► Return value)
-   │
-   ├─► 2. L2 Local Disk Cache (Hit ──► Populate L1 ──► Return value)
-   │
-   └─► 3. Singleflight Coalescer
-          │
-          ├── Resolve branch pointer from refs/heads/<branch>
-          ├── Fetch manifest from manifests/<hash>
-          ├── Fetch blob from cas/<hash>
-          └── Populate L2 Disk and L1 Memory caches
+   ├── 1. Resolve branch pointer from refs/heads/<branch>
+   ├── 2. Cached Manifest check (Hit on same generation ──► Return cached manifest)
+   ├── 3. Fetch manifest from manifests/<hash> if changed
+   └── 4. Fetch blob from cas/<hash>
 ```
-
-Concurrent cache misses for the same key or manifest join a single in-flight
-fetch via `singleflight.Group`. This prevents thundering herds on cold starts.
 
 ## Cache invalidation
 
 Manifests and data blobs are content-addressed and immutable. They never become
-stale and can remain cached indefinitely.
+stale and remain cached safely.
 
-Cache freshness follows three rules:
+Cache freshness follows two rules:
 
 1. **Local write-through:** When a local process commits a write, it immediately
-   updates its in-memory and local disk cache with the new manifest.
-2. **Lease TTL:** A cached manifest is considered fresh for a configurable TTL
-   (such as 500 ms). Reads during this window require zero network requests.
-3. **Header validation on expiry:** When the lease expires, the reader executes
-   `Store.Stat("refs/heads/<branch>")`. If the generation matches, the lease
-   renews without downloading any data. If the generation changed, the reader
+   updates its in-memory cache with the new manifest.
+2. **Generation validation:** Reads check the branch ref generation. If the
+   generation matches the cached manifest, reads return the cached manifest
+   without re-fetching or re-parsing. If the generation changed, the reader
    fetches the new manifest.
 
 ## Branching

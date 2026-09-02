@@ -38,5 +38,5 @@ Todo tracker for simplifying cloudy-neigh, eliminating dead code, removing prema
 - [x] Delete `kvfs/export_test.go` and test primitives via internal package tests or public `Store` API.
 - [x] Update build files and test suites.
 - [x] Run `bazel test --config=race //...` and formatting tools.
-- [ ] Open PR 3 and run `/petr` code review.
-- [ ] Address all review comments.
+- [x] Open PR 3 and run `/petr` code review.
+- [x] Address all review comments.
