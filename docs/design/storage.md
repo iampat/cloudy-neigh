@@ -39,7 +39,7 @@ The system consists of two distinct layers plus a consumer ecosystem:
 ├── manifests/                   <-- Layer 2: Content-Addressed Manifest Snapshots (2-Byte Sharded)
 │   └── 1a/2b/1a2beff890...      --> Manifest { last_wal_seq: 10, entries: { "docs/a.txt": "a3f1..." } }
 │
-├── objects/                     <-- Layer 2: Content-Addressed Raw Payloads (2-Byte Sharded)
+├── cas/                         <-- Layer 2: Content-Addressed Raw Payloads (2-Byte Sharded)
 │   └── a3/f1/a3f1c8901b...      --> [raw binary data]
 │
 └── wal/                         <-- Layer 1: Direct Sequenced Logs

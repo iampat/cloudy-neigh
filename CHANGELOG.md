@@ -2,6 +2,11 @@
 
 ### Added
 
+- `kvfs`: Layer 2 Key-Value Store foundation.
+  - `proto/kvfs/v1/kvfs.proto`: Protobuf schemas for `Manifest`, `ManifestEntry`,
+    and `Mutation`.
+  - `kvfs/cas.go`: Content-Addressed Storage (CAS) blob engine with SHA-256
+    hashing, automatic deduplication, and 2-byte prefix sharding (`cas/<h0>/<h1>/<hash>`).
 - `recordio`: an append-only record framing engine. A frame holds a 12-byte
   header with the payload length and a length CRC, then the payload, then a
   4-byte payload CRC. Both CRCs use Castagnoli and a rotation mask.
@@ -21,7 +26,6 @@
 
 ### Fixed
 
-- `recordio.Reader`: a non-EOF read error inside a payload or a footer now
-  poisons the reader. Before, the reader consumed the header and stayed
-  usable, so the next `ReadRecord` read payload bytes as a header and
-  reported `ErrHeaderCorrupted` for a transient input or output fault.
+- `recordio.Reader`: a non-EOF read error inside a payload or footer now
+  poisons the reader. Previously, the reader stayed usable and misread payloads
+  as headers.

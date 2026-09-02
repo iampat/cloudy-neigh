@@ -55,7 +55,7 @@ under `refs/heads/<branch>`.
 A **manifest** is an immutable, content-addressed snapshot mapping keys to
 payload content hashes.
 
-A **blob** is an immutable raw payload stored under `objects/` and named by its
+A **blob** is an immutable raw payload stored under `cas/` and named by its
 SHA-256 hash.
 
 A **batch** is a staged set of mutations applied atomically to a branch.
@@ -95,7 +95,7 @@ branch pointer:
 ├── manifests/                   <-- Immutable Content-Addressed Manifests
 │   └── 1a/2b/1a2beff890...      --> Protobuf Manifest binary
 │
-└── objects/                     <-- Immutable Content-Addressed Payloads
+└── cas/                         <-- Immutable Content-Addressed Payloads
     └── a3/f1/a3f1c8901b...      --> Raw binary payload (Docs, Media, Vectors)
 ```
 
@@ -111,7 +111,7 @@ package kvfs.v1;
 option go_package = "github.com/iampat/cloudy-neigh/proto/kvfs/v1;kvfspb";
 
 message ManifestEntry {
-  string blob_hash = 1;
+  string cas_hash = 1;
   uint64 size_bytes = 2;
 }
 
@@ -120,9 +120,9 @@ message Manifest {
   map<string, ManifestEntry> entries = 2;
 }
 
-message KVMutation {
+message Mutation {
   string key = 1;
-  string blob_hash = 2;
+  string cas_hash = 2;
   uint64 size_bytes = 3;
   bool tombstone = 4;
 }
@@ -138,8 +138,8 @@ Streaming.
 Direct mode commits mutations atomically without an intermediary write-ahead log:
 
 ```text
-Client -> Batch.Set(k1, v1) -> Upload objects/<hash1> (parallel)
-       -> Batch.Set(k2, v2) -> Upload objects/<hash2> (parallel)
+Client -> Batch.Set(k1, v1) -> Upload cas/<hash1> (parallel)
+       -> Batch.Set(k2, v2) -> Upload cas/<hash2> (parallel)
        -> Batch.Commit()    -> Download parent manifest
                             -> Apply staged changes in memory
                             -> Upload new manifest manifests/<new_hash>
@@ -147,7 +147,7 @@ Client -> Batch.Set(k1, v1) -> Upload objects/<hash1> (parallel)
 ```
 
 1. The client stages mutations into a `Batch`.
-2. Payloads are uploaded directly to `objects/<h0>/<h1>/<hash>` concurrently with
+2. Payloads are uploaded directly to `cas/<h0>/<h1>/<hash>` concurrently with
    precondition `Absent: true`.
 3. On `Commit`, the writer downloads the latest manifest for the branch.
 4. The writer constructs a new `Manifest` protobuf in memory.
@@ -161,8 +161,8 @@ For high-concurrency ingestion where multiple writers exceed 3 writes per second
 mutations append to LogStream at `wal/<branch>/`.
 
 When committing an asynchronous batch:
-1. The batch uploads all staged payloads to `objects/` concurrently.
-2. The batch serializes each staged mutation into a `kvfs.v1.KVMutation` protobuf record.
+1. The batch uploads all staged payloads to `cas/` concurrently.
+2. The batch serializes each staged mutation into a `kvfs.v1.Mutation` protobuf record.
 3. The batch passes all serialized records to `LogStream.Append(ctx, records...)` in a single call.
 4. LogStream writes all records into one `.recordio` WAL segment in one round-trip.
 5. A background committer periodically reads new WAL segments and applies them to new manifest snapshots.
@@ -182,7 +182,7 @@ Read Key
           │
           ├── Resolve branch pointer from refs/heads/<branch>
           ├── Fetch manifest from manifests/<hash>
-          ├── Fetch blob from objects/<hash>
+          ├── Fetch blob from cas/<hash>
           └── Populate L2 Disk and L1 Memory caches
 ```
 
@@ -279,7 +279,7 @@ for blob fetches. But inlining increases manifest size:
 - Inlining 4 KB values across 100,000 keys expands the manifest to 400 MB.
 
 Downloading 400 MB on cold starts adds seconds of latency and burns memory.
-Version 1 stores all payloads in `objects/`.
+Version 1 stores all payloads in `cas/`.
 
 Inlining will be revisited in future versions when manifest range partitioning
 is introduced.
