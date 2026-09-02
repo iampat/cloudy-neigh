@@ -219,55 +219,45 @@ Branch creation is an atomic, zero-copy metadata operation:
 The API mirrors standard key-value conventions:
 
 ```go
-package kvstore
+package kvfs
 
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/iampat/cloudy-neigh/objectstore"
 )
+
+type WriteOptions struct {
+	Sync bool
+}
+
+var (
+	Sync   = &WriteOptions{Sync: true}
+	NoSync = &WriteOptions{Sync: false}
+)
+
+type Options struct {
+	WALFlushInterval time.Duration
+}
 
 type Value struct {
 	Data io.ReadCloser
 	Size int64
 }
 
-type Batch interface {
-	// Set stages a key-value write in the batch.
-	Set(key string, r io.Reader, size int64) error
-
-	// Delete stages a key deletion in the batch.
-	Delete(key string)
-
-	// Commit atomically applies all staged mutations to the branch.
-	Commit(ctx context.Context) error
-
-	// Close discards uncommitted mutations and releases resources.
-	Close() error
-}
-
 type Store interface {
-	// Get retrieves a key's payload from a branch snapshot.
-	Get(ctx context.Context, branch, key string) (Value, error)
-
-	// Set writes a single key-value pair synchronously.
-	Set(ctx context.Context, branch, key string, r io.Reader, size int64) error
-
-	// Delete removes a single key synchronously.
-	Delete(ctx context.Context, branch, key string) error
-
-	// NewBatch allocates an atomic mutation batch for a branch.
-	NewBatch(branch string) Batch
-
-	// Branch creates a new branch pointer from a parent in O(1) time.
-	Branch(ctx context.Context, newBranch, parentBranch string) error
-
-	// Close releases cache and background resources.
+	Branch() string
+	Get(ctx context.Context, key string) (Value, error)
+	Set(ctx context.Context, key string, r io.Reader, opts *WriteOptions) error
+	Delete(ctx context.Context, key string, opts *WriteOptions) error
+	Flush(ctx context.Context) error
+	Fork(ctx context.Context, newBranch string) (Store, error)
 	Close() error
 }
 
-func Open(store objectstore.Store, opts ...Option) (Store, error)
+func Open(ctx context.Context, store objectstore.Store, branch string, opts *Options) (Store, error)
 ```
 
 ## Appendix A: Inline value threshold analysis

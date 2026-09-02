@@ -19,9 +19,8 @@ func TestBranchOperations(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 
-		// 1. Setup root manifest
 		m := &kvfspb.Manifest{
-			LastWalSeq: 1,
+			LastWalSeq: 0,
 			Entries: map[string]*kvfspb.ManifestEntry{
 				"root.txt": {CasHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", SizeBytes: 100},
 			},
@@ -29,32 +28,26 @@ func TestBranchOperations(t *testing.T) {
 		rootHash, err := kvfs.PutManifest(ctx, s, m)
 		require.NoError(t, err)
 
-		// 2. Initialize main branch
 		gen1, err := kvfs.UpdateBranch(ctx, s, "main", rootHash, "")
 		require.NoError(t, err)
 		assert.NotEmpty(t, gen1)
 
-		// 3. Resolve main branch
 		resolvedHash, resolvedGen, err := kvfs.ResolveBranch(ctx, s, "main")
 		require.NoError(t, err)
 		assert.Equal(t, rootHash, resolvedHash)
 		assert.Equal(t, gen1, resolvedGen)
 
-		// 4. Create child branch from main
 		childHash, childGen, err := kvfs.CreateBranch(ctx, s, "feature-x", "main")
 		require.NoError(t, err)
 		assert.Equal(t, rootHash, childHash)
 		assert.NotEmpty(t, childGen)
 
-		// 5. Creating existing branch fails with ErrBranchAlreadyExists
 		_, _, err = kvfs.CreateBranch(ctx, s, "feature-x", "main")
 		assert.ErrorIs(t, err, kvfs.ErrBranchAlreadyExists)
 
-		// 6. Creating branch from non-existent parent fails
 		_, _, err = kvfs.CreateBranch(ctx, s, "new-feat", "non-existent")
 		assert.Error(t, err)
 
-		// 7. Update main branch with matching generation succeeds
 		m2 := &kvfspb.Manifest{LastWalSeq: 2}
 		hash2, err := kvfs.PutManifest(ctx, s, m2)
 		require.NoError(t, err)
@@ -63,7 +56,6 @@ func TestBranchOperations(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEqual(t, gen1, gen2)
 
-		// 8. Update main branch with stale generation fails
 		_, err = kvfs.UpdateBranch(ctx, s, "main", hash2, gen1)
 		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
 	})
