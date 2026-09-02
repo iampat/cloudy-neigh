@@ -15,6 +15,7 @@ go_library(
         "//objectstore",
         "//proto/kvfs/v1:kvfs",
         "@org_golang_google_protobuf//proto",
+        "@org_golang_x_sync//errgroup",
     ],
 )
 

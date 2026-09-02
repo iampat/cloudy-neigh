@@ -12,6 +12,7 @@ import (
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	kvfspb "github.com/iampat/cloudy-neigh/proto/kvfs/v1"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -136,12 +137,16 @@ func (c *client) flushActiveBranches() {
 	}
 	c.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
+	var g errgroup.Group
 	for _, branch := range branches {
-		_ = c.flushBranch(ctx, branch)
+		g.Go(func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = c.flushBranch(ctx, branch)
+			return nil
+		})
 	}
+	_ = g.Wait()
 }
 
 func (c *client) flushBranch(ctx context.Context, branch string) error {
@@ -243,9 +248,6 @@ func (c *client) Close() error {
 
 	c.wg.Wait()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
 	c.mu.Lock()
 	branches := make([]string, 0, len(c.activeBranches))
 	for b := range c.activeBranches {
@@ -253,9 +255,16 @@ func (c *client) Close() error {
 	}
 	c.mu.Unlock()
 
+	var g errgroup.Group
 	for _, branch := range branches {
-		_ = c.flushBranch(ctx, branch)
+		g.Go(func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = c.flushBranch(ctx, branch)
+			return nil
+		})
 	}
+	_ = g.Wait()
 
 	return c.store.Close()
 }
