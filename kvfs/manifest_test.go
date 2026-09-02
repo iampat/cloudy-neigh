@@ -2,7 +2,6 @@ package kvfs_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -88,7 +87,7 @@ func TestGetManifestNotFound(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		_, err := kvfs.GetManifest(ctx, s, "0000000000000000000000000000000000000000000000000000000000000000")
-		assert.True(t, errors.Is(err, objectstore.ErrNotFound))
+		assert.ErrorIs(t, err, objectstore.ErrNotFound)
 	})
 }
 
@@ -157,4 +156,30 @@ func BenchmarkGetManifest(b *testing.B) {
 			b.Fatalf("expected 1000 entries, got %d", len(got.Entries))
 		}
 	}
+}
+
+func FuzzManifestRoundTrip(f *testing.F) {
+	f.Add(uint64(0), "k1", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", uint64(100))
+	f.Add(uint64(10), "docs/nested/path.txt", "0000000000000000000000000000000000000000000000000000000000000000", uint64(0))
+
+	f.Fuzz(func(t *testing.T, walSeq uint64, key, casHash string, size uint64) {
+		s, err := objectstore.Open(context.Background(), "mem://")
+		require.NoError(t, err)
+		defer s.Close()
+
+		ctx := context.Background()
+		m := &kvfspb.Manifest{
+			LastWalSeq: walSeq,
+			Entries: map[string]*kvfspb.ManifestEntry{
+				key: {CasHash: casHash, SizeBytes: size},
+			},
+		}
+
+		hash, err := kvfs.PutManifest(ctx, s, m)
+		require.NoError(t, err)
+
+		got, err := kvfs.GetManifest(ctx, s, hash)
+		require.NoError(t, err)
+		assert.True(t, proto.Equal(m, got))
+	})
 }

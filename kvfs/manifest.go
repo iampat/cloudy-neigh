@@ -11,6 +11,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const manifestPrefix = "manifests/"
+
 func PutManifest(ctx context.Context, store objectstore.Store, m *kvfspb.Manifest) (string, error) {
 	data, err := proto.Marshal(m)
 	if err != nil {

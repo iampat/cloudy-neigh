@@ -15,9 +15,8 @@ import (
 var ErrInvalidHash = errors.New("kvfs: invalid CAS hash")
 
 const (
-	casPrefix      = "cas/"
-	manifestPrefix = "manifests/"
-	hashHexLen     = sha256.Size * 2
+	casPrefix  = "cas/"
+	hashHexLen = sha256.Size * 2
 )
 
 func validateHash(hash string) error {

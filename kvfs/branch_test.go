@@ -65,7 +65,7 @@ func TestBranchOperations(t *testing.T) {
 
 		// 8. Update main branch with stale generation fails
 		_, err = kvfs.UpdateBranch(ctx, s, "main", hash2, gen1)
-		assert.True(t, errors.Is(err, objectstore.ErrPreconditionFailed))
+		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
 	})
 }
 
@@ -73,14 +73,25 @@ func TestResolveBranchNotFound(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		_, _, err := kvfs.ResolveBranch(ctx, s, "non-existent")
-		assert.True(t, errors.Is(err, objectstore.ErrNotFound))
+		assert.ErrorIs(t, err, objectstore.ErrNotFound)
 	})
 }
 
 func TestBranchNameValidation(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		invalidNames := []string{"", "/main", "main/", "a//b"}
+		invalidNames := []string{
+			"",
+			"/main",
+			"main/",
+			"a//b",
+			"123branch",
+			"-branch",
+			"_branch",
+			"branch with spaces",
+			"branch..traversal",
+			"branch@tag",
+		}
 
 		for _, name := range invalidNames {
 			t.Run(name, func(t *testing.T) {
@@ -134,5 +145,30 @@ func TestConcurrentBranchUpdates(t *testing.T) {
 		}
 
 		assert.Equal(t, int32(1), winners.Load(), "exactly one writer should win the generation CAS")
+	})
+}
+
+func FuzzBranchValidation(f *testing.F) {
+	f.Add("main")
+	f.Add("feature-1")
+	f.Add("feature/sub-branch")
+	f.Add("123branch")
+	f.Add("")
+	f.Add("/")
+	f.Add("a//b")
+	f.Add("a/b/")
+	f.Add("..")
+
+	f.Fuzz(func(t *testing.T, branch string) {
+		s, err := objectstore.Open(context.Background(), "mem://")
+		require.NoError(t, err)
+		defer s.Close()
+
+		ctx := context.Background()
+		_, _, err = kvfs.ResolveBranch(ctx, s, branch)
+		// Must not panic. If valid, error is ErrNotFound; if invalid, ErrInvalidBranchName.
+		if err != nil {
+			assert.True(t, errors.Is(err, objectstore.ErrNotFound) || errors.Is(err, kvfs.ErrInvalidBranchName))
+		}
 	})
 }

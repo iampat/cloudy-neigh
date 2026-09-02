@@ -21,8 +21,25 @@ func validateBranch(branch string) error {
 	if branch == "" {
 		return fmt.Errorf("%w: empty branch name", ErrInvalidBranchName)
 	}
-	if strings.HasPrefix(branch, "/") || strings.HasSuffix(branch, "/") || strings.Contains(branch, "//") {
-		return fmt.Errorf("%w: %q", ErrInvalidBranchName, branch)
+
+	first := branch[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z')) {
+		return fmt.Errorf("%w: must start with a letter: %q", ErrInvalidBranchName, branch)
+	}
+
+	if strings.HasSuffix(branch, "/") || strings.Contains(branch, "//") {
+		return fmt.Errorf("%w: invalid slash placement: %q", ErrInvalidBranchName, branch)
+	}
+
+	for i := 0; i < len(branch); i++ {
+		c := branch[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == '-' || c == '_' || c == '/':
+		default:
+			return fmt.Errorf("%w: invalid character %q in %q", ErrInvalidBranchName, c, branch)
+		}
 	}
 	return nil
 }
