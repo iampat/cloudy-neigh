@@ -157,7 +157,6 @@ func FuzzBranchValidation(f *testing.F) {
 
 		ctx := context.Background()
 		_, _, err = resolveBranch(ctx, s, branch)
-		// Must not panic. If valid, error is ErrNotFound; if invalid, ErrInvalidBranchName.
 		if err != nil {
 			assert.True(t, errors.Is(err, objectstore.ErrNotFound) || errors.Is(err, ErrInvalidBranchName))
 		}

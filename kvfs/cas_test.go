@@ -103,7 +103,7 @@ func TestGetBlobNotFound(t *testing.T) {
 	})
 }
 
-func TestGetBlob_InvalidHash(t *testing.T) {
+func TestGetBlobInvalidHash(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		badHashes := []string{
@@ -179,7 +179,6 @@ func FuzzBlobRoundTrip(f *testing.F) {
 		h := sha256.Sum256(data)
 		expectedHash := hex.EncodeToString(h[:])
 
-		// 1. In-memory backend
 		memStore, err := objectstore.Open(ctx, "mem://")
 		require.NoError(t, err)
 		defer memStore.Close()
@@ -197,7 +196,6 @@ func FuzzBlobRoundTrip(f *testing.F) {
 		require.NoError(t, err)
 		assert.Equal(t, data, memOut)
 
-		// 2. Disk backend
 		diskStore, err := objectstore.Open(ctx, "file://"+t.TempDir()+"/bucket?create_dir=true")
 		require.NoError(t, err)
 		defer diskStore.Close()
