@@ -6,21 +6,29 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCASKey(t *testing.T) {
+func TestShardedKey(t *testing.T) {
 	tests := []struct {
-		name string
-		hash string
-		want string
+		name   string
+		prefix string
+		hash   string
+		want   string
 	}{
 		{
-			"valid_sha256",
-			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-			"cas/e3/b0/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			name:   "cas_prefix",
+			prefix: casPrefix,
+			hash:   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			want:   "cas/e3/b0/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		},
+		{
+			name:   "manifest_prefix",
+			prefix: manifestPrefix,
+			hash:   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			want:   "manifests/e3/b0/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, casKey(tt.hash))
+			assert.Equal(t, tt.want, shardedKey(tt.prefix, tt.hash))
 		})
 	}
 }
