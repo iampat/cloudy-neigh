@@ -24,14 +24,6 @@ type Record []byte
 
 type Option func(*Log)
 
-func WithPrefix(prefix string) Option {
-	return func(l *Log) {
-		if prefix != "" {
-			l.prefix = strings.Trim(prefix, "/")
-		}
-	}
-}
-
 func WithMaxRecordSize(max int) Option {
 	return func(l *Log) {
 		if max > 0 {
@@ -44,7 +36,6 @@ const headListLimit = 1000
 
 type Log struct {
 	store         objectstore.Store
-	stream        string
 	prefix        string
 	maxRecordSize int
 
@@ -54,14 +45,16 @@ type Log struct {
 	rttEMA    time.Duration
 }
 
-func New(store objectstore.Store, stream string, opts ...Option) (*Log, error) {
-	if !validStreamName(stream) {
-		return nil, fmt.Errorf("logstream: invalid stream name %q", stream)
+func New(store objectstore.Store, prefix string, opts ...Option) (*Log, error) {
+	if store == nil {
+		return nil, errors.New("logstream: nil store")
+	}
+	if !validPrefix(prefix) {
+		return nil, fmt.Errorf("logstream: invalid prefix %q", prefix)
 	}
 	l := &Log{
 		store:         store,
-		stream:        stream,
-		prefix:        "wal",
+		prefix:        prefix,
 		maxRecordSize: recordio.DefaultMaxRecordSize,
 		ch:            make(chan struct{}, 1),
 	}
@@ -114,13 +107,13 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 	start := time.Now()
 
 	for {
-		key := segmentKey(l.prefix, l.stream, seq)
+		key := segmentKey(l.prefix, seq)
 		putStart := time.Now()
 		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{Absent: true})
 		if err == nil {
 			l.lastKnown = seq
 			slog.Debug("logstream append",
-				"stream", l.stream,
+				"prefix", l.prefix,
 				"seq", seq,
 				"first_try", first,
 				"collisions", collisions,
@@ -175,9 +168,9 @@ func (l *Log) paceWinner(ctx context.Context, collisions int, putDuration time.D
 func (l *Log) head(ctx context.Context, lo uint64) (uint64, int, error) {
 	var start string
 	if lo > 0 {
-		start = segmentKey(l.prefix, l.stream, lo)
+		start = segmentKey(l.prefix, lo)
 	}
-	objs, err := l.store.List(ctx, l.streamPrefix(), start, headListLimit)
+	objs, err := l.store.List(ctx, l.listPrefix(), start, headListLimit)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -194,19 +187,19 @@ func (l *Log) head(ctx context.Context, lo uint64) (uint64, int, error) {
 	return jump(ctx, last, l.probe)
 }
 
-func (l *Log) streamPrefix() string {
-	return fmt.Sprintf("%s/%s/", l.prefix, l.stream)
+func (l *Log) listPrefix() string {
+	return l.prefix + "/"
 }
 
 func (l *Log) probe(ctx context.Context, seq uint64) (bool, error) {
-	return l.store.Exists(ctx, segmentKey(l.prefix, l.stream, seq))
+	return l.store.Exists(ctx, segmentKey(l.prefix, seq))
 }
 
 func (l *Log) Read(ctx context.Context, seq uint64) ([]Record, error) {
 	if seq == 0 {
 		return nil, errors.New("logstream: sequence number must be greater than zero")
 	}
-	key := segmentKey(l.prefix, l.stream, seq)
+	key := segmentKey(l.prefix, seq)
 	rc, _, err := l.store.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
@@ -255,36 +248,30 @@ func jump(ctx context.Context, lo uint64, probe func(context.Context, uint64) (b
 		return lo, 1, nil
 	}
 
-	probes := 1
+	step := uint64(1)
 	low := lo + 1
-	d := uint64(2)
-	var high uint64
+	high := lo + 1
+	probes := 1
 
 	for {
-		var target uint64
-		if d > math.MaxUint64-lo {
-			target = math.MaxUint64
+		if step > (math.MaxUint64-high)/2 {
+			high = math.MaxUint64
 		} else {
-			target = lo + d
+			high += step * 2
+			step *= 2
 		}
 
-		ex, err := probe(ctx, target)
 		probes++
+		ok, err := probe(ctx, high)
 		if err != nil {
 			return 0, probes, err
 		}
-		if !ex {
-			high = target
+		if !ok {
 			break
 		}
-		low = target
-		if target == math.MaxUint64 {
-			return target, probes, nil
-		}
-		if d > math.MaxUint64/2 {
-			d = math.MaxUint64
-		} else {
-			d *= 2
+		low = high
+		if high == math.MaxUint64 {
+			return high, probes, nil
 		}
 	}
 
@@ -304,8 +291,8 @@ func jump(ctx context.Context, lo uint64, probe func(context.Context, uint64) (b
 	return low, probes, nil
 }
 
-func segmentKey(prefix, stream string, seq uint64) string {
-	return fmt.Sprintf("%s/%s/%020d.recordio", prefix, stream, seq)
+func segmentKey(prefix string, seq uint64) string {
+	return fmt.Sprintf("%s/%020d.recordio", prefix, seq)
 }
 
 func parseSeq(key string) (uint64, error) {
@@ -327,13 +314,13 @@ func parseSeq(key string) (uint64, error) {
 	return seq, nil
 }
 
-func validStreamName(name string) bool {
-	if len(name) == 0 {
+func validPrefix(prefix string) bool {
+	if len(prefix) == 0 || prefix[0] == '/' || prefix[len(prefix)-1] == '/' || strings.Contains(prefix, "//") {
 		return false
 	}
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
+	for i := 0; i < len(prefix); i++ {
+		c := prefix[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '/' {
 			continue
 		}
 		return false

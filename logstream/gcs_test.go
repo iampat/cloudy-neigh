@@ -21,21 +21,21 @@ func TestGCS(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { s.Close() })
 
-	stream := t.Name()
-	prefix := "wal/" + stream + "/"
-	objs, err := s.List(ctx, prefix, "", 0)
+	prefix := "wal/" + t.Name()
+	listPrefix := prefix + "/"
+	objs, err := s.List(ctx, listPrefix, "", 0)
 	require.NoError(t, err)
 	for _, o := range objs {
 		require.NoError(t, s.Delete(ctx, o.Key))
 	}
 	t.Cleanup(func() {
-		objs, _ := s.List(ctx, prefix, "", 0)
+		objs, _ := s.List(ctx, listPrefix, "", 0)
 		for _, o := range objs {
 			_ = s.Delete(ctx, o.Key)
 		}
 	})
 
-	log, err := logstream.New(s, stream)
+	log, err := logstream.New(s, prefix)
 	require.NoError(t, err)
 	seq, err := log.Append(ctx, []logstream.Record{[]byte("gcs-test-record")})
 	require.NoError(t, err)

@@ -33,37 +33,39 @@ func forEachBackend(t *testing.T, fn func(t *testing.T, s objectstore.Store)) {
 	})
 }
 
-func newLog(t *testing.T, s objectstore.Store, stream string, opts ...logstream.Option) *logstream.Log {
+func newLog(t *testing.T, s objectstore.Store, prefix string, opts ...logstream.Option) *logstream.Log {
 	t.Helper()
-	l, err := logstream.New(s, stream, opts...)
+	l, err := logstream.New(s, prefix, opts...)
 	require.NoError(t, err)
 	return l
 }
 
-func TestStreamValidation(t *testing.T) {
+func TestPrefixValidation(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		tests := []struct {
 			name    string
-			stream  string
+			prefix  string
 			wantErr bool
 		}{
-			{name: "valid simple", stream: "main", wantErr: false},
-			{name: "valid hyphen underscore", stream: "orders-topic_1", wantErr: false},
-			{name: "valid single char", stream: "a", wantErr: false},
-			{name: "valid digits", stream: "0123", wantErr: false},
-			{name: "empty", stream: "", wantErr: true},
-			{name: "slash", stream: "a/b", wantErr: true},
-			{name: "leading slash", stream: "/main", wantErr: true},
-			{name: "trailing slash", stream: "main/", wantErr: true},
-			{name: "dot", stream: ".", wantErr: true},
-			{name: "dot dot", stream: "..", wantErr: true},
-			{name: "space", stream: "a b", wantErr: true},
-			{name: "special char", stream: "a@b", wantErr: true},
+			{name: "valid simple", prefix: "main", wantErr: false},
+			{name: "valid nested slash", prefix: "wal/main", wantErr: false},
+			{name: "valid multiple slashes", prefix: "wal/feature/search", wantErr: false},
+			{name: "valid hyphen underscore", prefix: "orders-topic_1", wantErr: false},
+			{name: "valid single char", prefix: "a", wantErr: false},
+			{name: "valid digits", prefix: "0123", wantErr: false},
+			{name: "empty", prefix: "", wantErr: true},
+			{name: "double slash", prefix: "wal//main", wantErr: true},
+			{name: "leading slash", prefix: "/wal/main", wantErr: true},
+			{name: "trailing slash", prefix: "wal/main/", wantErr: true},
+			{name: "dot", prefix: ".", wantErr: true},
+			{name: "dot dot", prefix: "..", wantErr: true},
+			{name: "space", prefix: "a b", wantErr: true},
+			{name: "special char", prefix: "a@b", wantErr: true},
 		}
 
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
-				log, err := logstream.New(s, tc.stream)
+				log, err := logstream.New(s, tc.prefix)
 				if tc.wantErr {
 					assert.Error(t, err)
 					return
@@ -79,8 +81,8 @@ func TestStreamValidation(t *testing.T) {
 func TestAppendAndRead(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		stream := "test-stream"
-		log := newLog(t, s, stream)
+		prefix := "wal/test-stream"
+		log := newLog(t, s, prefix)
 
 		tail, err := log.Tail(ctx)
 		assert.NoError(t, err)
@@ -119,8 +121,8 @@ func TestAppendAndRead(t *testing.T) {
 func TestAppendValidation(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		stream := "validation-stream"
-		log := newLog(t, s, stream, logstream.WithMaxRecordSize(10))
+		prefix := "wal/validation-stream"
+		log := newLog(t, s, prefix, logstream.WithMaxRecordSize(10))
 
 		_, err := log.Append(ctx, nil)
 		assert.Error(t, err)
@@ -141,8 +143,8 @@ func TestAppendValidation(t *testing.T) {
 func TestReadSharesBackingArray(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		stream := "backing-stream"
-		log := newLog(t, s, stream)
+		prefix := "wal/backing-stream"
+		log := newLog(t, s, prefix)
 
 		records := []logstream.Record{
 			[]byte("first record payload"),
@@ -169,8 +171,8 @@ func TestReadSharesBackingArray(t *testing.T) {
 func TestTailJumpColdStart(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		stream := "cold-jump"
-		log := newLog(t, s, stream)
+		prefix := "wal/cold-jump"
+		log := newLog(t, s, prefix)
 
 		total := 1005
 		for i := 1; i <= total; i++ {
@@ -179,7 +181,7 @@ func TestTailJumpColdStart(t *testing.T) {
 			assert.Equal(t, uint64(i), seq)
 		}
 
-		coldLog := newLog(t, s, stream)
+		coldLog := newLog(t, s, prefix)
 		tail, err := coldLog.Tail(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(total), tail)
@@ -189,10 +191,10 @@ func TestTailJumpColdStart(t *testing.T) {
 func TestAppendDriftRecovery(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		stream := "drift-stream"
+		prefix := "wal/drift-stream"
 
-		writerA := newLog(t, s, stream)
-		writerB := newLog(t, s, stream)
+		writerA := newLog(t, s, prefix)
+		writerB := newLog(t, s, prefix)
 
 		seqA1, err := writerA.Append(ctx, []logstream.Record{[]byte("A1")})
 		require.NoError(t, err)
@@ -214,13 +216,13 @@ func TestConcurrentAppends(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		tests := []struct {
 			name      string
-			stream    string
+			prefix    string
 			writers   int
 			perWriter int
 			sharedLog bool
 		}{
-			{name: "single log", stream: "concurrent-single", writers: 8, perWriter: 5, sharedLog: true},
-			{name: "multi log", stream: "concurrent-multi", writers: 4, perWriter: 4, sharedLog: false},
+			{name: "single log", prefix: "wal/concurrent-single", writers: 8, perWriter: 5, sharedLog: true},
+			{name: "multi log", prefix: "wal/concurrent-multi", writers: 4, perWriter: 4, sharedLog: false},
 		}
 
 		for _, tc := range tests {
@@ -230,7 +232,7 @@ func TestConcurrentAppends(t *testing.T) {
 
 				var shared *logstream.Log
 				if tc.sharedLog {
-					shared = newLog(t, s, tc.stream)
+					shared = newLog(t, s, tc.prefix)
 				}
 
 				errCh := make(chan error, totalAppends)
@@ -244,7 +246,7 @@ func TestConcurrentAppends(t *testing.T) {
 						log := shared
 						if log == nil {
 							var err error
-							log, err = logstream.New(s, tc.stream)
+							log, err = logstream.New(s, tc.prefix)
 							if err != nil {
 								errCh <- err
 								return
@@ -284,7 +286,7 @@ func TestConcurrentAppends(t *testing.T) {
 
 				readerLog := shared
 				if readerLog == nil {
-					readerLog = newLog(t, s, tc.stream)
+					readerLog = newLog(t, s, tc.prefix)
 				}
 				tail, err := readerLog.Tail(ctx)
 				require.NoError(t, err)
@@ -297,13 +299,13 @@ func TestConcurrentAppends(t *testing.T) {
 func TestCorruptedSegment(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		stream := "corrupt-stream"
-		log := newLog(t, s, stream)
+		prefix := "wal/corrupt-stream"
+		log := newLog(t, s, prefix)
 
 		seq, err := log.Append(ctx, []logstream.Record{[]byte("valid payload")})
 		require.NoError(t, err)
 
-		key := fmt.Sprintf("wal/%s/%020d.recordio", stream, seq)
+		key := fmt.Sprintf("%s/%020d.recordio", prefix, seq)
 		rc, _, err := s.Get(ctx, key)
 		require.NoError(t, err)
 		validBytes, err := io.ReadAll(rc)
@@ -346,7 +348,7 @@ func BenchmarkAppend(b *testing.B) {
 	defer s.Close()
 
 	ctx := context.Background()
-	log, err := logstream.New(s, "bench")
+	log, err := logstream.New(s, "wal/bench")
 	if err != nil {
 		b.Fatal(err)
 	}
