@@ -1,8 +1,9 @@
-package kvfs
+package kvfs_test
 
 import (
 	"testing"
 
+	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,20 +16,20 @@ func TestShardedKey(t *testing.T) {
 	}{
 		{
 			name:   "cas_prefix",
-			prefix: casPrefix,
+			prefix: kvfs.CasPrefix,
 			hash:   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			want:   "cas/e3/b0/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		},
 		{
 			name:   "manifest_prefix",
-			prefix: manifestPrefix,
+			prefix: kvfs.ManifestPrefix,
 			hash:   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			want:   "manifests/e3/b0/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, shardedKey(tt.prefix, tt.hash))
+			assert.Equal(t, tt.want, kvfs.ShardedKey(tt.prefix, tt.hash))
 		})
 	}
 }
@@ -47,9 +48,9 @@ func TestValidateHash(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateHash(tt.hash)
+			err := kvfs.ValidateHash(tt.hash)
 			if tt.wantErr {
-				assert.ErrorIs(t, err, ErrInvalidHash)
+				assert.ErrorIs(t, err, kvfs.ErrInvalidHash)
 			} else {
 				assert.NoError(t, err)
 			}

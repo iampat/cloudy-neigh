@@ -15,12 +15,11 @@ go_test(
     name = "logstream_test",
     srcs = [
         "gcs_test.go",
-        "jump_internal_test.go",
         "log_test.go",
         "mock_test.go",
     ],
-    embed = [":logstream"],
     deps = [
+        ":logstream",
         "//objectstore",
         "//recordio",
         "@com_github_stretchr_testify//assert",

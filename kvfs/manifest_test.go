@@ -1,10 +1,11 @@
-package kvfs
+package kvfs_test
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
+	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	kvfspb "github.com/iampat/cloudy-neigh/proto/kvfs/v1"
 	"github.com/stretchr/testify/assert"
@@ -51,11 +52,11 @@ func TestPutAndGetManifest(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				hash, err := putManifest(ctx, s, tt.manifest)
+				hash, err := kvfs.PutManifest(ctx, s, tt.manifest)
 				require.NoError(t, err)
 				assert.Len(t, hash, 64)
 
-				got, err := getManifest(ctx, s, hash)
+				got, err := kvfs.GetManifest(ctx, s, hash)
 				require.NoError(t, err)
 				assert.True(t, proto.Equal(tt.manifest, got))
 			})
@@ -73,10 +74,10 @@ func TestManifestDeduplication(t *testing.T) {
 			},
 		}
 
-		h1, err := putManifest(ctx, s, m)
+		h1, err := kvfs.PutManifest(ctx, s, m)
 		require.NoError(t, err)
 
-		h2, err := putManifest(ctx, s, m)
+		h2, err := kvfs.PutManifest(ctx, s, m)
 		require.NoError(t, err)
 		assert.Equal(t, h1, h2)
 	})
@@ -85,7 +86,7 @@ func TestManifestDeduplication(t *testing.T) {
 func TestGetManifestNotFound(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		_, err := getManifest(ctx, s, "0000000000000000000000000000000000000000000000000000000000000000")
+		_, err := kvfs.GetManifest(ctx, s, "0000000000000000000000000000000000000000000000000000000000000000")
 		assert.ErrorIs(t, err, objectstore.ErrNotFound)
 	})
 }
@@ -96,8 +97,8 @@ func TestGetManifestInvalidHash(t *testing.T) {
 		badHashes := []string{"", "short", "invalid-hash", "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"}
 		for _, hash := range badHashes {
 			t.Run(hash, func(t *testing.T) {
-				_, err := getManifest(ctx, s, hash)
-				assert.ErrorIs(t, err, ErrInvalidHash)
+				_, err := kvfs.GetManifest(ctx, s, hash)
+				assert.ErrorIs(t, err, kvfs.ErrInvalidHash)
 			})
 		}
 	})
@@ -120,7 +121,7 @@ func BenchmarkPutManifest(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, err := putManifest(ctx, s, m)
+		_, err := kvfs.PutManifest(ctx, s, m)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -141,13 +142,13 @@ func BenchmarkGetManifest(b *testing.B) {
 		}
 	}
 	m := &kvfspb.Manifest{LastWalSeq: 1000, Entries: entries}
-	hash, err := putManifest(ctx, s, m)
+	hash, err := kvfs.PutManifest(ctx, s, m)
 	require.NoError(b, err)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		got, err := getManifest(ctx, s, hash)
+		got, err := kvfs.GetManifest(ctx, s, hash)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -174,10 +175,10 @@ func FuzzManifestRoundTrip(f *testing.F) {
 			},
 		}
 
-		hash, err := putManifest(ctx, s, m)
+		hash, err := kvfs.PutManifest(ctx, s, m)
 		require.NoError(t, err)
 
-		got, err := getManifest(ctx, s, hash)
+		got, err := kvfs.GetManifest(ctx, s, hash)
 		require.NoError(t, err)
 		assert.True(t, proto.Equal(m, got))
 	})
