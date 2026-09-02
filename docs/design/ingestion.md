@@ -1,0 +1,136 @@
+# Ingestion and Materialization
+
+## Problem
+
+A search engine must ingest real-time document mutations across multiple dataset branches. It must also support bulk backfills and point-in-time recovery. Running external coordination or workflow clusters increases operational cost.
+
+## Goals
+
+- Single unified write-ahead log for all document mutations across branches.
+- In-memory dispatch of log records to per-branch Memtables.
+- Point-in-time recovery and snapshot queries through manifest sequence anchors.
+- Bulk backfill via direct immutable segment creation with zero external coordination.
+- Periodic flushing of Memtables into immutable CAS segment blobs.
+
+## Non-goals
+
+- Partitioning write-ahead logs into per-branch storage prefixes.
+- External workflow engines such as Temporal or distributed locking services.
+- Distributed multi-worker lease heartbeats for single-node ingestion.
+
+## Architecture
+
+```
+Ingestion & Materialization Pipeline
+┌────────────────────────┐ Write(branch, doc)
+│ Ingestion Client       ├─────────────────────────────────────────┐
+└────────────────────────┘                                         ▼
+┌────────────────────────┐ Write(branch, doc) ┌────────────────────────────┐
+│ Bulk Ingest Worker     ├───────────────────►│ Global WAL (logstream.Log) │
+└────────────────────────┘                    │ wal/<020d_seq>.recordio    │
+                                              └─────────────┬──────────────┘
+                                                            │ Read(seq)
+┌───────────────────────────────────────────────────────────▼──────────────┐
+│ Consumer & Branch Router                                                 │
+│ (Tails global WAL, inspects record.Branch, routes to Memtable)           │
+└──────────────┬────────────────────────────────────────────┬──────────────┘
+               │                                            │
+               ▼                                            ▼
+┌────────────────────────────┐               ┌─────────────────────────────┐
+│ Branch "main" Memtable     │               │ Branch "dev" Memtable       │
+│ (Vectors, Postings, Docs)  │               │ (Vectors, Postings, Docs)   │
+└──────────────┬─────────────┘               └──────────────┬──────────────┘
+               │ Flush at 64 MB                             │ Flush at 64 MB
+               ▼                                            ▼
+┌────────────────────────────┐               ┌─────────────────────────────┐
+│ refs/heads/main            │               │ refs/heads/dev              │
+│ (Manifest: checkpoint_seq) │               │ (Manifest: checkpoint_seq)  │
+└──────────────┬─────────────┘               └──────────────┬──────────────┘
+               │                                            │
+               └─────────────────────┬──────────────────────┘
+                                     ▼
+                      ┌────────────────────────────┐
+                      │ kvfs.Store (CAS Blobs)     │
+                      │ cas/<sha256_hash>          │
+                      └────────────────────────────┘
+```
+
+## Record Format
+
+Mutations serialize into RecordIO frames inside the global WAL.
+
+```proto
+syntax = "proto3";
+package cloudyneigh.ingest;
+
+enum MutationOp {
+  MUTATION_OP_UNSPECIFIED = 0;
+  PUT = 1;
+  DELETE = 2;
+}
+
+message MutationRecord {
+  string branch = 1;
+  string doc_id = 2;
+  MutationOp op = 3;
+  bytes payload = 4;
+}
+```
+
+## Ingestion Protocol
+
+1. Client sends a document mutation specifying the target branch name.
+2. The ingestion node serializes the mutation into a `MutationRecord`.
+3. The node appends the record to `logstream.Log`.
+4. `logstream.Log` commits the segment file under `wal/<020d_seq>.recordio`.
+5. The node returns sequence number `seq` to the client.
+
+## Consumer and Memtable Materialization
+
+1. The consumer tails `logstream.Log` sequentially starting from `checkpoint_seq + 1`.
+2. For each record, the consumer dispatches to the corresponding in-memory branch Memtable.
+3. The branch Memtable updates its internal structures:
+   - Vector buffer for brute-force distance calculation.
+   - Inverted index postings for lexical matching.
+   - Attribute map for document retrieval and scalar filtering.
+   - Tombstone bitset for deletions.
+4. The consumer updates `last_applied_seq = seq`.
+
+## Memtable Flush Protocol
+
+When a branch Memtable reaches 64 MB or a time threshold:
+1. Freeze active Memtable and open a new active Memtable.
+2. Serialize frozen state into columnar CAS segment blobs:
+   - `segments/vectors/<id>`
+   - `segments/postings/<id>`
+   - `segments/docs/<id>`
+3. Store blobs in `objectstore.Store` via `kvfs.Store.PutBlob`.
+4. Commit a new manifest snapshot using `kvfs.Store.Batch`.
+5. Update `refs/heads/<branch>` with `checkpoint_seq = last_applied_seq`.
+6. Discard the frozen Memtable.
+
+## Point-in-Time Recovery and Queries
+
+Each branch manifest records `checkpoint_seq` and `fork_seq`.
+
+To query branch `B` at historical sequence `T`:
+1. Load the manifest snapshot on branch `B` with `checkpoint_seq <= T`.
+2. Load cached segment blobs referenced by this manifest.
+3. Replay WAL records from `checkpoint_seq + 1` up to `T` where `record.Branch == B`.
+4. Apply the replayed mutations to the in-memory candidate set.
+5. Execute query across the combined dataset.
+
+## Bulk Backfill Orchestration
+
+Bulk backfills bypass the sequential write-ahead log.
+
+1. **Segment Generation**:
+   Workers read source datasets and write immutable CAS segment blobs directly to `cas/<hash>`.
+2. **Manifest Commit Batches**:
+   Workers commit segment references in chunks using `kvfs.Store.Batch`.
+   Commits use conditional CAS writes on `refs/heads/<branch>`.
+3. **Crash Recovery**:
+   If a worker crashes, the replacement worker reads `refs/heads/<branch>`.
+   It resumes backfill from the last committed segment chunk.
+4. **Zero Coordination**:
+   The protocol requires no external database or workflow orchestrator.

@@ -55,5 +55,5 @@ The system consists of two distinct layers plus a consumer ecosystem:
 ## 3. Related Specifications
 - [**wal.md**](wal.md): Layer 1 LogStream specification, conditional append protocol, and tail search.
 - [**kvfs.md**](kvfs.md): Layer 2 Key-Value Filesystem, CAS blobs, manifests, and branch operations.
-- [**consumer.md**](consumer.md): LogStream consumer tailing, multi-worker coordination leases, deduplication, and branch initialization.
+- [**ingestion.md**](ingestion.md): Ingestion pipeline, consumer dispatch, Memtable flush, point-in-time recovery, and bulk backfill.
 - [**recordio.md**](recordio.md): Binary framing format with CRC32C checksums.
