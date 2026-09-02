@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/iampat/cloudy-neigh/cmd/walbench",
     visibility = ["//visibility:private"],
     deps = [
+        "//internal/xtime",
         "//logstream",
         "//objectstore",
         "@org_golang_x_sync//errgroup",

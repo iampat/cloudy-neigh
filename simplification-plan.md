@@ -18,6 +18,7 @@ Todo tracker for simplifying cloudy-neigh, eliminating dead code, removing prema
 
 ## PR 2: Logstream & xtime Cleanup (`ali/logstream-simplification`)
 
+
 - [x] Delete `paceWinner`, `winStreak`, and artificial 20ms pacing sleeps in `logstream/log.go`.
 - [x] Simplify `logstream.Read` to direct slice cloning. Delete `TestReadSharesBackingArray`.
 - [x] Inline single-caller `probe` helper in `logstream/log.go`.
@@ -28,6 +29,7 @@ Todo tracker for simplifying cloudy-neigh, eliminating dead code, removing prema
 - [x] Run `bazel test --config=race //...` and formatting tools.
 - [x] Open PR 2 and run `/petr` code review.
 - [x] Address all review comments.
+
 
 ## PR 3: KVFS Concurrency & Context Correctness (`ali/kvfs-simplification`)
 
