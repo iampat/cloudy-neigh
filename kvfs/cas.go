@@ -13,15 +13,15 @@ import (
 )
 
 const (
-	ObjectsPrefix = "objects/"
-	HashHexLen    = sha256.Size * 2
+	CASPrefix  = "cas/"
+	HashHexLen = sha256.Size * 2
 )
 
-func BlobKey(hash string) string {
+func CASKey(hash string) string {
 	if len(hash) != HashHexLen {
-		return ObjectsPrefix + hash
+		return CASPrefix + hash
 	}
-	return ObjectsPrefix + hash[:2] + "/" + hash[2:4] + "/" + hash
+	return CASPrefix + hash[:2] + "/" + hash[2:4] + "/" + hash
 }
 
 func PutBlob(ctx context.Context, store objectstore.Store, r io.Reader) (string, int64, error) {
@@ -34,7 +34,7 @@ func PutBlob(ctx context.Context, store objectstore.Store, r io.Reader) (string,
 	}
 
 	hash := hex.EncodeToString(h.Sum(nil))
-	key := BlobKey(hash)
+	key := CASKey(hash)
 
 	_, err = store.Put(ctx, key, &buf, objectstore.Condition{Absent: true})
 	if err != nil && !errors.Is(err, objectstore.ErrPreconditionFailed) {
@@ -44,7 +44,7 @@ func PutBlob(ctx context.Context, store objectstore.Store, r io.Reader) (string,
 }
 
 func GetBlob(ctx context.Context, store objectstore.Store, hash string) (io.ReadCloser, int64, error) {
-	key := BlobKey(hash)
+	key := CASKey(hash)
 	rc, obj, err := store.Get(ctx, key)
 	if err != nil {
 		return nil, 0, err
@@ -53,5 +53,5 @@ func GetBlob(ctx context.Context, store objectstore.Store, hash string) (io.Read
 }
 
 func ExistsBlob(ctx context.Context, store objectstore.Store, hash string) (bool, error) {
-	return store.Exists(ctx, BlobKey(hash))
+	return store.Exists(ctx, CASKey(hash))
 }

@@ -35,23 +35,23 @@ func forEachBackend(t *testing.T, fn func(t *testing.T, s objectstore.Store)) {
 	})
 }
 
-func TestBlobKey(t *testing.T) {
+func TestCASKey(t *testing.T) {
 	tests := []struct {
 		name string
 		hash string
 		want string
 	}{
-		{"empty", "", "objects/"},
-		{"short", "abcdef", "objects/abcdef"},
+		{"empty", "", "cas/"},
+		{"short", "abcdef", "cas/abcdef"},
 		{
 			"valid_sha256",
 			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-			"objects/e3/b0/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"cas/e3/b0/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, kvfs.BlobKey(tt.hash))
+			assert.Equal(t, tt.want, kvfs.CASKey(tt.hash))
 		})
 	}
 }

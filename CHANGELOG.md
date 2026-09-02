@@ -6,7 +6,7 @@
   - `proto/kvfs/v1/kvfs.proto`: Protobuf schemas for `Manifest`, `ManifestEntry`,
     and `Mutation`.
   - `kvfs/cas.go`: Content-Addressed Storage (CAS) blob engine with SHA-256
-    hashing, automatic deduplication, and 2-byte prefix sharding (`objects/<h0>/<h1>/<hash>`).
+    hashing, automatic deduplication, and 2-byte prefix sharding (`cas/<h0>/<h1>/<hash>`).
 - `logstream`: Layer 1 append-only write-ahead log over object storage.
   - Atomic conditional append protocol using generation preconditions.
   - Multi-record batch append (`Append(ctx, records ...Record)`).
