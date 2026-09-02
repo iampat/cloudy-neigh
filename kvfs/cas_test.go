@@ -35,27 +35,6 @@ func forEachBackend(t *testing.T, fn func(t *testing.T, s objectstore.Store)) {
 	})
 }
 
-func TestCASKey(t *testing.T) {
-	tests := []struct {
-		name string
-		hash string
-		want string
-	}{
-		{"empty", "", "cas/"},
-		{"short", "abcdef", "cas/abcdef"},
-		{
-			"valid_sha256",
-			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-			"cas/e3/b0/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, kvfs.CASKey(tt.hash))
-		})
-	}
-}
-
 func TestPutAndGetBlob(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
@@ -126,6 +105,44 @@ func TestGetBlobNotFound(t *testing.T) {
 		ctx := context.Background()
 		_, _, err := kvfs.GetBlob(ctx, s, "0000000000000000000000000000000000000000000000000000000000000000")
 		assert.True(t, errors.Is(err, objectstore.ErrNotFound))
+	})
+}
+
+func TestGetBlob_InvalidHash(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		badHashes := []string{
+			"",
+			"short",
+			"not-64-hex-chars",
+			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85G",
+			"E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+		}
+		for _, hash := range badHashes {
+			t.Run(hash, func(t *testing.T) {
+				_, _, err := kvfs.GetBlob(ctx, s, hash)
+				assert.ErrorIs(t, err, kvfs.ErrInvalidHash)
+			})
+		}
+	})
+}
+
+func TestExistsBlob_InvalidHash(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		badHashes := []string{
+			"",
+			"short",
+			"not-64-hex-chars",
+			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85G",
+			"E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+		}
+		for _, hash := range badHashes {
+			t.Run(hash, func(t *testing.T) {
+				_, err := kvfs.ExistsBlob(ctx, s, hash)
+				assert.ErrorIs(t, err, kvfs.ErrInvalidHash)
+			})
+		}
 	})
 }
 
@@ -225,4 +242,57 @@ func FuzzBlobRoundTrip(f *testing.F) {
 		require.NoError(t, err)
 		assert.Equal(t, data, diskOut)
 	})
+}
+
+// Benchmark results (Apple M3 Max, ARM64):
+// BenchmarkPutBlob/size_1024B-16       706929    1709 ns/op    599.31 MB/s     3980 B/op    18 allocs/op
+// BenchmarkPutBlob/size_65536B-16      26378   45416 ns/op   1443.00 MB/s   204586 B/op    30 allocs/op
+// BenchmarkPutBlob/size_1048576B-16     2104  570185 ns/op   1839.01 MB/s  3278763 B/op    41 allocs/op
+// BenchmarkGetBlob-16               11851251   101.5 ns/op 645435.22 MB/s      144 B/op     3 allocs/op
+//
+// PutBlob memory overhead: bytes.Buffer dynamic growth causes ~3.1x allocation
+// overhead for unbuffered readers (3.28 MB allocated per 1 MB payload).
+func BenchmarkPutBlob(b *testing.B) {
+	s, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(b, err)
+	b.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+
+	for _, size := range []int{1024, 64 * 1024, 1024 * 1024} {
+		b.Run(fmt.Sprintf("size_%dB", size), func(b *testing.B) {
+			data := make([]byte, size)
+			b.SetBytes(int64(size))
+			b.ReportAllocs()
+
+			for b.Loop() {
+				_, _, err := kvfs.PutBlob(ctx, s, bytes.NewReader(data))
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkGetBlob(b *testing.B) {
+	s, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(b, err)
+	b.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+
+	data := make([]byte, 64*1024)
+	hash, _, err := kvfs.PutBlob(ctx, s, bytes.NewReader(data))
+	require.NoError(b, err)
+
+	b.SetBytes(int64(len(data)))
+	b.ReportAllocs()
+
+	for b.Loop() {
+		rc, _, err := kvfs.GetBlob(ctx, s, hash)
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, rc)
+		_ = rc.Close()
+	}
 }

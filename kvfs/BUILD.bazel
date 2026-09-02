@@ -10,9 +10,12 @@ go_library(
 
 go_test(
     name = "kvfs_test",
-    srcs = ["cas_test.go"],
+    srcs = [
+        "cas_internal_test.go",
+        "cas_test.go",
+    ],
+    embed = [":kvfs"],
     deps = [
-        ":kvfs",
         "//objectstore",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

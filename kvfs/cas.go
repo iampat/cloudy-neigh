@@ -12,16 +12,28 @@ import (
 	"github.com/iampat/cloudy-neigh/objectstore"
 )
 
+var ErrInvalidHash = errors.New("kvfs: invalid CAS hash")
+
 const (
-	CASPrefix  = "cas/"
-	HashHexLen = sha256.Size * 2
+	casPrefix  = "cas/"
+	hashHexLen = sha256.Size * 2
 )
 
-func CASKey(hash string) string {
-	if len(hash) != HashHexLen {
-		return CASPrefix + hash
+func validateHash(hash string) error {
+	if len(hash) != hashHexLen {
+		return fmt.Errorf("%w: length %d, want %d", ErrInvalidHash, len(hash), hashHexLen)
 	}
-	return CASPrefix + hash[:2] + "/" + hash[2:4] + "/" + hash
+	for i := 0; i < len(hash); i++ {
+		c := hash[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return fmt.Errorf("%w: invalid hex character %q", ErrInvalidHash, c)
+		}
+	}
+	return nil
+}
+
+func casKey(hash string) string {
+	return casPrefix + hash[:2] + "/" + hash[2:4] + "/" + hash
 }
 
 func PutBlob(ctx context.Context, store objectstore.Store, r io.Reader) (string, int64, error) {
@@ -34,7 +46,7 @@ func PutBlob(ctx context.Context, store objectstore.Store, r io.Reader) (string,
 	}
 
 	hash := hex.EncodeToString(h.Sum(nil))
-	key := CASKey(hash)
+	key := casKey(hash)
 
 	_, err = store.Put(ctx, key, &buf, objectstore.Condition{Absent: true})
 	if err != nil && !errors.Is(err, objectstore.ErrPreconditionFailed) {
@@ -44,8 +56,10 @@ func PutBlob(ctx context.Context, store objectstore.Store, r io.Reader) (string,
 }
 
 func GetBlob(ctx context.Context, store objectstore.Store, hash string) (io.ReadCloser, int64, error) {
-	key := CASKey(hash)
-	rc, obj, err := store.Get(ctx, key)
+	if err := validateHash(hash); err != nil {
+		return nil, 0, err
+	}
+	rc, obj, err := store.Get(ctx, casKey(hash))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -53,5 +67,8 @@ func GetBlob(ctx context.Context, store objectstore.Store, hash string) (io.Read
 }
 
 func ExistsBlob(ctx context.Context, store objectstore.Store, hash string) (bool, error) {
-	return store.Exists(ctx, CASKey(hash))
+	if err := validateHash(hash); err != nil {
+		return false, err
+	}
+	return store.Exists(ctx, casKey(hash))
 }
