@@ -35,7 +35,7 @@ func TestGCS(t *testing.T) {
 		}
 	})
 
-	log, err := logstream.New(s, prefix)
+	log, err := logstream.New(s, prefix, nil)
 	require.NoError(t, err)
 	seq, err := log.Append(ctx, []logstream.Record{[]byte("gcs-test-record")})
 	require.NoError(t, err)

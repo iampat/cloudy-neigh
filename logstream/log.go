@@ -22,14 +22,8 @@ var ErrEndOfStream = errors.New("logstream: end of stream")
 
 type Record []byte
 
-type Option func(*Log)
-
-func WithMaxRecordSize(max int) Option {
-	return func(l *Log) {
-		if max > 0 {
-			l.maxRecordSize = max
-		}
-	}
+type Options struct {
+	MaxRecordSize int
 }
 
 const headListLimit = 1000
@@ -45,21 +39,22 @@ type Log struct {
 	rttEMA    time.Duration
 }
 
-func New(store objectstore.Store, prefix string, opts ...Option) (*Log, error) {
+func New(store objectstore.Store, prefix string, opts *Options) (*Log, error) {
 	if store == nil {
 		return nil, errors.New("logstream: nil store")
 	}
 	if !validPrefix(prefix) {
 		return nil, fmt.Errorf("logstream: invalid prefix %q", prefix)
 	}
+	maxRecordSize := recordio.DefaultMaxRecordSize
+	if opts != nil && opts.MaxRecordSize > 0 {
+		maxRecordSize = opts.MaxRecordSize
+	}
 	l := &Log{
 		store:         store,
 		prefix:        prefix,
-		maxRecordSize: recordio.DefaultMaxRecordSize,
+		maxRecordSize: maxRecordSize,
 		ch:            make(chan struct{}, 1),
-	}
-	for _, opt := range opts {
-		opt(l)
 	}
 	return l, nil
 }

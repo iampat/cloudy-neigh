@@ -62,7 +62,7 @@ func (m *mockStore) List(ctx context.Context, prefix, startAfter string, limit i
 
 func TestNewWithMockStore(t *testing.T) {
 	mock := &mockStore{}
-	log, err := logstream.New(mock, "stream")
+	log, err := logstream.New(mock, "stream", nil)
 	require.NoError(t, err)
 	require.NotNil(t, log)
 }
@@ -83,7 +83,7 @@ func TestAppendPutFailure(t *testing.T) {
 			},
 		}
 
-		log, err := logstream.New(mock, "stream")
+		log, err := logstream.New(mock, "stream", nil)
 		require.NoError(t, err)
 
 		seq, err := log.Append(context.Background(), []logstream.Record{[]byte("entry")})
@@ -100,7 +100,7 @@ func TestAppendPutFailure(t *testing.T) {
 			},
 		}
 
-		log, err := logstream.New(mock, "stream")
+		log, err := logstream.New(mock, "stream", nil)
 		require.NoError(t, err)
 
 		_, err = log.Append(context.Background(), []logstream.Record{[]byte("entry")})
@@ -116,7 +116,7 @@ func TestReadGetFailure(t *testing.T) {
 			},
 		}
 
-		log, err := logstream.New(mock, "stream")
+		log, err := logstream.New(mock, "stream", nil)
 		require.NoError(t, err)
 
 		_, err = log.Read(context.Background(), 1)
@@ -131,7 +131,7 @@ func TestReadGetFailure(t *testing.T) {
 			},
 		}
 
-		log, err := logstream.New(mock, "stream")
+		log, err := logstream.New(mock, "stream", nil)
 		require.NoError(t, err)
 
 		_, err = log.Read(context.Background(), 1)
@@ -146,7 +146,7 @@ func TestTailAndHeadJump(t *testing.T) {
 				return nil, nil
 			},
 		}
-		log, err := logstream.New(mock, "wal/stream")
+		log, err := logstream.New(mock, "wal/stream", nil)
 		require.NoError(t, err)
 
 		tail, err := log.Tail(context.Background())
@@ -164,7 +164,7 @@ func TestTailAndHeadJump(t *testing.T) {
 				}, nil
 			},
 		}
-		log, err := logstream.New(mock, "wal/stream")
+		log, err := logstream.New(mock, "wal/stream", nil)
 		require.NoError(t, err)
 
 		tail, err := log.Tail(context.Background())
@@ -195,7 +195,7 @@ func TestTailAndHeadJump(t *testing.T) {
 				return seq <= targetHead, nil
 			},
 		}
-		log, err := logstream.New(mock, "wal/stream")
+		log, err := logstream.New(mock, "wal/stream", nil)
 		require.NoError(t, err)
 
 		tail, err := log.Tail(context.Background())

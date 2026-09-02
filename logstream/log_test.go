@@ -33,9 +33,9 @@ func forEachBackend(t *testing.T, fn func(t *testing.T, s objectstore.Store)) {
 	})
 }
 
-func newLog(t *testing.T, s objectstore.Store, prefix string, opts ...logstream.Option) *logstream.Log {
+func newLog(t *testing.T, s objectstore.Store, prefix string, opts *logstream.Options) *logstream.Log {
 	t.Helper()
-	l, err := logstream.New(s, prefix, opts...)
+	l, err := logstream.New(s, prefix, opts)
 	require.NoError(t, err)
 	return l
 }
@@ -65,7 +65,7 @@ func TestPrefixValidation(t *testing.T) {
 
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
-				log, err := logstream.New(s, tc.prefix)
+				log, err := logstream.New(s, tc.prefix, nil)
 				if tc.wantErr {
 					assert.Error(t, err)
 					return
@@ -82,7 +82,7 @@ func TestAppendAndRead(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		prefix := "wal/test-stream"
-		log := newLog(t, s, prefix)
+		log := newLog(t, s, prefix, nil)
 
 		tail, err := log.Tail(ctx)
 		assert.NoError(t, err)
@@ -122,7 +122,7 @@ func TestAppendValidation(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		prefix := "wal/validation-stream"
-		log := newLog(t, s, prefix, logstream.WithMaxRecordSize(10))
+		log := newLog(t, s, prefix, &logstream.Options{MaxRecordSize: 10})
 
 		_, err := log.Append(ctx, nil)
 		assert.Error(t, err)
@@ -144,7 +144,7 @@ func TestReadSharesBackingArray(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		prefix := "wal/backing-stream"
-		log := newLog(t, s, prefix)
+		log := newLog(t, s, prefix, nil)
 
 		records := []logstream.Record{
 			[]byte("first record payload"),
@@ -172,7 +172,7 @@ func TestTailJumpColdStart(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		prefix := "wal/cold-jump"
-		log := newLog(t, s, prefix)
+		log := newLog(t, s, prefix, nil)
 
 		total := 1005
 		for i := 1; i <= total; i++ {
@@ -181,7 +181,7 @@ func TestTailJumpColdStart(t *testing.T) {
 			assert.Equal(t, uint64(i), seq)
 		}
 
-		coldLog := newLog(t, s, prefix)
+		coldLog := newLog(t, s, prefix, nil)
 		tail, err := coldLog.Tail(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(total), tail)
@@ -193,8 +193,8 @@ func TestAppendDriftRecovery(t *testing.T) {
 		ctx := context.Background()
 		prefix := "wal/drift-stream"
 
-		writerA := newLog(t, s, prefix)
-		writerB := newLog(t, s, prefix)
+		writerA := newLog(t, s, prefix, nil)
+		writerB := newLog(t, s, prefix, nil)
 
 		seqA1, err := writerA.Append(ctx, []logstream.Record{[]byte("A1")})
 		require.NoError(t, err)
@@ -232,7 +232,7 @@ func TestConcurrentAppends(t *testing.T) {
 
 				var shared *logstream.Log
 				if tc.sharedLog {
-					shared = newLog(t, s, tc.prefix)
+					shared = newLog(t, s, tc.prefix, nil)
 				}
 
 				errCh := make(chan error, totalAppends)
@@ -246,7 +246,7 @@ func TestConcurrentAppends(t *testing.T) {
 						log := shared
 						if log == nil {
 							var err error
-							log, err = logstream.New(s, tc.prefix)
+							log, err = logstream.New(s, tc.prefix, nil)
 							if err != nil {
 								errCh <- err
 								return
@@ -286,7 +286,7 @@ func TestConcurrentAppends(t *testing.T) {
 
 				readerLog := shared
 				if readerLog == nil {
-					readerLog = newLog(t, s, tc.prefix)
+					readerLog = newLog(t, s, tc.prefix, nil)
 				}
 				tail, err := readerLog.Tail(ctx)
 				require.NoError(t, err)
@@ -300,7 +300,7 @@ func TestCorruptedSegment(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		prefix := "wal/corrupt-stream"
-		log := newLog(t, s, prefix)
+		log := newLog(t, s, prefix, nil)
 
 		seq, err := log.Append(ctx, []logstream.Record{[]byte("valid payload")})
 		require.NoError(t, err)
@@ -348,7 +348,7 @@ func BenchmarkAppend(b *testing.B) {
 	defer s.Close()
 
 	ctx := context.Background()
-	log, err := logstream.New(s, "wal/bench")
+	log, err := logstream.New(s, "wal/bench", nil)
 	if err != nil {
 		b.Fatal(err)
 	}
