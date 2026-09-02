@@ -7,13 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"math/rand/v2"
 	"path"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/iampat/cloudy-neigh/internal/xtime"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	"github.com/iampat/cloudy-neigh/recordio"
 )
@@ -22,12 +20,7 @@ var ErrEndOfStream = errors.New("logstream: end of stream")
 
 type Record []byte
 
-// Winner pacing yields time on consecutive uncontested appends so competing writers
-// have a window to claim sequence slots without starvation.
-const (
-	headListLimit = 1000
-	basePacingRTT = 20 * time.Millisecond
-)
+const headListLimit = 1000
 
 type Log struct {
 	store  objectstore.Store
@@ -35,7 +28,6 @@ type Log struct {
 
 	ch        chan struct{}
 	lastKnown uint64
-	winStreak int
 }
 
 func New(store objectstore.Store, prefix string) (*Log, error) {
@@ -103,7 +95,6 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 				"jump_probes", jumpProbes,
 				"uploads", collisions+1,
 				"elapsed_ms", time.Since(start).Milliseconds())
-			_ = l.paceWinner(ctx, collisions)
 			return seq, nil
 		}
 		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
@@ -119,26 +110,6 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 		}
 		seq = head + 1
 	}
-}
-
-func (l *Log) paceWinner(ctx context.Context, collisions int) error {
-	if collisions > 0 {
-		l.winStreak = 0
-		return nil
-	}
-
-	l.winStreak++
-	if l.winStreak <= 1 {
-		return nil
-	}
-
-	delayFactor := min(float64(l.winStreak-1)*0.25, 1.0)
-	baseDelay := time.Duration(float64(basePacingRTT) * delayFactor)
-	var jitter time.Duration
-	if basePacingRTT > 10 {
-		jitter = time.Duration(rand.Int64N(int64(basePacingRTT / 10)))
-	}
-	return xtime.Sleep(ctx, baseDelay+jitter)
 }
 
 func (l *Log) head(ctx context.Context, lo uint64) (uint64, int, error) {
@@ -160,11 +131,9 @@ func (l *Log) head(ctx context.Context, lo uint64) (uint64, int, error) {
 	if len(objs) < headListLimit {
 		return last, 0, nil
 	}
-	return jump(ctx, last, l.probe)
-}
-
-func (l *Log) probe(ctx context.Context, seq uint64) (bool, error) {
-	return l.store.Exists(ctx, segmentKey(l.prefix, seq))
+	return jump(ctx, last, func(ctx context.Context, seq uint64) (bool, error) {
+		return l.store.Exists(ctx, segmentKey(l.prefix, seq))
+	})
 }
 
 func (l *Log) Read(ctx context.Context, seq uint64) ([]Record, error) {
@@ -182,22 +151,12 @@ func (l *Log) Read(ctx context.Context, seq uint64) ([]Record, error) {
 	defer rc.Close()
 
 	s := recordio.NewScanner(rc)
-	var all []byte
-	var lens []int
+	var records []Record
 	for s.Scan() {
-		rec := s.Record()
-		lens = append(lens, len(rec))
-		all = append(all, rec...)
+		records = append(records, bytes.Clone(s.Record()))
 	}
 	if err := s.Err(); err != nil {
 		return nil, err
-	}
-
-	records := make([]Record, len(lens))
-	offset := 0
-	for i, n := range lens {
-		records[i] = Record(all[offset : offset+n])
-		offset += n
 	}
 	return records, nil
 }

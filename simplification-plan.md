@@ -18,16 +18,18 @@ Todo tracker for simplifying cloudy-neigh, eliminating dead code, removing prema
 
 ## PR 2: Logstream & xtime Cleanup (`ali/logstream-simplification`)
 
-- [ ] Delete `paceWinner`, `winStreak`, and artificial 20ms pacing sleeps in `logstream/log.go`.
-- [ ] Simplify `logstream.Read` to direct slice cloning. Delete `TestReadSharesBackingArray`.
-- [ ] Inline single-caller `probe` helper in `logstream/log.go`.
-- [ ] Delete package `internal/xtime`.
-- [ ] Inline context timer sleep in `cmd/walbench/main.go`.
-- [ ] Clean up single-caller math helpers and loop syntax in `cmd/walbench/main.go`.
-- [ ] Update build files and test suites.
-- [ ] Run `bazel test --config=race //...` and formatting tools.
-- [ ] Open PR 2 and run `/petr` code review.
-- [ ] Address all review comments.
+
+- [x] Delete `paceWinner`, `winStreak`, and artificial 20ms pacing sleeps in `logstream/log.go`.
+- [x] Simplify `logstream.Read` to direct slice cloning. Delete `TestReadSharesBackingArray`.
+- [x] Inline single-caller `probe` helper in `logstream/log.go`.
+- [x] Delete package `internal/xtime`.
+- [x] Inline context timer sleep in `cmd/walbench/main.go`.
+- [x] Clean up single-caller math helpers and loop syntax in `cmd/walbench/main.go`.
+- [x] Update build files and test suites.
+- [x] Run `bazel test --config=race //...` and formatting tools.
+- [x] Open PR 2 and run `/petr` code review.
+- [x] Address all review comments.
+
 
 ## PR 3: KVFS Concurrency & Context Correctness (`ali/kvfs-simplification`)
 
