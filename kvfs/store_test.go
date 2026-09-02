@@ -19,20 +19,20 @@ import (
 func TestStoreOpen(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := kvfs.Open(ctx, nil, "main", nil)
+	_, err := kvfs.Open(ctx, nil, "main", kvfs.Options{})
 	assert.ErrorIs(t, err, kvfs.ErrNilStore)
 
 	s, err := objectstore.Open(ctx, "mem://")
 	require.NoError(t, err)
 	defer s.Close()
 
-	_, err = kvfs.Open(ctx, s, "invalid//branch", nil)
+	_, err = kvfs.Open(ctx, s, "invalid//branch", kvfs.Options{})
 	assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
 
-	_, err = kvfs.Open(ctx, s, "nonexistent", nil)
+	_, err = kvfs.Open(ctx, s, "nonexistent", kvfs.Options{})
 	assert.ErrorIs(t, err, objectstore.ErrNotFound)
 
-	ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{WALFlushInterval: 100 * time.Millisecond})
+	ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{WALFlushInterval: 100 * time.Millisecond})
 	require.NoError(t, err)
 	assert.Equal(t, "main", ks.Branch())
 	require.NoError(t, ks.Close())
@@ -41,7 +41,7 @@ func TestStoreOpen(t *testing.T) {
 func TestStoreCRUDSync(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", nil)
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ks.Close()
 
@@ -97,7 +97,7 @@ func TestStoreCRUDSync(t *testing.T) {
 func TestStoreCRUDAsync(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{WALFlushInterval: 20 * time.Millisecond})
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{WALFlushInterval: 20 * time.Millisecond})
 		require.NoError(t, err)
 
 		val1 := []byte("async value 1")
@@ -139,7 +139,7 @@ func TestStoreCRUDAsync(t *testing.T) {
 
 		require.NoError(t, ks.Close())
 
-		ks2, err := kvfs.Open(ctx, s, "main", nil)
+		ks2, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ks2.Close()
 
@@ -155,7 +155,7 @@ func TestStoreCRUDAsync(t *testing.T) {
 func TestStoreFork(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ksMain, err := kvfs.Open(ctx, s, "main", nil)
+		ksMain, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ksMain.Close()
 
@@ -196,7 +196,7 @@ func TestStoreFork(t *testing.T) {
 func TestStoreValidationErrors(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", nil)
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ks.Close()
 
@@ -212,7 +212,7 @@ func TestStoreValidationErrors(t *testing.T) {
 func TestStoreConcurrentSets(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{WALFlushInterval: 10 * time.Millisecond})
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{WALFlushInterval: 10 * time.Millisecond})
 		require.NoError(t, err)
 		defer ks.Close()
 
@@ -266,7 +266,7 @@ func TestStoreConcurrentSets(t *testing.T) {
 func TestBatchKeyOrdering(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", nil)
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ks.Close()
 
@@ -292,7 +292,7 @@ func TestBatchKeyOrdering(t *testing.T) {
 func TestBatchSync(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", nil)
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ks.Close()
 
@@ -335,7 +335,7 @@ func TestBatchSync(t *testing.T) {
 func TestBatchAsync(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{WALFlushInterval: 20 * time.Millisecond})
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{WALFlushInterval: 20 * time.Millisecond})
 		require.NoError(t, err)
 		defer ks.Close()
 
@@ -366,7 +366,7 @@ func TestBatchAsync(t *testing.T) {
 func TestBatchEmptyCommit(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", nil)
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ks.Close()
 
@@ -378,7 +378,7 @@ func TestBatchEmptyCommit(t *testing.T) {
 func TestBatchClosed(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", nil)
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ks.Close()
 
@@ -401,7 +401,7 @@ func TestBatchClosed(t *testing.T) {
 func TestBatchValidationErrors(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", nil)
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ks.Close()
 
@@ -415,7 +415,7 @@ func TestBatchValidationErrors(t *testing.T) {
 func TestStoreReadCacheLease(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{
 			ManifestLeaseTTL: 40 * time.Millisecond,
 		})
 		require.NoError(t, err)
@@ -432,7 +432,7 @@ func TestStoreReadCacheLease(t *testing.T) {
 		v.Data.Close()
 		assert.Equal(t, val1, got)
 
-		ksOther, err := kvfs.Open(ctx, s, "main", nil)
+		ksOther, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ksOther.Close()
 
@@ -462,7 +462,7 @@ func TestStoreReadCacheLease(t *testing.T) {
 func TestStoreReadCacheWriteThrough(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{
 			ManifestLeaseTTL: 1 * time.Hour,
 		})
 		require.NoError(t, err)
@@ -495,7 +495,7 @@ func TestStoreReadCacheWriteThrough(t *testing.T) {
 func TestStoreReadConcurrentSingleflight(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", nil)
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ks.Close()
 
@@ -542,7 +542,7 @@ func BenchmarkStoreSetSync(b *testing.B) {
 	b.Cleanup(func() { s.Close() })
 	ctx := context.Background()
 
-	ks, err := kvfs.Open(ctx, s, "main", nil)
+	ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 	require.NoError(b, err)
 	b.Cleanup(func() { ks.Close() })
 
@@ -563,7 +563,7 @@ func BenchmarkStoreSetAsync(b *testing.B) {
 	b.Cleanup(func() { s.Close() })
 	ctx := context.Background()
 
-	ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{WALFlushInterval: 50 * time.Millisecond})
+	ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{WALFlushInterval: 50 * time.Millisecond})
 	require.NoError(b, err)
 	b.Cleanup(func() { ks.Close() })
 
@@ -584,7 +584,7 @@ func BenchmarkStoreGetCached(b *testing.B) {
 	b.Cleanup(func() { s.Close() })
 	ctx := context.Background()
 
-	ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{ManifestLeaseTTL: 1 * time.Hour})
+	ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{ManifestLeaseTTL: 1 * time.Hour})
 	require.NoError(b, err)
 	b.Cleanup(func() { ks.Close() })
 

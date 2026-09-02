@@ -83,7 +83,7 @@ type client struct {
 	wg         sync.WaitGroup
 }
 
-func Open(ctx context.Context, store objectstore.Store, branch string, opts *Options) (Store, error) {
+func Open(ctx context.Context, store objectstore.Store, branch string, opts Options) (Store, error) {
 	if store == nil {
 		return nil, ErrNilStore
 	}
@@ -97,14 +97,11 @@ func Open(ctx context.Context, store objectstore.Store, branch string, opts *Opt
 		}
 	}
 
-	o := defaultOptions
-	if opts != nil {
-		if opts.WALFlushInterval > 0 {
-			o.WALFlushInterval = opts.WALFlushInterval
-		}
-		if opts.ManifestLeaseTTL > 0 {
-			o.ManifestLeaseTTL = opts.ManifestLeaseTTL
-		}
+	if opts.WALFlushInterval <= 0 {
+		opts.WALFlushInterval = defaultOptions.WALFlushInterval
+	}
+	if opts.ManifestLeaseTTL <= 0 {
+		opts.ManifestLeaseTTL = defaultOptions.ManifestLeaseTTL
 	}
 
 	l, err := logstream.New(store, "wal/"+branch)
@@ -115,8 +112,8 @@ func Open(ctx context.Context, store objectstore.Store, branch string, opts *Opt
 	c := &client{
 		store:            store,
 		branch:           branch,
-		walFlushInterval: o.WALFlushInterval,
-		manifestLeaseTTL: o.ManifestLeaseTTL,
+		walFlushInterval: opts.WALFlushInterval,
+		manifestLeaseTTL: opts.ManifestLeaseTTL,
 		log:              l,
 		stopCh:           make(chan struct{}),
 	}
@@ -276,7 +273,7 @@ func (c *client) Fork(ctx context.Context, newBranch string) (Store, error) {
 	if _, _, err := createBranch(ctx, c.store, newBranch, c.branch); err != nil {
 		return nil, err
 	}
-	return Open(ctx, c.store, newBranch, &Options{
+	return Open(ctx, c.store, newBranch, Options{
 		WALFlushInterval: c.walFlushInterval,
 		ManifestLeaseTTL: c.manifestLeaseTTL,
 	})
