@@ -150,12 +150,9 @@ not trust memory over the help output.
   Markdown edit.
 - A branch name always starts with `ali/`. The type of the change goes in the PR
   title instead, as `feat:`, `fix:`, `chore:`, or `docs:`.
-- Report the URL when you open a PR, then stop. Do not wait for the checks and
-  do not poll them. I read them myself.
-- Before declaring done: `bazel build //...` and `bazel run //:format.check` pass.
-  A change that touches only Markdown skips both. Run
-  `.claude/skills/technical-writing/lint.sh <file>` on each changed document
-  instead.
+- Update the PR first, then run local tests. Push the commit, update the PR,
+  report the URL, and run tests after. Do not wait for remote checks and do not
+  poll them.
 - Before opening a PR: run `bazel mod tidy`. A `go.mod` change leaves
   `MODULE.bazel` stale, and a stale `use_repo` call breaks the build.
 - After a PR merges: go to `main`, rebase on `origin`, then delete the merged
