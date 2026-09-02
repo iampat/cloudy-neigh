@@ -22,7 +22,12 @@ var ErrEndOfStream = errors.New("logstream: end of stream")
 
 type Record []byte
 
-const headListLimit = 1000
+// Winner pacing yields time on consecutive uncontested appends so competing writers
+// have a window to claim sequence slots without starvation.
+const (
+	headListLimit = 1000
+	basePacingRTT = 20 * time.Millisecond
+)
 
 type Log struct {
 	store  objectstore.Store
@@ -31,7 +36,6 @@ type Log struct {
 	ch        chan struct{}
 	lastKnown uint64
 	winStreak int
-	rttEMA    time.Duration
 }
 
 func New(store objectstore.Store, prefix string) (*Log, error) {
@@ -87,7 +91,6 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 
 	for {
 		key := segmentKey(l.prefix, seq)
-		putStart := time.Now()
 		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{Absent: true})
 		if err == nil {
 			l.lastKnown = seq
@@ -100,7 +103,7 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 				"jump_probes", jumpProbes,
 				"uploads", collisions+1,
 				"elapsed_ms", time.Since(start).Milliseconds())
-			_ = l.paceWinner(ctx, collisions, time.Since(putStart))
+			_ = l.paceWinner(ctx, collisions)
 			return seq, nil
 		}
 		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
@@ -118,13 +121,7 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 	}
 }
 
-func (l *Log) paceWinner(ctx context.Context, collisions int, putDuration time.Duration) error {
-	if l.rttEMA == 0 {
-		l.rttEMA = putDuration
-	} else {
-		l.rttEMA = (l.rttEMA*4 + putDuration) / 5
-	}
-
+func (l *Log) paceWinner(ctx context.Context, collisions int) error {
 	if collisions > 0 {
 		l.winStreak = 0
 		return nil
@@ -136,10 +133,10 @@ func (l *Log) paceWinner(ctx context.Context, collisions int, putDuration time.D
 	}
 
 	delayFactor := min(float64(l.winStreak-1)*0.25, 1.0)
-	baseDelay := time.Duration(float64(l.rttEMA) * delayFactor)
+	baseDelay := time.Duration(float64(basePacingRTT) * delayFactor)
 	var jitter time.Duration
-	if l.rttEMA > 10 {
-		jitter = time.Duration(rand.Int64N(int64(l.rttEMA / 10)))
+	if basePacingRTT > 10 {
+		jitter = time.Duration(rand.Int64N(int64(basePacingRTT / 10)))
 	}
 	return xtime.Sleep(ctx, baseDelay+jitter)
 }
