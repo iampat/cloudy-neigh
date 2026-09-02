@@ -33,10 +33,10 @@ var (
 	NoSync = &WriteOptions{Sync: false}
 )
 
-const (
-	defaultWALFlushInterval = 500 * time.Millisecond
-	defaultManifestLeaseTTL = 500 * time.Millisecond
-)
+var defaultOptions = Options{
+	WALFlushInterval: 500 * time.Millisecond,
+	ManifestLeaseTTL: 500 * time.Millisecond,
+}
 
 type Options struct {
 	WALFlushInterval time.Duration
@@ -97,14 +97,14 @@ func Open(ctx context.Context, store objectstore.Store, branch string, opts *Opt
 		}
 	}
 
-	flushInterval := defaultWALFlushInterval
-	if opts != nil && opts.WALFlushInterval > 0 {
-		flushInterval = opts.WALFlushInterval
-	}
-
-	leaseTTL := defaultManifestLeaseTTL
-	if opts != nil && opts.ManifestLeaseTTL > 0 {
-		leaseTTL = opts.ManifestLeaseTTL
+	o := defaultOptions
+	if opts != nil {
+		if opts.WALFlushInterval > 0 {
+			o.WALFlushInterval = opts.WALFlushInterval
+		}
+		if opts.ManifestLeaseTTL > 0 {
+			o.ManifestLeaseTTL = opts.ManifestLeaseTTL
+		}
 	}
 
 	l, err := logstream.New(store, "wal/"+branch)
@@ -115,8 +115,8 @@ func Open(ctx context.Context, store objectstore.Store, branch string, opts *Opt
 	c := &client{
 		store:            store,
 		branch:           branch,
-		walFlushInterval: flushInterval,
-		manifestLeaseTTL: leaseTTL,
+		walFlushInterval: o.WALFlushInterval,
+		manifestLeaseTTL: o.ManifestLeaseTTL,
 		log:              l,
 		stopCh:           make(chan struct{}),
 	}
