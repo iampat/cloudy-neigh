@@ -3,6 +3,7 @@ package kvfs_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"

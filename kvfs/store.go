@@ -200,14 +200,13 @@ func (c *client) flushBranch(ctx context.Context, branch string) error {
 				if err := proto.Unmarshal(rec, &mut); err != nil {
 					return err
 				}
-				switch mut.Op {
-				case kvfspb.Mutation_OP_SET:
+				if mut.Tombstone {
+					delete(newEntries, mut.Key)
+				} else {
 					newEntries[mut.Key] = &kvfspb.ManifestEntry{
 						CasHash:   mut.CasHash,
 						SizeBytes: mut.SizeBytes,
 					}
-				case kvfspb.Mutation_OP_DELETE:
-					delete(newEntries, mut.Key)
 				}
 			}
 		}
@@ -316,7 +315,6 @@ func (c *client) Set(ctx context.Context, branch, key string, r io.Reader, opts 
 
 	if !syncWrite {
 		mut := &kvfspb.Mutation{
-			Op:        kvfspb.Mutation_OP_SET,
 			Key:       key,
 			CasHash:   casHash,
 			SizeBytes: uint64(size),
@@ -400,8 +398,8 @@ func (c *client) Delete(ctx context.Context, branch, key string, opts *WriteOpti
 
 	if !syncWrite {
 		mut := &kvfspb.Mutation{
-			Op:  kvfspb.Mutation_OP_DELETE,
-			Key: key,
+			Key:       key,
+			Tombstone: true,
 		}
 		data, err := proto.Marshal(mut)
 		if err != nil {
