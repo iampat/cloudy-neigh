@@ -55,6 +55,10 @@
         untrusted text, and both need an internal test to reach.
   - [ ] Run a long fuzz job in CI and cache the corpus. `bazel test` runs the
         seed corpus alone today.
+  - [ ] Support running all fuzz targets under `--config=fuzz` and `--config=race`.
+        `bazel test //... --config=fuzz` fails because `-test.fuzz=.` matches
+        multiple fuzz functions in one package. Find a fix to run all fuzz targets
+        and enable libfuzzer coverage instrumentation in Bazel.
 - [ ] Test against a mock object store. `logstream.New` takes a concrete
       `*objectstore.Store`, so no test can inject a failure today.
   - [ ] Let the caller declare the interface it needs, which
