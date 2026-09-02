@@ -15,7 +15,6 @@ go_library(
         "//objectstore",
         "//proto/kvfs/v1:kvfs",
         "@org_golang_google_protobuf//proto",
-        "@org_golang_x_sync//singleflight",
     ],
 )
 
@@ -25,7 +24,6 @@ go_test(
         "branch_test.go",
         "cas_internal_test.go",
         "cas_test.go",
-        "export_test.go",
         "manifest_test.go",
         "store_test.go",
     ],

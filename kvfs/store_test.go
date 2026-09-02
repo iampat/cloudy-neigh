@@ -16,6 +16,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func forEachBackend(t *testing.T, fn func(t *testing.T, s objectstore.Store)) {
+	t.Helper()
+	t.Run("mem", func(t *testing.T) {
+		s, err := objectstore.Open(context.Background(), "mem://")
+		require.NoError(t, err)
+		t.Cleanup(func() { s.Close() })
+		fn(t, s)
+	})
+	t.Run("file", func(t *testing.T) {
+		dir := t.TempDir()
+		s, err := objectstore.Open(context.Background(), "file://"+dir+"?create_dir=true")
+		require.NoError(t, err)
+		t.Cleanup(func() { s.Close() })
+		fn(t, s)
+	})
+}
+
 func TestStoreOpen(t *testing.T) {
 	ctx := context.Background()
 
@@ -412,59 +429,10 @@ func TestBatchValidationErrors(t *testing.T) {
 	})
 }
 
-func TestStoreReadCacheLease(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
-		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{
-			ManifestLeaseTTL: 40 * time.Millisecond,
-		})
-		require.NoError(t, err)
-		defer ks.Close()
-
-		val1 := []byte("cached value 1")
-		err = ks.Set(ctx, "k1", bytes.NewReader(val1), kvfs.Sync)
-		require.NoError(t, err)
-
-		v, err := ks.Get(ctx, "k1")
-		require.NoError(t, err)
-		got, err := io.ReadAll(v.Data)
-		require.NoError(t, err)
-		v.Data.Close()
-		assert.Equal(t, val1, got)
-
-		ksOther, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
-		require.NoError(t, err)
-		defer ksOther.Close()
-
-		val2 := []byte("updated value from other")
-		err = ksOther.Set(ctx, "k1", bytes.NewReader(val2), kvfs.Sync)
-		require.NoError(t, err)
-
-		vCached, err := ks.Get(ctx, "k1")
-		require.NoError(t, err)
-		gotCached, err := io.ReadAll(vCached.Data)
-		require.NoError(t, err)
-		vCached.Data.Close()
-		assert.Equal(t, val1, gotCached)
-
-		require.Eventually(t, func() bool {
-			vRefreshed, err := ks.Get(ctx, "k1")
-			if err != nil {
-				return false
-			}
-			gotRefreshed, err := io.ReadAll(vRefreshed.Data)
-			vRefreshed.Data.Close()
-			return err == nil && bytes.Equal(val2, gotRefreshed)
-		}, 1*time.Second, 10*time.Millisecond)
-	})
-}
-
 func TestStoreReadCacheWriteThrough(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{
-			ManifestLeaseTTL: 1 * time.Hour,
-		})
+		ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ks.Close()
 
@@ -492,14 +460,14 @@ func TestStoreReadCacheWriteThrough(t *testing.T) {
 	})
 }
 
-func TestStoreReadConcurrentSingleflight(t *testing.T) {
+func TestStoreReadConcurrent(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		ksWriter, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 		require.NoError(t, err)
 		defer ksWriter.Close()
 
-		val := []byte("singleflight payload")
+		val := []byte("concurrent payload")
 		err = ksWriter.Set(ctx, "shared", bytes.NewReader(val), kvfs.Sync)
 		require.NoError(t, err)
 
@@ -540,7 +508,7 @@ func TestStoreReadConcurrentSingleflight(t *testing.T) {
 	})
 }
 
-func TestStoreReadSingleflightContextCancellation(t *testing.T) {
+func TestStoreReadContextCancellation(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 		ksWriter, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
@@ -642,7 +610,7 @@ func BenchmarkStoreGetCached(b *testing.B) {
 	b.Cleanup(func() { s.Close() })
 	ctx := context.Background()
 
-	ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{ManifestLeaseTTL: 1 * time.Hour})
+	ks, err := kvfs.Open(ctx, s, "main", kvfs.Options{})
 	require.NoError(b, err)
 	b.Cleanup(func() { ks.Close() })
 
