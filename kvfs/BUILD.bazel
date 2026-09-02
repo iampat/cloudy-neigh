@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "kvfs",
+    srcs = ["cas.go"],
+    importpath = "github.com/iampat/cloudy-neigh/kvfs",
+    visibility = ["//visibility:public"],
+    deps = ["//objectstore"],
+)
+
+go_test(
+    name = "kvfs_test",
+    srcs = ["cas_test.go"],
+    deps = [
+        ":kvfs",
+        "//objectstore",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)
