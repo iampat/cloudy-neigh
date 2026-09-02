@@ -412,6 +412,130 @@ func TestBatchValidationErrors(t *testing.T) {
 	})
 }
 
+func TestStoreReadCacheLease(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{
+			ManifestLeaseTTL: 40 * time.Millisecond,
+		})
+		require.NoError(t, err)
+		defer ks.Close()
+
+		val1 := []byte("cached value 1")
+		err = ks.Set(ctx, "k1", bytes.NewReader(val1), kvfs.Sync)
+		require.NoError(t, err)
+
+		v, err := ks.Get(ctx, "k1")
+		require.NoError(t, err)
+		got, err := io.ReadAll(v.Data)
+		require.NoError(t, err)
+		v.Data.Close()
+		assert.Equal(t, val1, got)
+
+		ksOther, err := kvfs.Open(ctx, s, "main", nil)
+		require.NoError(t, err)
+		defer ksOther.Close()
+
+		val2 := []byte("updated value from other")
+		err = ksOther.Set(ctx, "k1", bytes.NewReader(val2), kvfs.Sync)
+		require.NoError(t, err)
+
+		vCached, err := ks.Get(ctx, "k1")
+		require.NoError(t, err)
+		gotCached, err := io.ReadAll(vCached.Data)
+		require.NoError(t, err)
+		vCached.Data.Close()
+		assert.Equal(t, val1, gotCached)
+
+		require.Eventually(t, func() bool {
+			vRefreshed, err := ks.Get(ctx, "k1")
+			if err != nil {
+				return false
+			}
+			gotRefreshed, err := io.ReadAll(vRefreshed.Data)
+			vRefreshed.Data.Close()
+			return err == nil && bytes.Equal(val2, gotRefreshed)
+		}, 1*time.Second, 10*time.Millisecond)
+	})
+}
+
+func TestStoreReadCacheWriteThrough(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{
+			ManifestLeaseTTL: 1 * time.Hour,
+		})
+		require.NoError(t, err)
+		defer ks.Close()
+
+		val1 := []byte("write-through 1")
+		err = ks.Set(ctx, "k", bytes.NewReader(val1), kvfs.Sync)
+		require.NoError(t, err)
+
+		v1, err := ks.Get(ctx, "k")
+		require.NoError(t, err)
+		got1, err := io.ReadAll(v1.Data)
+		require.NoError(t, err)
+		v1.Data.Close()
+		assert.Equal(t, val1, got1)
+
+		val2 := []byte("write-through 2")
+		err = ks.Set(ctx, "k", bytes.NewReader(val2), kvfs.Sync)
+		require.NoError(t, err)
+
+		v2, err := ks.Get(ctx, "k")
+		require.NoError(t, err)
+		got2, err := io.ReadAll(v2.Data)
+		require.NoError(t, err)
+		v2.Data.Close()
+		assert.Equal(t, val2, got2)
+	})
+}
+
+func TestStoreReadConcurrentSingleflight(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+		ks, err := kvfs.Open(ctx, s, "main", nil)
+		require.NoError(t, err)
+		defer ks.Close()
+
+		val := []byte("singleflight payload")
+		err = ks.Set(ctx, "shared", bytes.NewReader(val), kvfs.Sync)
+		require.NoError(t, err)
+
+		const readers = 16
+		var wg sync.WaitGroup
+		errCh := make(chan error, readers)
+
+		for i := 0; i < readers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				v, err := ks.Get(ctx, "shared")
+				if err != nil {
+					errCh <- err
+					return
+				}
+				got, err := io.ReadAll(v.Data)
+				v.Data.Close()
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if !bytes.Equal(val, got) {
+					errCh <- fmt.Errorf("expected %s, got %s", val, got)
+				}
+			}()
+		}
+
+		wg.Wait()
+		close(errCh)
+		for err := range errCh {
+			t.Error(err)
+		}
+	})
+}
+
 func BenchmarkStoreSetSync(b *testing.B) {
 	s, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(b, err)
@@ -451,5 +575,31 @@ func BenchmarkStoreSetAsync(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkStoreGetCached(b *testing.B) {
+	s, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(b, err)
+	b.Cleanup(func() { s.Close() })
+	ctx := context.Background()
+
+	ks, err := kvfs.Open(ctx, s, "main", &kvfs.Options{ManifestLeaseTTL: 1 * time.Hour})
+	require.NoError(b, err)
+	b.Cleanup(func() { ks.Close() })
+
+	val := []byte("benchmark-payload")
+	err = ks.Set(ctx, "k", bytes.NewReader(val), kvfs.Sync)
+	require.NoError(b, err)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		v, err := ks.Get(ctx, "k")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, v.Data)
+		_ = v.Data.Close()
 	}
 }

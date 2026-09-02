@@ -33,10 +33,14 @@ var (
 	NoSync = &WriteOptions{Sync: false}
 )
 
-const defaultWALFlushInterval = 500 * time.Millisecond
+const (
+	defaultWALFlushInterval = 500 * time.Millisecond
+	defaultManifestLeaseTTL = 500 * time.Millisecond
+)
 
 type Options struct {
 	WALFlushInterval time.Duration
+	ManifestLeaseTTL time.Duration
 }
 
 type Value struct {
@@ -55,16 +59,26 @@ type Store interface {
 	Close() error
 }
 
+type cachedManifest struct {
+	manifestHash string
+	generation   string
+	manifest     *kvfspb.Manifest
+	expiresAt    time.Time
+}
+
 type client struct {
 	store            objectstore.Store
 	branch           string
 	walFlushInterval time.Duration
+	manifestLeaseTTL time.Duration
 	log              *logstream.Log
 
-	mu     sync.Mutex
-	closed bool
+	mu             sync.Mutex
+	closed         bool
+	cachedManifest *cachedManifest
 
 	flushGroup singleflight.Group
+	readGroup  singleflight.Group
 	stopCh     chan struct{}
 	wg         sync.WaitGroup
 }
@@ -88,6 +102,11 @@ func Open(ctx context.Context, store objectstore.Store, branch string, opts *Opt
 		flushInterval = opts.WALFlushInterval
 	}
 
+	leaseTTL := defaultManifestLeaseTTL
+	if opts != nil && opts.ManifestLeaseTTL > 0 {
+		leaseTTL = opts.ManifestLeaseTTL
+	}
+
 	l, err := logstream.New(store, "wal/"+branch)
 	if err != nil {
 		return nil, err
@@ -97,6 +116,7 @@ func Open(ctx context.Context, store objectstore.Store, branch string, opts *Opt
 		store:            store,
 		branch:           branch,
 		walFlushInterval: flushInterval,
+		manifestLeaseTTL: leaseTTL,
 		log:              l,
 		stopCh:           make(chan struct{}),
 	}
@@ -214,8 +234,16 @@ func (c *client) doFlush(ctx context.Context, targetTail uint64) error {
 			return err
 		}
 
-		_, err = updateBranch(ctx, c.store, c.branch, newManifestHash, gen)
+		newGen, err := updateBranch(ctx, c.store, c.branch, newManifestHash, gen)
 		if err == nil {
+			c.mu.Lock()
+			c.cachedManifest = &cachedManifest{
+				manifestHash: newManifestHash,
+				generation:   newGen,
+				manifest:     newManifest,
+				expiresAt:    time.Now().Add(c.manifestLeaseTTL),
+			}
+			c.mu.Unlock()
 			return nil
 		}
 		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
@@ -248,7 +276,65 @@ func (c *client) Fork(ctx context.Context, newBranch string) (Store, error) {
 	if _, _, err := createBranch(ctx, c.store, newBranch, c.branch); err != nil {
 		return nil, err
 	}
-	return Open(ctx, c.store, newBranch, &Options{WALFlushInterval: c.walFlushInterval})
+	return Open(ctx, c.store, newBranch, &Options{
+		WALFlushInterval: c.walFlushInterval,
+		ManifestLeaseTTL: c.manifestLeaseTTL,
+	})
+}
+
+func (c *client) loadManifest(ctx context.Context) (*kvfspb.Manifest, error) {
+	c.mu.Lock()
+	cached := c.cachedManifest
+	if cached != nil && time.Now().Before(cached.expiresAt) {
+		m := cached.manifest
+		c.mu.Unlock()
+		return m, nil
+	}
+	c.mu.Unlock()
+
+	res, err, _ := c.readGroup.Do("manifest", func() (any, error) {
+		c.mu.Lock()
+		cached := c.cachedManifest
+		if cached != nil && time.Now().Before(cached.expiresAt) {
+			m := cached.manifest
+			c.mu.Unlock()
+			return m, nil
+		}
+		c.mu.Unlock()
+
+		manifestHash, gen, err := resolveBranch(ctx, c.store, c.branch)
+		if err != nil {
+			return nil, err
+		}
+
+		c.mu.Lock()
+		if cached != nil && cached.generation == gen && cached.manifestHash == manifestHash {
+			cached.expiresAt = time.Now().Add(c.manifestLeaseTTL)
+			m := cached.manifest
+			c.mu.Unlock()
+			return m, nil
+		}
+		c.mu.Unlock()
+
+		manifest, err := getManifest(ctx, c.store, manifestHash)
+		if err != nil {
+			return nil, err
+		}
+
+		c.mu.Lock()
+		c.cachedManifest = &cachedManifest{
+			manifestHash: manifestHash,
+			generation:   gen,
+			manifest:     manifest,
+			expiresAt:    time.Now().Add(c.manifestLeaseTTL),
+		}
+		c.mu.Unlock()
+		return manifest, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res.(*kvfspb.Manifest), nil
 }
 
 func (c *client) Get(ctx context.Context, key string) (Value, error) {
@@ -256,12 +342,7 @@ func (c *client) Get(ctx context.Context, key string) (Value, error) {
 		return Value{}, ErrInvalidKey
 	}
 
-	manifestHash, _, err := resolveBranch(ctx, c.store, c.branch)
-	if err != nil {
-		return Value{}, err
-	}
-
-	manifest, err := getManifest(ctx, c.store, manifestHash)
+	manifest, err := c.loadManifest(ctx)
 	if err != nil {
 		return Value{}, err
 	}
