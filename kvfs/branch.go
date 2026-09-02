@@ -48,7 +48,7 @@ func branchKey(branch string) string {
 	return refPrefix + branch
 }
 
-func ResolveBranch(ctx context.Context, store objectstore.Store, branch string) (string, string, error) {
+func resolveBranch(ctx context.Context, store objectstore.Store, branch string) (string, string, error) {
 	if err := validateBranch(branch); err != nil {
 		return "", "", err
 	}
@@ -71,7 +71,7 @@ func ResolveBranch(ctx context.Context, store objectstore.Store, branch string) 
 	return hash, obj.Generation, nil
 }
 
-func UpdateBranch(ctx context.Context, store objectstore.Store, branch, manifestHash, expectedGen string) (string, error) {
+func updateBranch(ctx context.Context, store objectstore.Store, branch, manifestHash, expectedGen string) (string, error) {
 	if err := validateBranch(branch); err != nil {
 		return "", err
 	}
@@ -93,7 +93,7 @@ func UpdateBranch(ctx context.Context, store objectstore.Store, branch, manifest
 	return gen, nil
 }
 
-func CreateBranch(ctx context.Context, store objectstore.Store, newBranch, parentBranch string) (string, string, error) {
+func createBranch(ctx context.Context, store objectstore.Store, newBranch, parentBranch string) (string, string, error) {
 	if err := validateBranch(newBranch); err != nil {
 		return "", "", err
 	}
@@ -101,7 +101,7 @@ func CreateBranch(ctx context.Context, store objectstore.Store, newBranch, paren
 		return "", "", err
 	}
 
-	parentHash, _, err := ResolveBranch(ctx, store, parentBranch)
+	parentHash, _, err := resolveBranch(ctx, store, parentBranch)
 	if err != nil {
 		return "", "", fmt.Errorf("kvfs: resolve parent branch %s: %w", parentBranch, err)
 	}

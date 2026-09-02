@@ -6,6 +6,7 @@ go_library(
         "branch.go",
         "cas.go",
         "manifest.go",
+        "store.go",
     ],
     importpath = "github.com/iampat/cloudy-neigh/kvfs",
     visibility = ["//visibility:public"],
@@ -22,7 +23,9 @@ go_test(
         "branch_test.go",
         "cas_internal_test.go",
         "cas_test.go",
+        "export_test.go",
         "manifest_test.go",
+        "store_test.go",
     ],
     embed = [":kvfs"],
     deps = [
