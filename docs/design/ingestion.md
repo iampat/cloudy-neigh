@@ -108,9 +108,17 @@ message WalRecord {
 
 1. The consumer tails `logstream.Log` sequentially starting from `checkpoint_seq + 1`.
 2. For each `WalRecord`:
-   - If `branch_event.type == FORK`, initialize child branch Memtable from parent state.
-   - If `branch_event.type == DELETE`, purge the in-memory branch Memtable.
-   - If `mutation`, dispatch to the corresponding in-memory branch Memtable.
+   - If `branch_event.type == FORK`:
+     1. Freeze the parent branch Memtable.
+     2. Flush parent Memtable into CAS segment blobs.
+     3. Commit a new manifest snapshot `M` for the parent branch (`checkpoint_seq = fork_seq`).
+     4. Write `refs/heads/<child>` pointing to `M` with precondition `Absent: true`.
+     5. Open new active Memtables for both parent and child branches.
+   - If `branch_event.type == DELETE`:
+     1. Purge the in-memory Memtable, index structures, and lookup maps for the target branch.
+     2. Delete `refs/heads/<branch>`.
+   - If `mutation`:
+     1. Route the mutation to the target branch active Memtable.
 3. The branch Memtable updates its internal structures:
    - Vector buffer for brute-force distance calculation.
    - Inverted index postings for lexical matching.
