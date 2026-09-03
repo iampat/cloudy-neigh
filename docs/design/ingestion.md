@@ -58,7 +58,7 @@ Ingestion & Materialization Pipeline
 
 ## Record Format
 
-Mutations serialize into RecordIO frames inside the global WAL.
+Mutations and branch lifecycle events serialize into RecordIO frames inside the global WAL.
 
 ```proto
 syntax = "proto3";
@@ -70,18 +70,36 @@ enum MutationOp {
   DELETE = 2;
 }
 
-message MutationRecord {
+message DocumentMutation {
   string branch = 1;
   string doc_id = 2;
   MutationOp op = 3;
   bytes payload = 4;
 }
+
+message BranchLifecycleEvent {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    FORK = 1;
+    DELETE = 2;
+  }
+  Type type = 1;
+  string branch = 2;
+  string parent_branch = 3;
+}
+
+message WalRecord {
+  oneof record {
+    DocumentMutation mutation = 1;
+    BranchLifecycleEvent branch_event = 2;
+  }
+}
 ```
 
 ## Ingestion Protocol
 
-1. Client sends a document mutation specifying the target branch name.
-2. The ingestion node serializes the mutation into a `MutationRecord`.
+1. Client sends a document mutation or branch lifecycle request.
+2. The ingestion node wraps the operation into a `WalRecord`.
 3. The node appends the record to `logstream.Log`.
 4. `logstream.Log` commits the segment file under `wal/<020d_seq>.recordio`.
 5. The node returns sequence number `seq` to the client.
@@ -89,7 +107,10 @@ message MutationRecord {
 ## Consumer and Memtable Materialization
 
 1. The consumer tails `logstream.Log` sequentially starting from `checkpoint_seq + 1`.
-2. For each record, the consumer dispatches to the corresponding in-memory branch Memtable.
+2. For each `WalRecord`:
+   - If `branch_event.type == FORK`, initialize child branch Memtable from parent state.
+   - If `branch_event.type == DELETE`, purge the in-memory branch Memtable.
+   - If `mutation`, dispatch to the corresponding in-memory branch Memtable.
 3. The branch Memtable updates its internal structures:
    - Vector buffer for brute-force distance calculation.
    - Inverted index postings for lexical matching.
@@ -121,7 +142,7 @@ Each branch manifest records `checkpoint_seq` and `fork_seq`.
 To query branch `B` at historical sequence `T`:
 1. Load the manifest snapshot on branch `B` with `checkpoint_seq <= T`.
 2. Load cached segment blobs referenced by this manifest.
-3. Replay WAL records from `checkpoint_seq + 1` up to `T` where `record.Branch == B`.
+3. Replay WAL records from `checkpoint_seq + 1` up to `T` where `mutation.branch == B`.
 4. Apply the replayed mutations to the in-memory candidate set.
 5. Execute query across the combined dataset.
 
