@@ -40,7 +40,8 @@ Ingestion & Materialization Pipeline
 │ Branch "main" Memtable     │               │ Branch "dev" Memtable       │
 │ (Vectors, Postings, Docs)  │               │ (Vectors, Postings, Docs)   │
 └──────────────┬─────────────┘               └──────────────┬──────────────┘
-               │ Flush at 64 MB                             │ Flush at 64 MB
+               │ Flush at size/time threshold               │ Flush at size/time threshold
+               │ (e.g. 64 MB / 1 min)                       │ (e.g. 64 MB / 1 min)
                ▼                                            ▼
 ┌────────────────────────────┐               ┌─────────────────────────────┐
 │ refs/heads/main            │               │ refs/heads/dev              │
@@ -98,7 +99,11 @@ message MutationRecord {
 
 ## Memtable Flush Protocol
 
-When a branch Memtable reaches 64 MB or a time threshold:
+A branch Memtable flushes on two independent triggers:
+- **Size threshold (e.g. 64 MB):** Bounds memory usage under high write throughput.
+- **Time threshold (e.g. 1 minute):** Bounds persistence latency for idle or low-volume branches. A single document flushes even if no further writes arrive.
+
+When either threshold triggers:
 1. Freeze active Memtable and open a new active Memtable.
 2. Serialize frozen state into columnar CAS segment blobs:
    - `segments/vectors/<id>`
@@ -134,6 +139,29 @@ Bulk backfills bypass the sequential write-ahead log.
    It resumes backfill from the last committed segment chunk.
 4. **Zero Coordination**:
    The protocol requires no external database or workflow orchestrator.
+
+## Concurrency and Coordination Model
+
+Document ingestion and materialization split concurrency across two distinct phases:
+
+### In-Memory Mutation Dispatch (Hot Path)
+
+- Each document mutation updates three internal structures:
+  1. Attribute map for document retrieval.
+  2. Inverted index postings for lexical search.
+  3. Vector buffer for similarity search.
+- The consumer updates these structures sequentially under a Memtable mutex.
+- Sub-microsecond memory writes do not justify per-document goroutine spawn overhead.
+
+### Segment Flush and Storage Sink (Cold Path)
+
+- Mutations do not write to `kvfs.Store` individually.
+- When the size or time threshold triggers, three concurrent goroutines upload the CAS segment blobs in parallel.
+- An `errgroup.Group` coordinates the three upload tasks:
+  - `segments/docs/<id>`
+  - `segments/postings/<id>`
+  - `segments/vectors/<id>`
+- After all uploads succeed, a single atomic CAS commit updates `refs/heads/<branch>`.
 
 ## Appendix: Ingestion Modes (Async vs Sync)
 
