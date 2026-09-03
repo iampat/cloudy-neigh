@@ -134,3 +134,23 @@ Bulk backfills bypass the sequential write-ahead log.
    It resumes backfill from the last committed segment chunk.
 4. **Zero Coordination**:
    The protocol requires no external database or workflow orchestrator.
+
+## Appendix: Ingestion Modes (Async vs Sync)
+
+The ingestion pipeline supports two delivery modes:
+
+### 1. Asynchronous Ingestion (Default)
+
+- The write returns immediately after appending to `logstream.Log`.
+- The consumer tails the log and updates the branch Memtable in the background.
+- Read queries observe mutations only after Memtable dispatch.
+
+### 2. Synchronous Ingestion (Read-After-Write)
+
+- The write ensures immediate read visibility.
+- Writers return once the log write commits. They do not wait for index materialization.
+- The query engine executes across two sources:
+  1. The indexed dataset (active Memtable and CAS segment blobs).
+  2. The unindexed pending buffer in `logstream.Log`.
+- The engine unions and deduplicates candidates before ranking.
+- Linear scan over small unindexed buffers keeps write and read latencies balanced.
