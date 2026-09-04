@@ -39,7 +39,7 @@ storage in the middle. The query engine never reads the WAL.
 | `grpcapi/` | the two service implementations |
 | `restgw/` | JSON-to-gRPC translation, demo search, web page |
 | `cmd/cloudyd` | one binary, `ingest` and `query` subcommands |
-| `cmd/demoload` | stream the corpus into `Write` calls |
+| `scripts/demoload.py` | stream the corpus into `Write` calls |
 | `examples/search.py` | Python client example on the REST API |
 
 Existing code stays as is: `objectstore`, `recordio`, `logstream`,
@@ -109,11 +109,11 @@ All honest, all replaced later behind a stable boundary.
       key from the environment, then call `Query`.
 - [ ] Static web page: query box, `lang` filter, results with title
       and snippet.
-- [ ] `cmd/demoload`: read Cohere Wikipedia from a local disk cache
-      into `Write` calls, 1,000 documents per call. Demo day touches
-      no external service.
-- [ ] Check whether the Hugging Face CLI covers the local dataset
-      cache. If it does, we do not implement a download step.
+- [ ] `scripts/demoload.py`: read Cohere Wikipedia from local disk cache
+      into `Write` calls, 1,000 documents per call. Reader is done;
+      `send_batch` stub awaits `grpcapi/`.
+- [X] Check whether the Hugging Face CLI covers the local dataset
+      cache. Verified and automated via `just download-dataset`.
 - [ ] `examples/search.py`: plain `requests`, no gRPC stubs.
 
 ### M5: demo run
