@@ -169,6 +169,12 @@ not trust memory over the help output.
   the same turn.
 - An agy review transcript lives in `docs/reviews/<date>-<topic>.md` for the
   pull request only. `git rm` it before the merge.
+- Ideas and brainstorms: `docs/random-thoughts.md` catalogs external
+  algorithms, references, and brainstorming outcomes. Keep an index at the top
+  with a one-to-two sentence summary per entry. The user approves every edit
+  before writing. Never read this file in the main agent to avoid context
+  pollution. Delegate all searches and retrievals to a research subagent using
+  the `ideate` skill.
 
 Skills to use:
 
@@ -180,3 +186,5 @@ Skills to use:
   present a design as done.
 - `consult-petr`, for a hard algorithmic or data-structure problem. Petr
   designs and writes that code, and you supervise.
+- `ideate`, to search candidate algorithms or record brainstorm verdicts in
+  `docs/random-thoughts.md` via a subagent.
