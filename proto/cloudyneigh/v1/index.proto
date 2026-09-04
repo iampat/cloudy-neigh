@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package cloudyneigh.v1;
+
+option go_package = "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1;cloudyneighpb";
+
+message Document {
+  string id = 1;
+  repeated float vector = 2;
+  map<string, string> attributes = 3;
+}
+
+message UpsertRequest {
+  string namespace = 1;
+  repeated Document documents = 2;
+}
+
+message UpsertResponse {
+  uint32 upserted_count = 1;
+}
+
+message DeleteRequest {
+  string namespace = 1;
+  repeated string ids = 2;
+}
+
+message DeleteResponse {
+  uint32 deleted_count = 1;
+}
+
+message EqualityFilter {
+  string field = 1;
+  string value = 2;
+}
+
+message QueryRequest {
+  string namespace = 1;
+  repeated float vector = 2;
+  uint32 top_k = 3;
+  EqualityFilter filter = 4;
+}
+
+message ScoredDocument {
+  Document document = 1;
+  float score = 2;
+}
+
+message QueryResponse {
+  repeated ScoredDocument hits = 1;
+}
+
+service IngestService {
+  rpc Upsert(UpsertRequest) returns (UpsertResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+}
+
+service QueryService {
+  rpc Query(QueryRequest) returns (QueryResponse);
+}

@@ -15,6 +15,7 @@ message DocumentMutation {
   string doc_id = 2;
   MutationOp op = 3;
   bytes payload = 4;
+  uint64 seq = 5;
 }
 
 message BranchLifecycleEvent {

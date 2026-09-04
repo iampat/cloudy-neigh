@@ -12,7 +12,7 @@ replace each part later, one at a time, when it must change.
 ## Dataflow
 
 ```
-client ──gRPC Write──▶ ingest process ──append──▶ WAL (logstream)
+client ──gRPC Upsert──▶ ingest process ──append──▶ WAL (logstream)
                             │ tails WAL
                             ▼
                   per-namespace memtable
@@ -32,14 +32,14 @@ storage in the middle. The query engine never reads the WAL.
 
 | Part | What it does |
 | --- | --- |
-| `proto/cloudyneigh/v1/index.proto` | `Write`, `Query`, minimal messages |
+| `proto/cloudyneigh/v1/index.proto` | `Upsert`, `Delete`, `Query`, minimal messages |
 | `segment/` | write and read one segment file |
 | `ingest/` | WAL consumer, memtable, flush, manifest commit |
 | `query/` | manifest poll, segment load, k-NN, filter |
 | `grpcapi/` | the two service implementations |
 | `restgw/` | JSON-to-gRPC translation, demo search, web page |
 | `cmd/cloudyd` | one binary, `ingest` and `query` subcommands |
-| `scripts/demoload.py` | stream the corpus into `Write` calls |
+| `scripts/demoload.py` | stream the corpus into `Upsert` calls |
 | `examples/search.py` | Python client example on the REST API |
 
 Existing code stays as is: `objectstore`, `recordio`, `logstream`,
@@ -70,10 +70,10 @@ All honest, all replaced later behind a stable boundary.
 
 ### M1: wire format and segments
 
-- [ ] Write `proto/cloudyneigh/v1/index.proto`: `Write`, `Query`,
-      document with id, attributes, one vector. `WriteRequest` carries
+- [X] Write `proto/cloudyneigh/v1/index.proto`: `Upsert`, `Delete`, `Query`,
+      document with id, attributes, one vector. `UpsertRequest` carries
       repeated documents.
-- [ ] Add `uint64 seq` to `DocumentMutation`. The consumer stamps it
+- [X] Add `uint64 seq` to `DocumentMutation`. The consumer stamps it
       at flush time as `wal_seq << 32 | record_index`.
 - [ ] `segment/`: writer that dumps a memtable to one recordio file of
       `DocumentMutation` protos, and a reader.
@@ -85,7 +85,7 @@ All honest, all replaced later behind a stable boundary.
       routes by namespace into memtables.
 - [ ] Flush on threshold: upload segment, CAS the manifest with
       `kvfs.UpdateBranch`, advance `checkpoint_seq`.
-- [ ] `grpcapi/`: `Write` encodes `WalRecord` and appends to logstream.
+- [ ] `grpcapi/`: `Upsert` encodes `WalRecord` and appends to logstream.
 - [ ] `cloudyd ingest` subcommand.
 - [ ] On a 412 from the manifest CAS, reload the ref and retry.
 - [ ] Tests: flush, restart resume, crash between upload and CAS.
@@ -110,7 +110,7 @@ All honest, all replaced later behind a stable boundary.
 - [ ] Static web page: query box, `lang` filter, results with title
       and snippet.
 - [ ] `scripts/demoload.py`: read Cohere Wikipedia from local disk cache
-      into `Write` calls, 1,000 documents per call. Reader is done;
+      into `Upsert` calls, 1,000 documents per call. Reader is done;
       `send_batch` stub awaits `grpcapi/`.
 - [X] Check whether the Hugging Face CLI covers the local dataset
       cache. Verified and automated via `just download-dataset`.
