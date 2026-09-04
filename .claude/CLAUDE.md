@@ -13,17 +13,17 @@ triggers the skill and approves every edit it makes.
 ## Build: Bazel only
 
 Never invoke `go build`/`go test` or run scripts directly. Go through Bazel so
-the toolchain and the dependency graph stay authoritative. Always run build,
-test, and coverage with `--config=race` to keep the analysis cache valid.
-`.bazelrc` enables `--config=race` by default for `test` and `coverage`.
+the toolchain and the dependency graph stay authoritative. `.bazelrc` enables
+`--config=race` by default for `build`. Toggling the race flag discards the
+analysis cache and forces expensive rebuilds.
 
 | Plain Go | Here |
 | --- | --- |
-| `go build ./...` | `bazel build --config=race //...` |
-| `go test ./...` | `bazel test //...` (or with `--config=race`) |
-| `go test -run TestX ./pkg` | `bazel test --config=race //pkg:pkg_test --test_filter=TestX` |
-| `go test -v` | `bazel test --config=race //... --test_output=all` |
-| `go test -bench=.` | `bazel test --config=race //... --test_arg=-test.bench=. --test_output=all` |
+| `go build ./...` | `bazel build //...` |
+| `go test ./...` | `bazel test //...` |
+| `go test -run TestX ./pkg` | `bazel test //pkg:pkg_test --test_filter=TestX` |
+| `go test -v` | `bazel test //... --test_output=all` |
+| `go test -bench=.` | `bazel test //... --test_arg=-test.bench=. --test_output=all` |
 | add a dependency | add the import, then `bazel run @io_bazel_rules_go//go -- mod tidy` |
 | `go mod tidy` | `bazel run @io_bazel_rules_go//go -- mod tidy` (also runs `bazel mod tidy`) |
 | `go fmt ./...` | `bazel run //:format` (check-only: `//:format.check`) |
