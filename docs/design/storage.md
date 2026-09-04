@@ -57,3 +57,4 @@ The system consists of two distinct layers plus a consumer ecosystem:
 - [**kvfs.md**](kvfs.md): Layer 2 Key-Value Filesystem, CAS blobs, manifests, and branch operations.
 - [**ingestion.md**](ingestion.md): Ingestion pipeline, consumer dispatch, Memtable flush, point-in-time recovery, and bulk backfill.
 - [**recordio.md**](recordio.md): Binary framing format with CRC32C checksums.
+- [**storage-simplification.md**](storage-simplification.md): Five architectural simplifications for sub-2 ms query latency on GCS.
