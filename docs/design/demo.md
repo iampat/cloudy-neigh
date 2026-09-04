@@ -73,8 +73,6 @@ All honest, all replaced later behind a stable boundary.
 - [X] Write `proto/cloudyneigh/v1/index.proto`: `Upsert`, `Delete`, `Query`,
       document with id, attributes, one vector. `UpsertRequest` carries
       repeated documents.
-- [X] Add `uint64 seq` to `DocumentMutation`. The consumer stamps it
-      at flush time as `wal_seq << 32 | record_index`.
 - [ ] `segment/`: writer that dumps a memtable to one recordio file of
       `DocumentMutation` protos, and a reader.
 - [ ] Tests: roundtrip, latest-wins order, torn tail.
