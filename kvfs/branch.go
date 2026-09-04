@@ -1,6 +1,7 @@
 package kvfs
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,12 +9,14 @@ import (
 	"strings"
 
 	"github.com/iampat/cloudy-neigh/objectstore"
-	kvfspb "github.com/iampat/cloudy-neigh/proto/kvfs/v1"
+	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
 	ErrBranchAlreadyExists = errors.New("kvfs: branch already exists")
 	ErrInvalidBranchName   = errors.New("kvfs: invalid branch name")
+	ErrNilManifest         = errors.New("kvfs: nil manifest")
 )
 
 const refPrefix = "refs/heads/"
@@ -49,35 +52,40 @@ func branchKey(branch string) string {
 	return refPrefix + branch
 }
 
-func resolveBranch(ctx context.Context, store objectstore.Store, branch string) (string, string, error) {
+func ResolveBranch(ctx context.Context, store objectstore.Store, branch string) (*storagepb.BranchManifest, string, error) {
 	if err := validateBranch(branch); err != nil {
-		return "", "", err
+		return nil, "", err
 	}
 
 	rc, obj, err := store.Get(ctx, branchKey(branch))
 	if err != nil {
-		return "", "", err
+		return nil, "", err
 	}
 	defer rc.Close()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
-		return "", "", fmt.Errorf("kvfs: read branch ref %s: %w", branch, err)
+		return nil, "", fmt.Errorf("kvfs: read branch ref %s: %w", branch, err)
 	}
 
-	hash := strings.TrimSpace(string(data))
-	if err := validateHash(hash); err != nil {
-		return "", "", fmt.Errorf("kvfs: corrupt branch ref %s: %w", branch, err)
+	var m storagepb.BranchManifest
+	if err := proto.Unmarshal(data, &m); err != nil {
+		return nil, "", fmt.Errorf("kvfs: corrupt branch manifest %s: %w", branch, err)
 	}
-	return hash, obj.Generation, nil
+	return &m, obj.Generation, nil
 }
 
-func updateBranch(ctx context.Context, store objectstore.Store, branch, manifestHash, expectedGen string) (string, error) {
+func UpdateBranch(ctx context.Context, store objectstore.Store, branch string, m *storagepb.BranchManifest, expectedGen string) (string, error) {
 	if err := validateBranch(branch); err != nil {
 		return "", err
 	}
-	if err := validateHash(manifestHash); err != nil {
-		return "", err
+	if m == nil {
+		return "", ErrNilManifest
+	}
+
+	data, err := proto.Marshal(m)
+	if err != nil {
+		return "", fmt.Errorf("kvfs: marshal branch manifest %s: %w", branch, err)
 	}
 
 	var cond objectstore.Condition
@@ -87,50 +95,44 @@ func updateBranch(ctx context.Context, store objectstore.Store, branch, manifest
 		cond = objectstore.Condition{GenerationMatch: expectedGen}
 	}
 
-	gen, err := store.Put(ctx, branchKey(branch), strings.NewReader(manifestHash), cond)
+	gen, err := store.Put(ctx, branchKey(branch), bytes.NewReader(data), cond)
 	if err != nil {
 		return "", err
 	}
 	return gen, nil
 }
 
-func createBranch(ctx context.Context, store objectstore.Store, newBranch, parentBranch string) (string, string, error) {
+func CreateBranch(ctx context.Context, store objectstore.Store, newBranch, parentBranch string) (*storagepb.BranchManifest, string, error) {
 	if err := validateBranch(newBranch); err != nil {
-		return "", "", err
+		return nil, "", err
 	}
 	if err := validateBranch(parentBranch); err != nil {
-		return "", "", err
+		return nil, "", err
 	}
 
-	parentHash, _, err := resolveBranch(ctx, store, parentBranch)
+	parentManifest, _, err := ResolveBranch(ctx, store, parentBranch)
 	if err != nil {
-		return "", "", fmt.Errorf("kvfs: resolve parent branch %s: %w", parentBranch, err)
+		return nil, "", fmt.Errorf("kvfs: resolve parent branch %s: %w", parentBranch, err)
 	}
 
-	parentManifest, err := getManifest(ctx, store, parentHash)
+	data, err := proto.Marshal(parentManifest)
 	if err != nil {
-		return "", "", fmt.Errorf("kvfs: read parent manifest %s: %w", parentBranch, err)
+		return nil, "", fmt.Errorf("kvfs: marshal fork manifest %s: %w", newBranch, err)
 	}
 
-	branchHash := parentHash
-	if parentManifest.LastWalSeq > 0 {
-		forkManifest := &kvfspb.Manifest{
-			LastWalSeq: 0,
-			Entries:    parentManifest.Entries,
-		}
-		var err error
-		branchHash, err = putManifest(ctx, store, forkManifest)
-		if err != nil {
-			return "", "", fmt.Errorf("kvfs: put fork manifest %s: %w", newBranch, err)
-		}
-	}
-
-	gen, err := store.Put(ctx, branchKey(newBranch), strings.NewReader(branchHash), objectstore.Condition{Absent: true})
+	gen, err := store.Put(ctx, branchKey(newBranch), bytes.NewReader(data), objectstore.Condition{Absent: true})
 	if err != nil {
 		if errors.Is(err, objectstore.ErrPreconditionFailed) {
-			return "", "", ErrBranchAlreadyExists
+			return nil, "", ErrBranchAlreadyExists
 		}
-		return "", "", fmt.Errorf("kvfs: create branch %s: %w", newBranch, err)
+		return nil, "", fmt.Errorf("kvfs: create branch %s: %w", newBranch, err)
 	}
-	return branchHash, gen, nil
+	return parentManifest, gen, nil
+}
+
+func DeleteBranch(ctx context.Context, store objectstore.Store, branch string) error {
+	if err := validateBranch(branch); err != nil {
+		return err
+	}
+	return store.Delete(ctx, branchKey(branch))
 }

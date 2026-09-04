@@ -34,6 +34,7 @@ type Store interface {
 	io.Closer
 	Stat(ctx context.Context, key string) (Object, error)
 	Get(ctx context.Context, key string) (io.ReadCloser, Object, error)
+	ReadRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, Object, error)
 	Put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error)
 	Delete(ctx context.Context, key string) error
 	Exists(ctx context.Context, key string) (bool, error)

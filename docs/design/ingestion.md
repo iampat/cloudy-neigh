@@ -45,14 +45,14 @@ Ingestion & Materialization Pipeline
                ▼                                            ▼
 ┌────────────────────────────┐               ┌─────────────────────────────┐
 │ refs/heads/main            │               │ refs/heads/dev              │
-│ (Manifest: checkpoint_seq) │               │ (Manifest: checkpoint_seq)  │
+│ (Inlined BranchManifest)   │               │ (Inlined BranchManifest)    │
 └──────────────┬─────────────┘               └──────────────┬──────────────┘
                │                                            │
                └─────────────────────┬──────────────────────┘
                                      ▼
                       ┌────────────────────────────┐
-                      │ kvfs.Store (CAS Blobs)     │
-                      │ cas/<sha256_hash>          │
+                      │ segments/                  │
+                      │ seg_001.{vec,post,doc}     │
                       └────────────────────────────┘
 ```
 
@@ -110,9 +110,9 @@ message WalRecord {
 2. For each `WalRecord`:
    - If `branch_event.type == FORK`:
      1. Freeze the parent branch Memtable.
-     2. Flush parent Memtable into CAS segment blobs.
-     3. Commit a new manifest snapshot `M` for the parent branch (`checkpoint_seq = fork_seq`).
-     4. Write `refs/heads/<child>` pointing to `M` with precondition `Absent: true`.
+     2. Flush parent Memtable into columnar segment files.
+     3. Commit updated `BranchManifest` for parent branch (`checkpoint_seq = fork_seq`).
+     4. Write `refs/heads/<child>` with parent `BranchManifest` and precondition `Absent: true`.
      5. Open new active Memtables for both parent and child branches.
    - If `branch_event.type == DELETE`:
      1. Purge the in-memory Memtable, index structures, and lookup maps for the target branch.
@@ -134,14 +134,13 @@ A branch Memtable flushes on two independent triggers:
 
 When either threshold triggers:
 1. Freeze active Memtable and open a new active Memtable.
-2. Serialize frozen state into columnar CAS segment blobs:
-   - `segments/vectors/<id>`
-   - `segments/postings/<id>`
-   - `segments/docs/<id>`
-3. Store blobs in `objectstore.Store` via `kvfs.Store.PutBlob`.
-4. Commit a new manifest snapshot using `kvfs.Store.Batch`.
-5. Update `refs/heads/<branch>` with `checkpoint_seq = last_applied_seq`.
-6. Discard the frozen Memtable.
+2. Serialize frozen state into columnar segment files:
+   - `segments/<id>.vec`
+   - `segments/<id>.post`
+   - `segments/<id>.doc`
+3. Store columnar files in `objectstore.Store`.
+4. Commit updated `BranchManifest` directly to `refs/heads/<branch>` with GCS `if-generation-match`.
+5. Discard the frozen Memtable.
 
 ## Point-in-Time Recovery and Queries
 
@@ -159,10 +158,10 @@ To query branch `B` at historical sequence `T`:
 Bulk backfills bypass the sequential write-ahead log.
 
 1. **Segment Generation**:
-   Workers read source datasets and write immutable CAS segment blobs directly to `cas/<hash>`.
+   Workers read source datasets and write immutable columnar segment files directly to `segments/`.
 2. **Manifest Commit Batches**:
-   Workers commit segment references in chunks using `kvfs.Store.Batch`.
-   Commits use conditional CAS writes on `refs/heads/<branch>`.
+   Workers commit segment references in chunks directly to `refs/heads/<branch>`.
+   Commits use conditional GCS `if-generation-match` writes.
 3. **Crash Recovery**:
    If a worker crashes, the replacement worker reads `refs/heads/<branch>`.
    It resumes backfill from the last committed segment chunk.
@@ -184,13 +183,13 @@ Document ingestion and materialization split concurrency across two distinct pha
 
 ### Segment Flush and Storage Sink (Cold Path)
 
-- Mutations do not write to `kvfs.Store` individually.
-- When the size or time threshold triggers, three concurrent goroutines upload the CAS segment blobs in parallel.
+- Mutations do not write to object storage individually.
+- When the size or time threshold triggers, three concurrent goroutines upload the columnar segment files in parallel.
 - An `errgroup.Group` coordinates the three upload tasks:
-  - `segments/docs/<id>`
-  - `segments/postings/<id>`
-  - `segments/vectors/<id>`
-- After all uploads succeed, a single atomic CAS commit updates `refs/heads/<branch>`.
+  - `segments/<id>.doc`
+  - `segments/<id>.post`
+  - `segments/<id>.vec`
+- After all uploads succeed, a single atomic commit updates `refs/heads/<branch>`.
 
 ## Appendix: Ingestion Modes (Async vs Sync)
 
@@ -207,7 +206,7 @@ The ingestion pipeline supports two delivery modes:
 - The write ensures immediate read visibility.
 - Writers return once the log write commits. They do not wait for index materialization.
 - The query engine executes across two sources:
-  1. The indexed dataset (active Memtable and CAS segment blobs).
+  1. The indexed dataset (active Memtable and columnar segment files).
   2. The unindexed pending buffer in `logstream.Log`.
 - The engine unions and deduplicates candidates before ranking.
 - Linear scan over small unindexed buffers keeps write and read latencies balanced.

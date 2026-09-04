@@ -16,17 +16,14 @@ Content-Addressed Storage (CAS).
 
 ```text
 wal/
-├── main/
-│   ├── 00000000000000000001.recordio
-│   ├── 00000000000000000002.recordio
-│   └── 00000000000000000003.recordio   <-- head (seq 3)
-└── _meta/
-    └── 00000000000000000001.recordio   <-- branch lifecycle events
+├── 00000000000000000001.recordio
+├── 00000000000000000002.recordio
+└── 00000000000000000003.recordio   <-- head (seq 3)
 ```
 
 ## Storage layout
 
-- Segment key format: `wal/<stream>/<020d_seq>.recordio`.
+- Segment key format: `wal/<020d_seq>.recordio`.
 - `<seq>` is a fixed-width 20-digit zero-padded decimal integer (supporting up to 2^64 - 1).
 - Lexicographical string sorting matches numeric sequence order.
 - Each segment file is an immutable RecordIO container storing one or more binary records with CRC32C integrity checksums.
@@ -54,7 +51,7 @@ the batch.
 ## Tail finding and recovery
 
 When a writer starts cold or falls behind:
-1. `Tail(stream)` issues a `List` call with limit 1000.
+1. `Tail(ctx)` issues a `List` call with limit 1000.
 2. If segments exceed 1000, it performs an exponential probing search (`jump`) to find the head in O(log N) round-trips.
 
 ## Delivery guarantees

@@ -1,6 +1,7 @@
 package objectstore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -41,6 +42,39 @@ func (g *gcsStore) Stat(ctx context.Context, key string) (Object, error) {
 func (g *gcsStore) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
 	r, err := g.bkt().Object(key).NewReader(ctx)
 	if err != nil {
+		return nil, Object{}, translateGCS(key, err)
+	}
+	return r, Object{
+		Key:        key,
+		Generation: strconv.FormatInt(r.Attrs.Generation, 10),
+		Size:       r.Attrs.Size,
+	}, nil
+}
+
+func (g *gcsStore) readEmptyRange(ctx context.Context, key string, offset int64) (io.ReadCloser, Object, error) {
+	obj, err := g.Stat(ctx, key)
+	if err != nil {
+		return nil, Object{}, err
+	}
+	if offset > obj.Size {
+		return nil, Object{}, fmt.Errorf("objectstore: offset %d exceeds object size %d", offset, obj.Size)
+	}
+	return io.NopCloser(bytes.NewReader(nil)), obj, nil
+}
+
+func (g *gcsStore) ReadRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, Object, error) {
+	if offset < 0 || length < 0 {
+		return nil, Object{}, fmt.Errorf("objectstore: invalid range [offset=%d, length=%d]", offset, length)
+	}
+	if length == 0 {
+		return g.readEmptyRange(ctx, key, offset)
+	}
+	r, err := g.bkt().Object(key).NewRangeReader(ctx, offset, length)
+	if err != nil {
+		var gerr *googleapi.Error
+		if errors.As(err, &gerr) && gerr.Code == http.StatusRequestedRangeNotSatisfiable {
+			return g.readEmptyRange(ctx, key, offset)
+		}
 		return nil, Object{}, translateGCS(key, err)
 	}
 	return r, Object{

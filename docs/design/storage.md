@@ -7,16 +7,17 @@ The system consists of two distinct layers plus a consumer ecosystem:
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    Layer 2: Key-Value Filesystem (KVFS)                     │
-│  • Content-Addressed Storage (CAS) for blobs and manifests                  │
-│  • Branch heads (refs/heads/<branch>) and zero-copy branching ($O(1)$)       │
-│  • See kvfs.md                                                              │
+│                 Layer 2: Ingestion & Columnar Segments                      │
+│  • Immutable columnar segment files (.vec, .post, .doc)                     │
+│  • Branch heads (refs/heads/<branch>) with inlined SegmentRef manifests     │
+│  • Zero-copy branching and copy-on-write segment sharing                    │
+│  • See ingestion.md and storage-simplification.md                           │
 └─────────────────────────────────────┬───────────────────────────────────────┘
                                       │
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                       Layer 1: LogStream (WAL / Queue)                      │
-│  • Direct sequential keys: wal/<stream>/<020d_seq>.recordio                 │
+│                    Layer 1: LogStream (Single Global WAL)                   │
+│  • Direct sequential keys: wal/<020d_seq>.recordio                          │
 │  • Atomic conditional appends (if-generation-match=0)                       │
 │  • See wal.md                                                               │
 └─────────────────────────────────────┬───────────────────────────────────────┘
@@ -24,7 +25,7 @@ The system consists of two distinct layers plus a consumer ecosystem:
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                     Layer 0: Cloud ObjectStore Adapter                      │
-│  • Raw object operations with generation preconditions                      │
+│  • Raw object operations with generation preconditions and ReadRange        │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -32,29 +33,22 @@ The system consists of two distinct layers plus a consumer ecosystem:
 
 ```text
 [Bucket Root]
-├── refs/heads/                  <-- Layer 2: Mutable Branch Heads (conditional write)
-│   ├── main                     --> "1a2beff8..."
-│   └── feature-1                --> "1a2beff8..."
+├── refs/heads/                  <-- Layer 2: Mutable Branch Heads (Inlined Manifests <=14 KiB)
+│   ├── main                     --> BranchManifest { checkpoint_seq: 104, segments: [...] }
+│   └── feature-1                --> BranchManifest { checkpoint_seq: 82,  segments: [...] }
 │
-├── manifests/                   <-- Layer 2: Content-Addressed Manifest Snapshots (2-Byte Sharded)
-│   └── 1a/2b/1a2beff890...      --> Manifest { last_wal_seq: 10, entries: { "docs/a.txt": "a3f1..." } }
+├── segments/                    <-- Layer 2: Immutable Columnar Segment Files
+│   ├── seg_001.vec              --> Dense float vectors
+│   ├── seg_001.post             --> Inverted postings and term dictionaries
+│   └── seg_001.doc              --> Document attributes and block footer
 │
-├── cas/                         <-- Layer 2: Content-Addressed Raw Payloads (2-Byte Sharded)
-│   └── a3/f1/a3f1c8901b...      --> [raw binary data]
-│
-└── wal/                         <-- Layer 1: Direct Sequenced Logs
-    ├── _meta/                   <-- Branch lifecycle discovery events
-    │   └── 00000000000000000001.recordio
-    ├── main/
-    │   ├── 00000000000000000001.recordio
-    │   └── 00000000000000000002.recordio
-    └── feature-1/
-        └── 00000000000000000001.recordio
+└── wal/                         <-- Layer 1: Single Global Sequenced Log
+    ├── 00000000000000000001.recordio
+    └── 00000000000000000002.recordio
 ```
 
 ## 3. Related Specifications
 - [**wal.md**](wal.md): Layer 1 LogStream specification, conditional append protocol, and tail search.
-- [**kvfs.md**](kvfs.md): Layer 2 Key-Value Filesystem, CAS blobs, manifests, and branch operations.
 - [**ingestion.md**](ingestion.md): Ingestion pipeline, consumer dispatch, Memtable flush, point-in-time recovery, and bulk backfill.
 - [**recordio.md**](recordio.md): Binary framing format with CRC32C checksums.
 - [**storage-simplification.md**](storage-simplification.md): Five architectural simplifications for sub-2 ms query latency on GCS.

@@ -49,6 +49,10 @@ func (m *mockStore) Stat(ctx context.Context, key string) (objectstore.Object, e
 	return objectstore.Object{}, nil
 }
 
+func (m *mockStore) ReadRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, objectstore.Object, error) {
+	return nil, objectstore.Object{}, nil
+}
+
 func (m *mockStore) Delete(ctx context.Context, key string) error {
 	return nil
 }

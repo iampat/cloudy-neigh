@@ -1,15 +1,15 @@
 # Storage and Query Simplification
 
-**Status:** Draft, 2026-09-03, v0
+**Status:** Accepted, 2026-09-03, v1
 
 ## Problem
 
 The current storage design has three limitations that degrade read latency on
 Google Cloud Storage (GCS):
 
-1. Cold reads execute three sequential GCS round trips (\`refs/heads\` to
-   \`manifests/\` to \`cas/\`), causing 60 to 90 ms latency.
-2. Reads execute a network check on \`refs/heads\` on every call, preventing
+1. Cold reads execute three sequential GCS round trips (`refs/heads` to
+   `manifests/` to `cas/`), causing 60 to 90 ms latency.
+2. Reads execute a network check on `refs/heads` on every call, preventing
    zero-network query execution.
 3. The manifest stores a flat key map that grows to 106 MB for one million
    documents, causing high CPU unmarshaling and memory pressure.
@@ -20,7 +20,7 @@ coordination services.
 
 ## Model
 
-\`\`\`text
+```text
 Current Architecture (3 GCS Hops, Multi-WAL, Monolithic Manifest):
 Query ──▶ refs/heads (25ms) ──▶ manifests/ CAS (25ms) ──▶ cas/ Blob (25ms)
 Ingestion ──▶ KVFS Store ──▶ Per-Branch WAL ──▶ Flush to CAS ──▶ Map Manifest
@@ -30,35 +30,35 @@ Query ──▶ Pinned Snapshot Pointer ──▶ In-Memory Memtable (<1ms, 0 GC
                                   ──▶ Local NVMe SSD Cache (<100µs, 0 GCS Hops)
 Cold Miss ──▶ refs/heads (<=14KB Manifest) (25ms) ──▶ Range Read (25ms)
 Ingestion ──▶ Single Global WAL ──▶ Memtable ──▶ Columnar Files (.vec/.post/.doc)
-\`\`\`
+```
 
 ## 1. Collapse 3-Hop Read Chain into Branch Reference
 
 ### Problem
 
-\`kvfs/store.go\` executes three sequential round trips for cold reads:
-1. \`store.Get\` on \`refs/heads/<branch>\` to resolve the manifest hash.
-2. \`store.Get\` on \`manifests/<hash>\` to fetch the manifest protobuf.
-3. \`store.Get\` on \`cas/<hash>\` to fetch the payload blob.
+`kvfs/store.go` executes three sequential round trips for cold reads:
+1. `store.Get` on `refs/heads/<branch>` to resolve the manifest hash.
+2. `store.Get` on `manifests/<hash>` to fetch the manifest protobuf.
+3. `store.Get` on `cas/<hash>` to fetch the payload blob.
 
 On GCS, intra-region time to first byte (TTFB) is 20 to 30 ms. Three round trips
 require 60 to 90 ms.
 
 ### Design
 
-Write the segment descriptor list directly into \`refs/heads/<branch>\`.
-Eliminate the intermediate \`manifests/\` content-addressed storage (CAS) layer.
+Write the segment descriptor list directly into `refs/heads/<branch>`.
+Eliminate the intermediate `manifests/` content-addressed storage (CAS) layer.
 One GCS read returns both the branch generation and the segment list.
 
 Retain three columnar files per segment:
-1. \`segments/<id>.vec\`: dense float vectors.
-2. \`segments/<id>.post\`: inverted index postings and term dictionaries.
-3. \`segments/<id>.doc\`: document attributes and text payloads.
+1. `segments/<id>.vec`: dense float vectors.
+2. `segments/<id>.post`: inverted index postings and term dictionaries.
+3. `segments/<id>.doc`: document attributes and text payloads.
 
-Separate files preserve cache isolation. Vector searches download \`.vec\` files
+Separate files preserve cache isolation. Vector searches download `.vec` files
 without polluting local memory or NVMe cache with document text.
 
-\`\`\`proto
+```proto
 syntax = "proto3";
 
 package cloudyneigh.storage.v1;
@@ -81,7 +81,7 @@ message BranchManifest {
   uint64 schema_version = 2;
   repeated SegmentRef segments = 3;
 }
-\`\`\`
+```
 
 Bound manifests to 14 KiB (about 150 segments). This fits in the TCP initial
 window (IW10) of 10 packets, ensuring single round-trip transfers on cold
@@ -91,7 +91,7 @@ connections.
 
 ### Problem
 
-\`kvfs/store.go\` checks \`refs/heads/<branch>\` on every read call. Even when a
+`kvfs/store.go` checks `refs/heads/<branch>` on every read call. Even when a
 manifest is cached in memory, the read incurs a 20 to 30 ms network check.
 Writes committed to the write-ahead log (WAL) remain invisible until flushes
 commit to GCS.
@@ -99,11 +99,11 @@ commit to GCS.
 ### Design
 
 Query nodes continuously tail the global WAL in the background and update an
-in-memory \`activeMemtable\`.
+in-memory `activeMemtable`.
 
 Query nodes maintain a single atomic pointer to a composite view:
 
-\`\`\`go
+```go
 type EngineView struct {
 	Snap *Snapshot
 	Mem  *Memtable
@@ -113,50 +113,44 @@ type Engine struct {
 	view    atomic.Pointer[EngineView]
 	lastSeq atomic.Uint64
 }
-\`\`\`
+```
 
-Updating \`Snap\` and \`Mem\` atomically prevents split-state race conditions during
+Updating `Snap` and `Mem` atomically prevents split-state race conditions during
 flushes.
 
 A query pins the snapshot using a reader lease:
 
-\`\`\`go
+```go
 type ReaderLease struct {
 	snap     *Snapshot
-	timer    *time.Timer
 	released atomic.Bool
 }
 
-func (s *Snapshot) AcquireWithLease(maxDuration time.Duration) *ReaderLease {
+func (s *Snapshot) AcquireWithLease() *ReaderLease {
 	s.refCount.Add(1)
-	lease := &ReaderLease{snap: s}
-	lease.timer = time.AfterFunc(maxDuration, func() {
-		lease.Release()
-	})
-	return lease
+	return &ReaderLease{snap: s}
 }
 
 func (l *ReaderLease) Release() {
 	if l.released.CompareAndSwap(false, true) {
-		l.timer.Stop()
 		l.snap.refCount.Add(-1)
 	}
 }
-\`\`\`
+```
 
-Queries execute across the in-memory \`activeMemtable\` and immutable local
-segments. When the client supplies \`min_seq\`, the node executes immediately if
-\`lastSeq >= min_seq\`. Read latency drops to under 2 ms with zero network calls.
+Queries execute across the in-memory `activeMemtable` and immutable local
+segments. When the client supplies `min_seq`, the node executes immediately if
+`lastSeq >= min_seq`. Read latency drops to under 2 ms with zero network calls.
 
-Compaction sets a tombstone with timestamp \`dropped_at\` on replaced segments.
+Compaction sets a tombstone with timestamp `dropped_at` on replaced segments.
 Segments remain protected by a 2-hour retention time to live (TTL). Segments are
-deleted only when \`refCount == 0\` and the retention period has expired.
+deleted only when `refCount == 0` and the retention period has expired.
 
 ## 3. Bounded Segment Descriptors and Footer Metadata
 
 ### Problem
 
-\`proto/kvfs/v1/kvfs.proto\` defines \`Manifest\` as \`map<string, ManifestEntry>\`.
+`proto/kvfs/v1/kvfs.proto` defines `Manifest` as `map<string, ManifestEntry>`.
 At one million documents, the manifest reaches 106 MB. Unmarshaling takes 800
 to 2200 ms of CPU time and 400 MB of heap memory.
 
@@ -170,7 +164,7 @@ Store secondary block indexes and Split-Block Bloom filters in segment footers
 (the last 4 to 16 KiB of the file). The root manifest tracks only segment
 boundaries and column file locations.
 
-\`\`\`proto
+```proto
 syntax = "proto3";
 
 package cloudyneigh.storage.v1;
@@ -188,7 +182,7 @@ message SegmentFooter {
   repeated BlockEntry block_index = 2;
   uint64 tombstone_count = 3;
 }
-\`\`\`
+```
 
 Use a 2-3 level Log-Structured Merge (LSM) compaction hierarchy to keep the
 active segment count bounded to 20 or fewer segments. Track document deletions
@@ -198,14 +192,14 @@ with Roaring Bitsets. Purge tombstones during Level 2 compaction.
 
 ### Problem
 
-\`objectstore.Store\` lacks range read support. Reading a 4 KiB footer or 128 KiB
+`objectstore.Store` lacks range read support. Reading a 4 KiB footer or 128 KiB
 chunk downloads the entire 64 MiB segment file, requiring 400 to 800 ms.
 
 ### Design
 
-Add \`ReadRange\` to \`objectstore.Store\`:
+Add `ReadRange` to `objectstore.Store`:
 
-\`\`\`go
+```go
 type Store interface {
 	io.Closer
 	Stat(ctx context.Context, key string) (Object, error)
@@ -216,18 +210,18 @@ type Store interface {
 	Exists(ctx context.Context, key string) (bool, error)
 	List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error)
 }
-\`\`\`
+```
 
 Store segment files uncompressed in GCS. Compress internal blocks individually
 with Zstandard (Zstd) at 128 KiB (docs) and 256 KiB (vectors and postings).
 
 Deploy an ephemeral local NVMe solid-state drive (SSD) cache on GCE instances:
-1. Cache chunks at \`<cache_dir>/chunks/<seg_id>/<col>.<offset>_<len>.chunk\`.
-2. Stage writes to \`<cache_dir>/tmp/\` on the same filesystem. Use atomic POSIX
+1. Cache chunks at `<cache_dir>/chunks/<seg_id>/<col>.<offset>_<len>.chunk`.
+2. Stage writes to `<cache_dir>/tmp/` on the same filesystem. Use atomic POSIX
    rename to prevent torn reads.
-3. Coalesce concurrent cache misses using \`singleflight.Group\`.
-4. Read local chunks using \`os.File.ReadAt\` (\`pread\`) guarded by a 256-token
-   semaphore. Avoid \`mmap\` to prevent unnotified Go scheduler thread stalls on
+3. Coalesce concurrent cache misses using `singleflight.Group`.
+4. Read local chunks using `os.File.ReadAt` (`pread`) guarded by a 256-token
+   semaphore. Avoid `mmap` to prevent unnotified Go scheduler thread stalls on
    major page faults.
 5. Apply dynamic tail latency hedging at the rolling p95 latency. Cap extra
    requests to a 5% budget. Pause hedging on HTTP 429 and 503 errors.
@@ -236,22 +230,22 @@ Deploy an ephemeral local NVMe solid-state drive (SSD) cache on GCE instances:
 
 ### Problem
 
-\`wal.md\` and \`kvfs/store.go\` define per-branch WAL paths (\`wal/<branch>/\`), but
-\`ingestion.md\` mandates a single global WAL (\`wal/<020d_seq>.recordio\`). Tailing
+`wal.md` and `kvfs/store.go` define per-branch WAL paths (`wal/<branch>/`), but
+`ingestion.md` mandates a single global WAL (`wal/<020d_seq>.recordio`). Tailing
 hundreds of branch prefixes causes high GCS List operation costs.
 
 ### Design
 
-Delete \`kvfs/store.go\`. Standardize on a single global append-only log using
-\`logstream.Log\`.
+Delete `kvfs/store.go`. Standardize on a single global append-only log using
+`logstream.Log`.
 
-Retain branch compare-and-swap mechanics (\`kvfs/branch.go\`) using GCS generation
-match on \`refs/heads/<branch>\`.
+Retain branch compare-and-swap mechanics (`kvfs/branch.go`) using GCS generation
+match on `refs/heads/<branch>`.
 
 Ingestion workers tail the global WAL, route mutations to in-memory Memtables,
 and flush columnar segments directly to GCS.
 
-\`\`\`text
+```text
 Consolidated Layout:
 [Bucket Root]
 ├── refs/heads/               <-- Inlined Manifests (<14 KiB)
@@ -264,10 +258,10 @@ Consolidated Layout:
 └── wal/                      <-- Single Global WAL
     ├── 00000000000000000001.recordio
     └── 00000000000000000002.recordio
-\`\`\`
+```
 
 To protect shared copy-on-write segments across branches, garbage collection
-scans all active branch heads under \`refs/heads/*\` before deleting unreferenced
+scans all active branch heads under `refs/heads/*` before deleting unreferenced
 segments whose 2-hour retention period has expired.
 
 ## Latency Summary

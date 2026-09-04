@@ -157,34 +157,75 @@ func (d *localStore) Stat(ctx context.Context, key string) (Object, error) {
 	}, nil
 }
 
-func (d *localStore) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, Object{}, err
-	}
+func (d *localStore) open(key string) (*os.File, os.FileInfo, error) {
 	target, err := d.path(key)
 	if err != nil {
-		return nil, Object{}, err
+		return nil, nil, err
 	}
 	f, err := os.Open(target)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, Object{}, fmt.Errorf("key %q: %w", key, ErrNotFound)
+			return nil, nil, fmt.Errorf("key %q: %w", key, ErrNotFound)
 		}
-		return nil, Object{}, err
+		return nil, nil, err
 	}
 	fi, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
-		return nil, Object{}, err
+		return nil, nil, err
 	}
 	if fi.IsDir() {
 		_ = f.Close()
-		return nil, Object{}, fmt.Errorf("key %q: %w", key, ErrNotFound)
+		return nil, nil, fmt.Errorf("key %q: %w", key, ErrNotFound)
+	}
+	return f, fi, nil
+}
+
+func (d *localStore) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, Object{}, err
+	}
+	f, fi, err := d.open(key)
+	if err != nil {
+		return nil, Object{}, err
 	}
 	return f, Object{
 		Key:        key,
 		Generation: localGeneration(fi.ModTime().UnixNano(), fi.Size()),
 		Size:       fi.Size(),
+	}, nil
+}
+
+type fileRangeCloser struct {
+	*io.SectionReader
+	f *os.File
+}
+
+func (c *fileRangeCloser) Close() error {
+	return c.f.Close()
+}
+
+func (d *localStore) ReadRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, Object, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, Object{}, err
+	}
+	if offset < 0 || length < 0 {
+		return nil, Object{}, fmt.Errorf("objectstore: invalid range [offset=%d, length=%d]", offset, length)
+	}
+	f, fi, err := d.open(key)
+	if err != nil {
+		return nil, Object{}, err
+	}
+	size := fi.Size()
+	if offset > size {
+		_ = f.Close()
+		return nil, Object{}, fmt.Errorf("objectstore: offset %d exceeds object size %d", offset, size)
+	}
+	r := io.NewSectionReader(f, offset, length)
+	return &fileRangeCloser{SectionReader: r, f: f}, Object{
+		Key:        key,
+		Generation: localGeneration(fi.ModTime().UnixNano(), size),
+		Size:       size,
 	}, nil
 }
 
