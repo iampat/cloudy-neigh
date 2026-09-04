@@ -1,6 +1,9 @@
 test --test_output=errors
 test --test_arg=-test.shuffle=on
 
+test --config=race
+
+
 build:go1.26 --@io_bazel_rules_go//go/toolchain:sdk_version=1.26.5
 build:go1.27 --@io_bazel_rules_go//go/toolchain:sdk_version=1.27.0
 

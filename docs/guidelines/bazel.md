@@ -21,3 +21,10 @@ A stale `use_repo` call breaks the build.
 
 Buildifier formats build files: `bazel run //:buildifier`. It runs with its
 default configuration. Formatting is not a review topic.
+
+## Invalidation and performance
+
+Always pass `--config=race` on `bazel build`, `bazel test`, and `bazel coverage`.
+`.bazelrc` enables this as default for `test` and `coverage`. Toggling the race
+flag discards the analysis cache and forces expensive rebuilds.
+
