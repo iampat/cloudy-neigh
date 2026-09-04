@@ -33,7 +33,7 @@ Deterministic Simulation Stack
              ▼                           ▼
 ┌────────────────────────┐  ┌────────────────────────────┐
 │ cloudy-neigh Engine    │  │ In-Memory Shadow Oracle    │
-│ (kvfs + logstream)     │  │ (Single-threaded std map)  │
+│ (ingestion + logstream)│  │ (Single-threaded std map)  │
 └────────────┬───────────┘  └────────────┬───────────────┘
              │                           │
              ▼                           │
@@ -84,4 +84,4 @@ The harness continuously checks these invariants:
 
 1. Define `Clock` interface for simulation testing.
 2. Implement `FaultStore` decorator in `objectstore`.
-3. Add randomized multi-writer differential tests for `logstream` and `kvfs`.
+3. Add randomized multi-writer differential tests for `logstream` and branch operations.
