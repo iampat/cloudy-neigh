@@ -56,9 +56,9 @@ to the rules you are reviewed against.
 
 - Go (`*.go`, `go.mod`): `docs/guidelines/go.md`
 - Bazel (`BUILD.bazel`, `MODULE.bazel`, `.bazelrc`): `docs/guidelines/bazel.md`
+- Python (`*.py`, `*requirements*.txt`): `docs/guidelines/python.md`
 
-Python, JavaScript, and Protobuf get a file here when their first source file
-lands.
+JavaScript and Protobuf get a file here when their first source file lands.
 
 ## Google Cloud
 

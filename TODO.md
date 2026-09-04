@@ -78,6 +78,10 @@
   - [ ] Implement injectable `Clock` interface in `internal/xtime`.
   - [ ] Build deterministic `FaultStore` proxy wrapping `objectstore.memDriver`.
   - [ ] Implement shadow invariant differential test harness for `logstream` and `kvfs`.
+- [ ] Integrate Python into Bazel.
+  - [ ] Configure `rules_python` in `MODULE.bazel` for hermetic Python toolchains.
+  - [ ] Add Bazel targets (`py_binary`, `py_library`) for Python scripts.
+  - [ ] Integrate `ruff` and type-checking into `bazel test` and format targets.
 
 ## Done
 

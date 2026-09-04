@@ -1,7 +1,10 @@
 .vscode
 data
+datasets
+.venv
+.ruff_cache
 *~
-\#*#
-.\#*
+#*#
+.#*
 bazel-*
 .playwright-mcp/
