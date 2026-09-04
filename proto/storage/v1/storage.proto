@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package cloudyneigh.storage.v1;
+
+option go_package = "github.com/iampat/cloudy-neigh/proto/storage/v1;storagepb";
+
+enum MutationOp {
+  MUTATION_OP_UNSPECIFIED = 0;
+  PUT = 1;
+  DELETE = 2;
+}
+
+message DocumentMutation {
+  string branch = 1;
+  string doc_id = 2;
+  MutationOp op = 3;
+  bytes payload = 4;
+}
+
+message BranchLifecycleEvent {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    FORK = 1;
+    DELETE = 2;
+  }
+  Type type = 1;
+  string branch = 2;
+  string parent_branch = 3;
+}
+
+message WalRecord {
+  oneof record {
+    DocumentMutation mutation = 1;
+    BranchLifecycleEvent branch_event = 2;
+  }
+}
+
+message SegmentRef {
+  string segment_id = 1;
+  uint64 min_doc_id = 2;
+  uint64 max_doc_id = 3;
+  uint64 doc_count = 4;
+  uint32 level = 5;
+  int64 vectors_size = 6;
+  int64 postings_size = 7;
+  int64 docs_size = 8;
+}
+
+message BranchManifest {
+  uint64 checkpoint_seq = 1;
+  uint64 schema_version = 2;
+  repeated SegmentRef segments = 3;
+}
+
+message BlockEntry {
+  uint64 min_doc_id = 1;
+  uint64 max_doc_id = 2;
+  uint64 file_offset = 3;
+  uint32 compressed_length = 4;
+  uint32 uncompressed_length = 5;
+}
+
+message SegmentFooter {
+  uint32 bloom_filter_bytes = 1;
+  repeated BlockEntry block_index = 2;
+  uint64 tombstone_count = 3;
+}

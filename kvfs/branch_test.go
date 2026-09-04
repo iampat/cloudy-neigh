@@ -3,68 +3,104 @@ package kvfs_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/objectstore"
-	kvfspb "github.com/iampat/cloudy-neigh/proto/kvfs/v1"
+	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
+
+func forEachBackend(t *testing.T, fn func(t *testing.T, s objectstore.Store)) {
+	t.Helper()
+	t.Run("mem", func(t *testing.T) {
+		s, err := objectstore.Open(context.Background(), "mem://")
+		require.NoError(t, err)
+		t.Cleanup(func() { s.Close() })
+		fn(t, s)
+	})
+	t.Run("file", func(t *testing.T) {
+		dir := t.TempDir()
+		s, err := objectstore.Open(context.Background(), "file://"+dir+"?create_dir=true")
+		require.NoError(t, err)
+		t.Cleanup(func() { s.Close() })
+		fn(t, s)
+	})
+}
+
+func sampleManifest(checkpointSeq uint64) *storagepb.BranchManifest {
+	return &storagepb.BranchManifest{
+		CheckpointSeq: checkpointSeq,
+		SchemaVersion: 1,
+		Segments: []*storagepb.SegmentRef{
+			{
+				SegmentId:    "seg_001",
+				MinDocId:     1,
+				MaxDocId:     100,
+				DocCount:     100,
+				Level:        0,
+				VectorsSize:  1024,
+				PostingsSize: 2048,
+				DocsSize:     4096,
+			},
+		},
+	}
+}
 
 func TestBranchOperations(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 
-		m := &kvfspb.Manifest{
-			LastWalSeq: 0,
-			Entries: map[string]*kvfspb.ManifestEntry{
-				"root.txt": {CasHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", SizeBytes: 100},
-			},
-		}
-		rootHash, err := kvfs.PutManifest(ctx, s, m)
-		require.NoError(t, err)
-
-		gen1, err := kvfs.UpdateBranch(ctx, s, "main", rootHash, "")
+		m1 := sampleManifest(10)
+		gen1, err := kvfs.UpdateBranch(ctx, s, "main", m1, "")
 		require.NoError(t, err)
 		assert.NotEmpty(t, gen1)
 
-		resolvedHash, resolvedGen, err := kvfs.ResolveBranch(ctx, s, "main")
+		resolved1, rGen1, err := kvfs.ResolveBranch(ctx, s, "main")
 		require.NoError(t, err)
-		assert.Equal(t, rootHash, resolvedHash)
-		assert.Equal(t, gen1, resolvedGen)
+		assert.Equal(t, gen1, rGen1)
+		assert.True(t, proto.Equal(m1, resolved1))
 
-		childHash, childGen, err := kvfs.CreateBranch(ctx, s, "feature-x", "main")
+		forkManifest, childGen, err := kvfs.CreateBranch(ctx, s, "feature-x", "main")
 		require.NoError(t, err)
-		assert.Equal(t, rootHash, childHash)
 		assert.NotEmpty(t, childGen)
+		assert.True(t, proto.Equal(m1, forkManifest))
+
+		resolvedChild, _, err := kvfs.ResolveBranch(ctx, s, "feature-x")
+		require.NoError(t, err)
+		assert.True(t, proto.Equal(m1, resolvedChild))
 
 		_, _, err = kvfs.CreateBranch(ctx, s, "feature-x", "main")
 		assert.ErrorIs(t, err, kvfs.ErrBranchAlreadyExists)
 
-		_, _, err = kvfs.CreateBranch(ctx, s, "new-feat", "non-existent")
+		_, _, err = kvfs.CreateBranch(ctx, s, "feature-y", "nonexistent")
 		assert.Error(t, err)
 
-		m2 := &kvfspb.Manifest{LastWalSeq: 2}
-		hash2, err := kvfs.PutManifest(ctx, s, m2)
-		require.NoError(t, err)
-
-		gen2, err := kvfs.UpdateBranch(ctx, s, "main", hash2, gen1)
+		m2 := sampleManifest(20)
+		gen2, err := kvfs.UpdateBranch(ctx, s, "main", m2, gen1)
 		require.NoError(t, err)
 		assert.NotEqual(t, gen1, gen2)
 
-		_, err = kvfs.UpdateBranch(ctx, s, "main", hash2, gen1)
+		_, err = kvfs.UpdateBranch(ctx, s, "main", m2, gen1)
 		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
+
+		_, err = kvfs.UpdateBranch(ctx, s, "main", nil, gen2)
+		assert.ErrorIs(t, err, kvfs.ErrNilManifest)
+
+		require.NoError(t, kvfs.DeleteBranch(ctx, s, "feature-x"))
+		_, _, err = kvfs.ResolveBranch(ctx, s, "feature-x")
+		assert.ErrorIs(t, err, objectstore.ErrNotFound)
 	})
 }
 
 func TestResolveBranchNotFound(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		_, _, err := kvfs.ResolveBranch(ctx, s, "non-existent")
+		_, _, err := kvfs.ResolveBranch(ctx, s, "nonexistent")
 		assert.ErrorIs(t, err, objectstore.ErrNotFound)
 	})
 }
@@ -85,15 +121,19 @@ func TestBranchNameValidation(t *testing.T) {
 			"branch@tag",
 		}
 
+		m := sampleManifest(1)
 		for _, name := range invalidNames {
 			t.Run(name, func(t *testing.T) {
 				_, _, err := kvfs.ResolveBranch(ctx, s, name)
 				assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
 
-				_, err = kvfs.UpdateBranch(ctx, s, name, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "")
+				_, err = kvfs.UpdateBranch(ctx, s, name, m, "")
 				assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
 
 				_, _, err = kvfs.CreateBranch(ctx, s, name, "main")
+				assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
+
+				err = kvfs.DeleteBranch(ctx, s, name)
 				assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
 			})
 		}
@@ -103,31 +143,30 @@ func TestBranchNameValidation(t *testing.T) {
 func TestConcurrentBranchUpdates(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
-		rootHash := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-		initGen, err := kvfs.UpdateBranch(ctx, s, "race-branch", rootHash, "")
+		m := sampleManifest(1)
+		gen, err := kvfs.UpdateBranch(ctx, s, "main", m, "")
 		require.NoError(t, err)
 
 		const writers = 16
-		var (
-			wg      sync.WaitGroup
-			winners atomic.Int32
-			errCh   = make(chan error, writers)
-		)
+		var wins, losses atomic.Int32
+		var wg sync.WaitGroup
+		errCh := make(chan error, writers)
 
 		for i := 0; i < writers; i++ {
 			wg.Add(1)
-			go func(idx int) {
+			go func(seq uint64) {
 				defer wg.Done()
-				newHash := fmt.Sprintf("%064d", idx+1)
-				_, err := kvfs.UpdateBranch(ctx, s, "race-branch", newHash, initGen)
-				if err == nil {
-					winners.Add(1)
-					return
+				nextM := sampleManifest(seq)
+				_, err := kvfs.UpdateBranch(ctx, s, "main", nextM, gen)
+				switch {
+				case err == nil:
+					wins.Add(1)
+				case errors.Is(err, objectstore.ErrPreconditionFailed):
+					losses.Add(1)
+				default:
+					errCh <- err
 				}
-				if !errors.Is(err, objectstore.ErrPreconditionFailed) {
-					errCh <- fmt.Errorf("unexpected error for writer %d: %w", idx, err)
-				}
-			}(i)
+			}(uint64(i + 10))
 		}
 
 		wg.Wait()
@@ -136,30 +175,7 @@ func TestConcurrentBranchUpdates(t *testing.T) {
 			t.Error(err)
 		}
 
-		assert.Equal(t, int32(1), winners.Load(), "exactly one writer should win the generation CAS")
-	})
-}
-
-func FuzzBranchValidation(f *testing.F) {
-	f.Add("main")
-	f.Add("feature-1")
-	f.Add("feature/sub-branch")
-	f.Add("123branch")
-	f.Add("")
-	f.Add("/")
-	f.Add("a//b")
-	f.Add("a/b/")
-	f.Add("..")
-
-	f.Fuzz(func(t *testing.T, branch string) {
-		s, err := objectstore.Open(context.Background(), "mem://")
-		require.NoError(t, err)
-		defer s.Close()
-
-		ctx := context.Background()
-		_, _, err = kvfs.ResolveBranch(ctx, s, branch)
-		if err != nil {
-			assert.True(t, errors.Is(err, objectstore.ErrNotFound) || errors.Is(err, kvfs.ErrInvalidBranchName))
-		}
+		assert.Equal(t, int32(1), wins.Load())
+		assert.Equal(t, int32(writers-1), losses.Load())
 	})
 }

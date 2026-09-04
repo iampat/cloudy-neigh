@@ -316,6 +316,52 @@ func runContract(t *testing.T, open func(t *testing.T) objectstore.Store, cfg co
 		_, err = s.Stat(ctx, prefix(t, s)+"nope")
 		assert.ErrorIs(t, err, objectstore.ErrNotFound)
 	})
+
+	t.Run("ReadRange", func(t *testing.T) {
+		s := open(t)
+		k := prefix(t, s) + "range"
+		content := "0123456789abcdefghijklmnopqrstuvwxyz"
+		gen := put(t, s, k, content)
+		totalSize := int64(len(content))
+
+		rc, obj, err := s.ReadRange(ctx, k, 10, 6)
+		require.NoError(t, err)
+		assert.Equal(t, gen, obj.Generation)
+		assert.Equal(t, totalSize, obj.Size)
+		assert.Equal(t, "abcdef", read(t, rc))
+
+		rc, _, err = s.ReadRange(ctx, k, 0, 10)
+		require.NoError(t, err)
+		assert.Equal(t, "0123456789", read(t, rc))
+
+		rc, _, err = s.ReadRange(ctx, k, 26, 10)
+		require.NoError(t, err)
+		assert.Equal(t, "qrstuvwxyz", read(t, rc))
+
+		rc, _, err = s.ReadRange(ctx, k, 30, 20)
+		require.NoError(t, err)
+		assert.Equal(t, "uvwxyz", read(t, rc))
+
+		rc, _, err = s.ReadRange(ctx, k, 5, 0)
+		require.NoError(t, err)
+		assert.Equal(t, "", read(t, rc))
+
+		rc, _, err = s.ReadRange(ctx, k, totalSize, 5)
+		require.NoError(t, err)
+		assert.Equal(t, "", read(t, rc))
+
+		_, _, err = s.ReadRange(ctx, k, -1, 5)
+		assert.Error(t, err)
+
+		_, _, err = s.ReadRange(ctx, k, 5, -1)
+		assert.Error(t, err)
+
+		_, _, err = s.ReadRange(ctx, k, totalSize+1, 5)
+		assert.Error(t, err)
+
+		_, _, err = s.ReadRange(ctx, prefix(t, s)+"nope", 0, 5)
+		assert.ErrorIs(t, err, objectstore.ErrNotFound)
+	})
 }
 
 func openURL(tb testing.TB, url string) objectstore.Store {

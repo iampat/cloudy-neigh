@@ -3,21 +3,21 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
 
 proto_library(
-    name = "kvfspb_proto",
-    srcs = ["kvfs.proto"],
+    name = "storagepb_proto",
+    srcs = ["storage.proto"],
     visibility = ["//visibility:public"],
 )
 
 go_proto_library(
-    name = "kvfspb_go_proto",
-    importpath = "github.com/iampat/cloudy-neigh/proto/kvfs/v1",
-    proto = ":kvfspb_proto",
+    name = "storagepb_go_proto",
+    importpath = "github.com/iampat/cloudy-neigh/proto/storage/v1",
+    proto = ":storagepb_proto",
     visibility = ["//visibility:public"],
 )
 
 go_library(
-    name = "kvfs",
-    embed = [":kvfspb_go_proto"],
-    importpath = "github.com/iampat/cloudy-neigh/proto/kvfs/v1",
+    name = "storage",
+    embed = [":storagepb_go_proto"],
+    importpath = "github.com/iampat/cloudy-neigh/proto/storage/v1",
     visibility = ["//visibility:public"],
 )

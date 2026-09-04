@@ -65,6 +65,35 @@ func (m *memStore) Get(ctx context.Context, key string) (io.ReadCloser, Object, 
 	}, nil
 }
 
+func (m *memStore) ReadRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, Object, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, Object{}, err
+	}
+	if offset < 0 || length < 0 {
+		return nil, Object{}, fmt.Errorf("objectstore: invalid range [offset=%d, length=%d]", offset, length)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.objects[key]
+	if !ok {
+		return nil, Object{}, fmt.Errorf("key %q: %w", key, ErrNotFound)
+	}
+	size := int64(len(e.data))
+	if offset > size {
+		return nil, Object{}, fmt.Errorf("objectstore: offset %d exceeds object size %d", offset, size)
+	}
+	end := offset + length
+	if end > size {
+		end = size
+	}
+	data := bytes.Clone(e.data[offset:end])
+	return io.NopCloser(bytes.NewReader(data)), Object{
+		Key:        key,
+		Generation: e.generation,
+		Size:       size,
+	}, nil
+}
+
 func (m *memStore) Exists(ctx context.Context, key string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
