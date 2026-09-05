@@ -6,9 +6,8 @@ comment rules in `.claude/CLAUDE.md` also apply.
 
 ## Generated build files
 
-`BUILD.bazel` files are gazelle output. Regenerate them with
-`bazel run //:gazelle`. Do not hand-edit. To resolve a conflict, delete the
-file and regenerate: `rm <pkg>/BUILD.bazel && bazel run //:gazelle`.
+Prefer Gazelle for authoring and editing `BUILD.bazel` files. Avoid editing them
+by hand unless Gazelle cannot express the target.
 
 ## Dependency changes
 
