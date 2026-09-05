@@ -82,6 +82,9 @@
   - [ ] Configure `rules_python` in `MODULE.bazel` for hermetic Python toolchains.
   - [ ] Add Bazel targets (`py_binary`, `py_library`) for Python scripts.
   - [ ] Integrate `ruff` and type-checking into `bazel test` and format targets.
+- [ ] Enable `--config=race` by default for `build` in `.bazelrc`. Gazelle
+      currently fails analysis under race mode because rules_go rejects race
+      instrumentation when cgo is disabled.
 
 ## Done
 

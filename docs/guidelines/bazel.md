@@ -6,8 +6,8 @@ comment rules in `.claude/CLAUDE.md` also apply.
 
 ## Generated build files
 
-Use Gazelle for authoring or editing `BUILD.bazel` files. Never author or edit
-them by hand.
+Prefer Gazelle for authoring and editing `BUILD.bazel` files. Avoid editing them
+by hand unless Gazelle cannot express the target.
 
 ## Dependency changes
 
@@ -19,9 +19,3 @@ A stale `use_repo` call breaks the build.
 
 Buildifier formats build files: `bazel run //:buildifier`. It runs with its
 default configuration. Formatting is not a review topic.
-
-## Invalidation and performance
-
-`.bazelrc` enables `--config=race` by default for `build`. Toggling the race
-flag discards the analysis cache and forces expensive rebuilds.
-
