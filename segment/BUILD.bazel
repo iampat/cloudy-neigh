@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "segment",
+    srcs = [
+        "reader.go",
+        "writer.go",
+    ],
+    importpath = "github.com/iampat/cloudy-neigh/segment",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//proto/storage/v1:storage",
+        "//recordio",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_test(
+    name = "segment_test",
+    srcs = ["segment_test.go"],
+    deps = [
+        ":segment",
+        "//proto/storage/v1:storage",
+        "//recordio",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
