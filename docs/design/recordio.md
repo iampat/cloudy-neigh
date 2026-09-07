@@ -46,7 +46,8 @@ RecordIO library in Go.
 - Sharded range scanner for parallel MapReduce-style readers.
 - Pluggable compression codecs (`recordio/codec/*`) for Zstandard, Snappy, and
   Gzip.
-- Generic protobuf integration (`recordio/protoio`).
+- Generic protobuf integration (`recordio/protoio`). `segment/` currently
+  serializes `DocumentMutation` protos directly and will migrate to `protoio`.
 
 ## Model
 
@@ -262,6 +263,8 @@ Scenario B: Bit-rot mid-stream -> Fatal
 - **Milestone 2: Generic Protobuf Sub-package (`recordio/protoio`)**
   - `ProtoWriter[T proto.Message]` with zero-allocation marshal append.
   - `ProtoScanner[T proto.Message]` with direct unmarshaling into destination.
+  - Note: `segment/` is an existing direct caller (`DocumentMutation`).
+    Migrate `segment/` to `protoio` when a second caller appears.
 - **Milestone 3: Compression Adapters (`recordio/codec/*`)**
   - Stream-level compression adapters for Zstandard, Snappy, and Gzip.
 - **Milestone 4: Distributed Range Reader and Fuzzing**
