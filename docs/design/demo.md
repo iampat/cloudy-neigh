@@ -9,24 +9,37 @@ early. Slow is fine. Fake is not: the demo runs the product dataflow on
 the product datastore. Every part is a bare-minimum implementation. We
 replace each part later, one at a time, when it must change.
 
-## Dataflow
+## Dataflow and Process Boundaries
 
 ```
-client ──gRPC Upsert──▶ ingest process ──append──▶ WAL (logstream)
-                            │ tails WAL
-                            ▼
-                  per-namespace memtable
-                            │ flush on threshold
-                            ▼
-          segment on objectstore + manifest CAS (refs/heads/<ns>)
-                            │
-client ──gRPC Query──▶ query process
-                       polls manifest, loads segments,
-                       exact cosine k-NN + Eq filter
+Client ──gRPC Upsert──▶ Ingest Engine ──batch──▶ WAL (LogStream on GCS)
+                            [Process 1]                      │
+                                                             │ tails WAL
+                                                             ▼
+                                                         Memtable
+                                                             │
+                                                             │ flush
+                                                             ▼
+                                                      segment.Writer
+                                                             │ [Process 2]
+                                                             ▼
+                                              Segment on GCS + Manifest CAS
+                                                             │
+                                                             │ polls manifest
+                                                             ▼
+Client ──gRPC Query────▶ Query Engine ◀──loads─────── segment.Reader
+                            [Process 3]
 ```
 
-A namespace maps to the `branch` field of `WalRecord`. Two processes,
-storage in the middle. The query engine never reads the WAL.
+A namespace maps to the `branch` field of `WalRecord`. Storage sits in the middle.
+
+### Process Boundaries
+
+1. **Process 1 (Ingest)**: Receives gRPC writes and appends batches to the WAL on object storage.
+2. **Process 2 (Flusher)**: Tails the WAL into a per-namespace memtable, flushes via `segment.Writer`, and commits the manifest with atomic CAS.
+3. **Process 3 (Query)**: Polls the manifest, streams new segments with `segment.Reader` into an in-memory vector array, and serves exact k-NN queries.
+
+For the demo binary, Process 1 and Process 2 are packaged under the `cloudyd ingest` subcommand, but maintain clean code isolation.
 
 ## Components
 
@@ -73,9 +86,12 @@ All honest, all replaced later behind a stable boundary.
 - [X] Write `proto/cloudyneigh/v1/index.proto`: `Upsert`, `Delete`, `Query`,
       document with id, attributes, one vector. `UpsertRequest` carries
       repeated documents.
-- [ ] `segment/`: writer that dumps a memtable to one recordio file of
-      `DocumentMutation` protos, and a reader.
-- [ ] Tests: roundtrip, latest-wins order, torn tail.
+- [X] `segment/writer.go`: `Writer` serializing `DocumentMutation` protos into
+      RecordIO frames with CRC-32C header and footer checksums.
+- [X] `segment/reader.go`: `Reader` scanning RecordIO frames, unmarshaling
+      `DocumentMutation` protos, detecting torn writes and clean EOF.
+- [X] `segment/segment_test.go`: table-driven tests for round-trip equality,
+      FIFO order preservation for latest-wins replay, and torn tail resilience.
 
 ### M2: ingestion engine
 

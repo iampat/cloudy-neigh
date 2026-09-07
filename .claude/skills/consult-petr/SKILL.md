@@ -128,6 +128,7 @@ how the design went.
 - A bug or invariant failure in a complex algorithmic scenario.
 - A hot path where the constant factor decides the latency target.
 - A correctness argument that needs a proof, not a test.
+- Reviewing code or a PR. Start immediately without asking for approval. Let Petr decide what to focus on and how to review, unless instructed otherwise.
 
 Do not ask for plumbing, glue code, configuration, or a problem the standard
 library already answers.
