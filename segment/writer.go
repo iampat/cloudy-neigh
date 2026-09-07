@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/iampat/cloudy-neigh/kvfs"
+	"github.com/iampat/cloudy-neigh/namespace"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"github.com/iampat/cloudy-neigh/recordio"
 	"google.golang.org/protobuf/proto"
 )
 
 var (
-	ErrInvalidBranchName = kvfs.ErrInvalidBranchName
+	ErrInvalidBranchName = namespace.ErrInvalidName
 	ErrNilMutation       = errors.New("segment: nil mutation")
 )
 
@@ -29,7 +29,7 @@ func (w *Writer) Write(m *storagepb.DocumentMutation) error {
 	if m == nil {
 		return ErrNilMutation
 	}
-	if err := kvfs.ValidateBranch(m.Branch); err != nil {
+	if err := namespace.Validate(m.Branch); err != nil {
 		return err
 	}
 	var err error

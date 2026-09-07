@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/namespace"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"google.golang.org/grpc/codes"
@@ -31,7 +31,7 @@ func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequ
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: nil request")
 	}
-	if err := kvfs.ValidateBranch(req.Namespace); err != nil {
+	if err := namespace.Validate(req.Namespace); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "grpcapi: invalid namespace: %v", err)
 	}
 	if len(req.Documents) == 0 {
@@ -86,7 +86,7 @@ func (s *IngestServer) Delete(ctx context.Context, req *cloudyneighpb.DeleteRequ
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: nil request")
 	}
-	if err := kvfs.ValidateBranch(req.Namespace); err != nil {
+	if err := namespace.Validate(req.Namespace); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "grpcapi: invalid namespace: %v", err)
 	}
 	if len(req.Ids) == 0 {

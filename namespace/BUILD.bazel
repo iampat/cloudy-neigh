@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "namespace",
+    srcs = ["namespace.go"],
+    importpath = "github.com/iampat/cloudy-neigh/namespace",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "namespace_test",
+    srcs = ["namespace_test.go"],
+    deps = [
+        ":namespace",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/iampat/cloudy-neigh/grpcapi",
     visibility = ["//visibility:public"],
     deps = [
-        "//kvfs",
         "//logstream",
+        "//namespace",
         "//proto/cloudyneigh/v1:cloudyneigh",
         "//proto/storage/v1:storage",
         "@org_golang_google_grpc//codes",
