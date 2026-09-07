@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/iampat/cloudy-neigh/segment",
     visibility = ["//visibility:public"],
     deps = [
+        "//kvfs",
         "//proto/storage/v1:storage",
         "//recordio",
         "@org_golang_google_protobuf//proto",
