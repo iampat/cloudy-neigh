@@ -283,3 +283,117 @@ func BenchmarkReader(b *testing.B) {
 		}
 	}
 }
+
+func TestBranchValidation(t *testing.T) {
+	valid := []string{"main", "dev_1", "feature-branch", "Staging_v2-test"}
+	for _, branch := range valid {
+		var buf bytes.Buffer
+		w := segment.NewWriter(&buf)
+		m := &storagepb.DocumentMutation{
+			Branch: branch,
+			DocId:  "doc-1",
+			Op:     storagepb.MutationOp_PUT,
+		}
+		if err := w.Write(m); err != nil {
+			t.Errorf("expected valid branch %q, got error: %v", branch, err)
+		}
+	}
+
+	invalid := []string{
+		"",
+		"features/search",
+		"/root",
+		"123num",
+		"-dash",
+		"_under",
+		"branch space",
+		"tag@1",
+	}
+	for _, branch := range invalid {
+		var buf bytes.Buffer
+		w := segment.NewWriter(&buf)
+		m := &storagepb.DocumentMutation{
+			Branch: branch,
+			DocId:  "doc-1",
+			Op:     storagepb.MutationOp_PUT,
+		}
+		err := w.Write(m)
+		if !errors.Is(err, segment.ErrInvalidBranchName) {
+			t.Errorf("expected ErrInvalidBranchName for %q, got %v", branch, err)
+		}
+	}
+
+	w := segment.NewWriter(&bytes.Buffer{})
+	if err := w.Write(nil); !errors.Is(err, segment.ErrNilMutation) {
+		t.Errorf("expected ErrNilMutation, got %v", err)
+	}
+}
+
+func TestBranchIsolation(t *testing.T) {
+	mutations := []*storagepb.DocumentMutation{
+		{Branch: "branch_a", DocId: "doc-1", Op: storagepb.MutationOp_PUT, Payload: []byte("v1")},
+		{Branch: "branch_b", DocId: "doc-1", Op: storagepb.MutationOp_PUT, Payload: []byte("v1-b")},
+		{Branch: "branch_a", DocId: "doc-1", Op: storagepb.MutationOp_DELETE},
+		{Branch: "branch_b", DocId: "doc-1", Op: storagepb.MutationOp_PUT, Payload: []byte("v2-b")},
+	}
+
+	var buf bytes.Buffer
+	w := segment.NewWriter(&buf)
+	for _, m := range mutations {
+		if err := w.Write(m); err != nil {
+			t.Fatalf("Write failed: %v", err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	branchState := make(map[string]map[string]*storagepb.DocumentMutation)
+	r := segment.NewReader(&buf)
+	for {
+		m, err := r.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next failed: %v", err)
+		}
+		if _, ok := branchState[m.Branch]; !ok {
+			branchState[m.Branch] = make(map[string]*storagepb.DocumentMutation)
+		}
+		if m.Op == storagepb.MutationOp_DELETE {
+			delete(branchState[m.Branch], m.DocId)
+		} else {
+			branchState[m.Branch][m.DocId] = m
+		}
+	}
+
+	if _, exists := branchState["branch_a"]["doc-1"]; exists {
+		t.Fatal("expected doc-1 to be deleted in branch_a")
+	}
+	docB, exists := branchState["branch_b"]["doc-1"]
+	if !exists {
+		t.Fatal("expected doc-1 to exist in branch_b")
+	}
+	if string(docB.Payload) != "v2-b" {
+		t.Fatalf("expected v2-b, got %s", string(docB.Payload))
+	}
+}
+
+func TestWriterCloseCloser(t *testing.T) {
+	cw := &closingWriter{}
+	w := segment.NewWriter(cw)
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	if !cw.closed {
+		t.Fatal("expected underlying closer to be closed")
+	}
+}
+
+type closingWriter struct {
+	closed bool
+}
+
+func (c *closingWriter) Write(p []byte) (int, error) { return len(p), nil }
+func (c *closingWriter) Close() error                { c.closed = true; return nil }
