@@ -169,6 +169,9 @@ not trust memory over the help output.
   the same turn.
 - An agy review transcript lives in `docs/reviews/<date>-<topic>.md` for the
   pull request only. `git rm` it before the merge.
+- When asked for a review, start immediately without asking for approval.
+  Let the reviewer persona decide what to focus on and how to review, unless
+  the user gives an explicit instruction.
 - Ideas and brainstorms: `docs/random-thoughts.md` catalogs external
   algorithms, references, and brainstorming outcomes. Keep an index at the top
   with a one-to-two sentence summary per entry. The user approves every edit
