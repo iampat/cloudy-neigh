@@ -290,3 +290,26 @@ func TestNilMutation(t *testing.T) {
 		t.Fatalf("expected ErrNilMutation, got %v", err)
 	}
 }
+
+func TestInvalidBranch(t *testing.T) {
+	invalid := []string{
+		"",
+		"features/search",
+		"/root",
+		"123branch",
+		"-dash",
+		"_under",
+		"branch space",
+	}
+	for _, branch := range invalid {
+		w := segment.NewWriter(&bytes.Buffer{})
+		m := &storagepb.DocumentMutation{
+			Branch: branch,
+			DocId:  "doc-1",
+			Op:     storagepb.MutationOp_PUT,
+		}
+		if err := w.Write(m); !errors.Is(err, segment.ErrInvalidBranchName) {
+			t.Errorf("expected ErrInvalidBranchName for %q, got: %v", branch, err)
+		}
+	}
+}
