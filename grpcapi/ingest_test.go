@@ -3,6 +3,8 @@ package grpcapi_test
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
@@ -10,6 +12,7 @@ import (
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
+	"github.com/iampat/cloudy-neigh/recordio"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -293,4 +296,115 @@ func TestUpsert_CanceledContext(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.Canceled, st.Code())
+}
+
+func TestLocalFSBackend(t *testing.T) {
+	dir := t.TempDir()
+	store, err := objectstore.Open(context.Background(), "file://"+dir+"?create_dir=true")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	log, err := logstream.New(store, "wal")
+	require.NoError(t, err)
+
+	srv, err := grpcapi.NewIngestServer(log)
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	s := grpc.NewServer()
+	cloudyneighpb.RegisterIngestServiceServer(s, srv)
+
+	go func() {
+		_ = s.Serve(lis)
+	}()
+	t.Cleanup(func() {
+		s.GracefulStop()
+		lis.Close()
+	})
+
+	conn, err := grpc.NewClient(
+		"passthrough://bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return lis.Dial()
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	client := cloudyneighpb.NewIngestServiceClient(conn)
+	ctx := context.Background()
+
+	doc := &cloudyneighpb.Document{
+		Id:     "wiki-101",
+		Vector: []float32{0.123, 0.456, 0.789},
+		Attributes: map[string]string{
+			"title": "Machine Learning",
+			"lang":  "en",
+		},
+	}
+
+	uResp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
+		Namespace: "wiki",
+		Documents: []*cloudyneighpb.Document{doc},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), uResp.UpsertedCount)
+
+	dResp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
+		Namespace: "wiki",
+		Ids:       []string{"wiki-102"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), dResp.DeletedCount)
+
+	seg1Path := filepath.Join(dir, "wal", "00000000000000000001.recordio")
+	seg2Path := filepath.Join(dir, "wal", "00000000000000000002.recordio")
+
+	info1, err := os.Stat(seg1Path)
+	require.NoError(t, err)
+	assert.Greater(t, info1.Size(), int64(0))
+
+	info2, err := os.Stat(seg2Path)
+	require.NoError(t, err)
+	assert.Greater(t, info2.Size(), int64(0))
+
+	f1, err := os.Open(seg1Path)
+	require.NoError(t, err)
+	defer f1.Close()
+
+	scanner1 := recordio.NewScanner(f1)
+	require.True(t, scanner1.Scan())
+	var rec1 storagepb.WalRecord
+	require.NoError(t, proto.Unmarshal(scanner1.Record(), &rec1))
+	m1 := rec1.GetMutation()
+	require.NotNil(t, m1)
+	assert.Equal(t, "wiki", m1.Branch)
+	assert.Equal(t, "wiki-101", m1.DocId)
+	assert.Equal(t, storagepb.MutationOp_PUT, m1.Op)
+
+	var doc1 cloudyneighpb.Document
+	require.NoError(t, proto.Unmarshal(m1.Payload, &doc1))
+	assert.True(t, proto.Equal(doc, &doc1))
+	assert.False(t, scanner1.Scan())
+	require.NoError(t, scanner1.Err())
+	t.Logf("Validated segment 1: %s (%d bytes), doc_id=%s, vector_dims=%d", seg1Path, info1.Size(), doc1.Id, len(doc1.Vector))
+
+	f2, err := os.Open(seg2Path)
+	require.NoError(t, err)
+	defer f2.Close()
+
+	scanner2 := recordio.NewScanner(f2)
+	require.True(t, scanner2.Scan())
+	var rec2 storagepb.WalRecord
+	require.NoError(t, proto.Unmarshal(scanner2.Record(), &rec2))
+	m2 := rec2.GetMutation()
+	require.NotNil(t, m2)
+	assert.Equal(t, "wiki", m2.Branch)
+	assert.Equal(t, "wiki-102", m2.DocId)
+	assert.Equal(t, storagepb.MutationOp_DELETE, m2.Op)
+	assert.Empty(t, m2.Payload)
+	assert.False(t, scanner2.Scan())
+	require.NoError(t, scanner2.Err())
+	t.Logf("Validated segment 2: %s (%d bytes), deleted doc_id=%s", seg2Path, info2.Size(), m2.DocId)
 }

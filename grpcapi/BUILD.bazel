@@ -25,6 +25,7 @@ go_test(
         "//objectstore",
         "//proto/cloudyneigh/v1:cloudyneigh",
         "//proto/storage/v1:storage",
+        "//recordio",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
