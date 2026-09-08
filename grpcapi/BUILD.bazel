@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "grpcapi",
+    srcs = ["ingest.go"],
+    importpath = "github.com/iampat/cloudy-neigh/grpcapi",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//logstream",
+        "//namespace",
+        "//proto/cloudyneigh/v1:cloudyneigh",
+        "//proto/storage/v1:storage",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_test(
+    name = "grpcapi_test",
+    srcs = ["ingest_test.go"],
+    deps = [
+        ":grpcapi",
+        "//logstream",
+        "//objectstore",
+        "//proto/cloudyneigh/v1:cloudyneigh",
+        "//proto/storage/v1:storage",
+        "//recordio",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_grpc//test/bufconn",
+        "@org_golang_google_protobuf//proto",
+    ],
+)

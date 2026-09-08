@@ -14,6 +14,7 @@ The highest-value review finding is a deletion.
 - Inline a single-use constant or struct field assignment.
 - Inline a function with one caller.
 - No wrapper type, generic, or helper introduced for one caller.
+- No cross-package error aliases or forwarding functions. Callers and tests use canonical errors and functions from the owning package directly.
 - Collapse two switches on the same value into one.
 - Fold two files that differ in one field into one file.
 - Do not assert what you can assume already works. Test the thing under test.
@@ -39,12 +40,14 @@ into the smallest hook the library offers, such as the `As` escape hatch in
 - Prefer the standard library. `github.com/stretchr/testify` is pre-agreed for
   tests. Use it when it makes an assertion more readable than the stdlib form.
 - Never take a dependency to avoid five lines of code.
+- Domain packages live at the bottom of the dependency graph. An API or ingest package must not import a storage subsystem package to validate user inputs.
 
 ## Errors
 
 - Handle every error. Never `_ = f()` when a failure of `f` invalidates what
   follows.
 - Wrap only when the wrap adds information: `fmt.Errorf("read manifest: %w", err)`.
+- Sentinel errors belong to the package defining the domain invariant. Do not alias or re-export sentinel errors across packages.
 - No panic in library code. Return an error and let the caller decide.
 - Validate at the boundary, not deep in the call stack.
 - Use `errors.Is`/`errors.As`. Never a single-value type assertion on an error.

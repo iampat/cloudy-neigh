@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"google.golang.org/protobuf/proto"
@@ -14,41 +15,17 @@ import (
 
 var (
 	ErrBranchAlreadyExists = errors.New("kvfs: branch already exists")
-	ErrInvalidBranchName   = errors.New("kvfs: invalid branch name")
 	ErrNilManifest         = errors.New("kvfs: nil manifest")
 )
 
 const refPrefix = "refs/heads/"
-
-func ValidateBranch(branch string) error {
-	if branch == "" {
-		return fmt.Errorf("%w: empty branch name", ErrInvalidBranchName)
-	}
-
-	first := branch[0]
-	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z')) {
-		return fmt.Errorf("%w: must start with letter: %q", ErrInvalidBranchName, branch)
-	}
-
-	for i := 1; i < len(branch); i++ {
-		c := branch[i]
-		switch {
-		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'):
-		case c >= '0' && c <= '9':
-		case c == '-' || c == '_':
-		default:
-			return fmt.Errorf("%w: invalid character %q in %q", ErrInvalidBranchName, c, branch)
-		}
-	}
-	return nil
-}
 
 func branchKey(branch string) string {
 	return refPrefix + branch
 }
 
 func ResolveBranch(ctx context.Context, store objectstore.Store, branch string) (*storagepb.BranchManifest, string, error) {
-	if err := ValidateBranch(branch); err != nil {
+	if err := namespace.ValidateBranch(branch); err != nil {
 		return nil, "", err
 	}
 
@@ -71,7 +48,7 @@ func ResolveBranch(ctx context.Context, store objectstore.Store, branch string) 
 }
 
 func UpdateBranch(ctx context.Context, store objectstore.Store, branch string, m *storagepb.BranchManifest, expectedGen string) (string, error) {
-	if err := ValidateBranch(branch); err != nil {
+	if err := namespace.ValidateBranch(branch); err != nil {
 		return "", err
 	}
 	if m == nil {
@@ -98,10 +75,10 @@ func UpdateBranch(ctx context.Context, store objectstore.Store, branch string, m
 }
 
 func CreateBranch(ctx context.Context, store objectstore.Store, newBranch, parentBranch string) (*storagepb.BranchManifest, string, error) {
-	if err := ValidateBranch(newBranch); err != nil {
+	if err := namespace.ValidateBranch(newBranch); err != nil {
 		return nil, "", err
 	}
-	if err := ValidateBranch(parentBranch); err != nil {
+	if err := namespace.ValidateBranch(parentBranch); err != nil {
 		return nil, "", err
 	}
 
@@ -126,7 +103,7 @@ func CreateBranch(ctx context.Context, store objectstore.Store, newBranch, paren
 }
 
 func DeleteBranch(ctx context.Context, store objectstore.Store, branch string) error {
-	if err := ValidateBranch(branch); err != nil {
+	if err := namespace.ValidateBranch(branch); err != nil {
 		return err
 	}
 	return store.Delete(ctx, branchKey(branch))

@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/iampat/cloudy-neigh/kvfs",
     visibility = ["//visibility:public"],
     deps = [
+        "//namespace",
         "//objectstore",
         "//proto/storage/v1:storage",
         "@org_golang_google_protobuf//proto",
@@ -17,6 +18,7 @@ go_test(
     srcs = ["branch_test.go"],
     deps = [
         ":kvfs",
+        "//namespace",
         "//objectstore",
         "//proto/storage/v1:storage",
         "@com_github_stretchr_testify//assert",
