@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
@@ -23,7 +22,7 @@ type Config struct {
 	DocThreshold  int
 	TimeThreshold time.Duration
 	PollInterval  time.Duration
-	CheckpointSeq uint64
+	OnIdle        func()
 }
 
 func (c *Config) setDefaults() {
@@ -50,7 +49,6 @@ type Flusher struct {
 	log   *logstream.Log
 	cfg   Config
 
-	mu                sync.Mutex
 	memtables         map[string]*memtable
 	branchCheckpoints map[string]uint64
 	checkpointSeq     uint64
@@ -71,48 +69,49 @@ func NewFlusher(store objectstore.Store, log *logstream.Log, cfg Config) (*Flush
 		cfg:               cfg,
 		memtables:         make(map[string]*memtable),
 		branchCheckpoints: make(map[string]uint64),
-		checkpointSeq:     cfg.CheckpointSeq,
 	}, nil
 }
 
-func (f *Flusher) CheckpointSeq() uint64 {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.checkpointSeq
-}
-
 func (f *Flusher) initCheckpoints(ctx context.Context) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	objs, err := f.store.List(ctx, "refs/heads/", "", 1000)
-	if err != nil {
-		return fmt.Errorf("list branch refs: %w", err)
-	}
-
+	var startAfter string
 	var minCheckpoint uint64
 	hasBranch := false
 
-	for _, obj := range objs {
-		branch := strings.TrimPrefix(obj.Key, "refs/heads/")
-		if branch == "" {
-			continue
-		}
-		manifest, _, err := kvfs.ResolveBranch(ctx, f.store, branch)
+	for {
+		objs, err := f.store.List(ctx, "refs/heads/", startAfter, 1000)
 		if err != nil {
-			if errors.Is(err, objectstore.ErrNotFound) {
+			return fmt.Errorf("list branch refs: %w", err)
+		}
+		if len(objs) == 0 {
+			break
+		}
+
+		for _, obj := range objs {
+			branch := strings.TrimPrefix(obj.Key, "refs/heads/")
+			if branch == "" {
 				continue
 			}
-			return fmt.Errorf("resolve branch %s: %w", branch, err)
+			manifest, _, err := kvfs.ResolveBranch(ctx, f.store, branch)
+			if err != nil {
+				if errors.Is(err, objectstore.ErrNotFound) {
+					continue
+				}
+				return fmt.Errorf("resolve branch %s: %w", branch, err)
+			}
+			f.branchCheckpoints[branch] = manifest.CheckpointSeq
+			if !hasBranch || manifest.CheckpointSeq < minCheckpoint {
+				minCheckpoint = manifest.CheckpointSeq
+				hasBranch = true
+			}
 		}
-		f.branchCheckpoints[branch] = manifest.CheckpointSeq
-		if !hasBranch || manifest.CheckpointSeq < minCheckpoint {
-			minCheckpoint = manifest.CheckpointSeq
-			hasBranch = true
+
+		if len(objs) < 1000 {
+			break
 		}
+		startAfter = objs[len(objs)-1].Key
 	}
 
-	if f.checkpointSeq == 0 && hasBranch {
+	if hasBranch {
 		f.checkpointSeq = minCheckpoint
 	}
 	return nil
@@ -121,18 +120,12 @@ func (f *Flusher) initCheckpoints(ctx context.Context) error {
 func (f *Flusher) Run(ctx context.Context) error {
 	if err := f.initCheckpoints(ctx); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			_ = f.initCheckpoints(context.Background())
-			f.mu.Lock()
-			seq := f.checkpointSeq + 1
-			f.mu.Unlock()
-			return f.drainAndFlush(seq)
+			return nil
 		}
 		return err
 	}
 
-	f.mu.Lock()
 	seq := f.checkpointSeq + 1
-	f.mu.Unlock()
 
 	for {
 		records, err := f.log.Read(ctx, seq)
@@ -140,26 +133,29 @@ func (f *Flusher) Run(ctx context.Context) error {
 			if errors.Is(err, logstream.ErrEndOfStream) {
 				if err := f.flushExpiredMemtables(ctx); err != nil {
 					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-						return f.drainAndFlush(seq)
+						return f.flushAll(context.Background())
 					}
 					return err
 				}
+				if f.cfg.OnIdle != nil {
+					f.cfg.OnIdle()
+				}
 				select {
 				case <-ctx.Done():
-					return f.drainAndFlush(seq)
+					return f.flushAll(context.Background())
 				case <-time.After(f.cfg.PollInterval):
 					continue
 				}
 			}
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return f.drainAndFlush(seq)
+				return f.flushAll(context.Background())
 			}
 			return fmt.Errorf("read log seq %d: %w", seq, err)
 		}
 
 		if err := f.processRecords(ctx, seq, records); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return f.drainAndFlush(seq + 1)
+				return f.flushAll(context.Background())
 			}
 			return err
 		}
@@ -180,9 +176,7 @@ func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logs
 			continue
 		}
 
-		f.mu.Lock()
 		if lastSeq, ok := f.branchCheckpoints[mut.Branch]; ok && seq <= lastSeq {
-			f.mu.Unlock()
 			continue
 		}
 
@@ -196,18 +190,20 @@ func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logs
 		}
 		mt.mutations = append(mt.mutations, mut)
 		mt.lastSeq = seq
+	}
 
-		shouldFlush := len(mt.mutations) >= f.cfg.DocThreshold
-		if shouldFlush {
-			delete(f.memtables, mut.Branch)
+	var toFlush []*memtable
+	for _, mt := range f.memtables {
+		if len(mt.mutations) >= f.cfg.DocThreshold {
+			toFlush = append(toFlush, mt)
 		}
-		f.mu.Unlock()
+	}
 
-		if shouldFlush {
-			if err := f.flushMemtable(ctx, mt); err != nil {
-				return err
-			}
+	for _, mt := range toFlush {
+		if err := f.flushMemtable(ctx, mt); err != nil {
+			return err
 		}
+		delete(f.memtables, mt.branch)
 	}
 	return nil
 }
@@ -215,61 +211,34 @@ func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logs
 func (f *Flusher) flushExpiredMemtables(ctx context.Context) error {
 	now := time.Now()
 	var toFlush []*memtable
-
-	f.mu.Lock()
-	for branch, mt := range f.memtables {
+	for _, mt := range f.memtables {
 		if len(mt.mutations) > 0 && now.Sub(mt.firstAt) >= f.cfg.TimeThreshold {
 			toFlush = append(toFlush, mt)
-			delete(f.memtables, branch)
 		}
 	}
-	f.mu.Unlock()
 
 	for _, mt := range toFlush {
 		if err := f.flushMemtable(ctx, mt); err != nil {
 			return err
 		}
+		delete(f.memtables, mt.branch)
 	}
 	return nil
 }
 
-func (f *Flusher) drainAndFlush(startSeq uint64) error {
-	drainCtx := context.Background()
-	seq := startSeq
-
-	for {
-		records, err := f.log.Read(drainCtx, seq)
-		if err != nil {
-			if errors.Is(err, logstream.ErrEndOfStream) {
-				break
-			}
-			return fmt.Errorf("drain log seq %d: %w", seq, err)
-		}
-		if err := f.processRecords(drainCtx, seq, records); err != nil {
-			return err
-		}
-		seq++
-	}
-
-	return f.flushAll(drainCtx)
-}
-
 func (f *Flusher) flushAll(ctx context.Context) error {
 	var toFlush []*memtable
-
-	f.mu.Lock()
 	for _, mt := range f.memtables {
 		if len(mt.mutations) > 0 {
 			toFlush = append(toFlush, mt)
 		}
 	}
-	f.memtables = make(map[string]*memtable)
-	f.mu.Unlock()
 
 	for _, mt := range toFlush {
 		if err := f.flushMemtable(ctx, mt); err != nil {
 			return err
 		}
+		delete(f.memtables, mt.branch)
 	}
 	return nil
 }
@@ -335,9 +304,7 @@ func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
 
 		_, err = kvfs.UpdateBranch(ctx, f.store, mt.branch, manifest, gen)
 		if err == nil {
-			f.mu.Lock()
 			f.branchCheckpoints[mt.branch] = endSeq
-			f.mu.Unlock()
 			return nil
 		}
 		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
@@ -348,8 +315,6 @@ func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
 
 func newSegmentID() string {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%016x", time.Now().UnixNano())
-	}
+	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
 }

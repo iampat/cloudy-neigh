@@ -339,10 +339,17 @@ func TestGracefulShutdownFlush(t *testing.T) {
 	appendDoc(t, ctx, log, "main", "doc-1", []byte("val-1"))
 	appendDoc(t, ctx, log, "main", "doc-2", []byte("val-2"))
 
+	idleCh := make(chan struct{}, 1)
 	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
 		DocThreshold:  1000,
 		TimeThreshold: 10 * time.Minute,
 		PollInterval:  10 * time.Millisecond,
+		OnIdle: func() {
+			select {
+			case idleCh <- struct{}{}:
+			default:
+			}
+		},
 	})
 	require.NoError(t, err)
 
@@ -351,6 +358,7 @@ func TestGracefulShutdownFlush(t *testing.T) {
 		flusherErrCh <- flusher.Run(ctx)
 	}()
 
+	<-idleCh
 	cancel()
 
 	err = <-flusherErrCh
@@ -367,4 +375,62 @@ func TestGracefulShutdownFlush(t *testing.T) {
 	require.Len(t, mutations, 2)
 	assert.Equal(t, "doc-1", mutations[0].DocId)
 	assert.Equal(t, "doc-2", mutations[1].DocId)
+}
+
+func TestBatchSequenceBoundaryFlush(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	log, err := logstream.New(store, "wal")
+	require.NoError(t, err)
+
+	var records []logstream.Record
+	for i := 1; i <= 5; i++ {
+		walRec := &storagepb.WalRecord{
+			Record: &storagepb.WalRecord_Mutation{
+				Mutation: &storagepb.DocumentMutation{
+					Branch:  "main",
+					DocId:   fmt.Sprintf("doc-%d", i),
+					Op:      storagepb.MutationOp_PUT,
+					Payload: []byte(fmt.Sprintf("val-%d", i)),
+				},
+			},
+		}
+		data, err := proto.Marshal(walRec)
+		require.NoError(t, err)
+		records = append(records, data)
+	}
+	seq, err := log.Append(ctx, records)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), seq)
+
+	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+		DocThreshold:  3,
+		TimeThreshold: 10 * time.Minute,
+		PollInterval:  10 * time.Millisecond,
+	})
+	require.NoError(t, err)
+
+	flusherErrCh := make(chan error, 1)
+	go func() {
+		flusherErrCh <- flusher.Run(ctx)
+	}()
+
+	manifest := waitForManifest(t, ctx, store, "main", func(m *storagepb.BranchManifest) bool {
+		return len(m.Segments) == 1 && m.CheckpointSeq == 1
+	})
+	require.NotNil(t, manifest)
+	assert.Equal(t, uint64(1), manifest.CheckpointSeq)
+	require.Len(t, manifest.Segments, 1)
+	assert.Equal(t, uint64(5), manifest.Segments[0].DocCount)
+
+	mutations := readSegmentMutations(t, ctx, store, "main", manifest.Segments[0].SegmentId)
+	require.Len(t, mutations, 5)
+
+	cancel()
+	require.NoError(t, <-flusherErrCh)
 }
