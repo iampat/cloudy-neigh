@@ -7,10 +7,12 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//grpcapi",
+        "//ingest",
         "//logstream",
         "//objectstore",
         "//proto/cloudyneigh/v1:cloudyneigh",
         "@org_golang_google_grpc//:grpc",
+        "@org_golang_x_sync//errgroup",
     ],
 )
 

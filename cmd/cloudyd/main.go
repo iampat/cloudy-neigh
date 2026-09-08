@@ -11,19 +11,25 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
+	"github.com/iampat/cloudy-neigh/ingest"
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
 
 type ingestConfig struct {
-	listen     string
-	url        string
-	stream     string
-	maxMsgSize int
+	listen        string
+	url           string
+	stream        string
+	maxMsgSize    int
+	flushDocs     int
+	flushInterval time.Duration
+	pollInterval  time.Duration
 }
 
 func parseIngestFlags(args []string) (ingestConfig, error) {
@@ -34,6 +40,9 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 	fs.StringVar(&cfg.url, "url", "file:///tmp/cloudy-demo?create_dir=true", "object storage URL")
 	fs.StringVar(&cfg.stream, "stream", "wal", "WAL stream name")
 	fs.IntVar(&cfg.maxMsgSize, "max-msg-size", 64*1024*1024, "maximum message size in bytes")
+	fs.IntVar(&cfg.flushDocs, "flush-docs", 10000, "memtable doc threshold for flush")
+	fs.DurationVar(&cfg.flushInterval, "flush-interval", 10*time.Second, "memtable time threshold for flush")
+	fs.DurationVar(&cfg.pollInterval, "poll-interval", 100*time.Millisecond, "WAL poll interval")
 
 	if err := fs.Parse(args); err != nil {
 		return ingestConfig{}, err
@@ -53,6 +62,15 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 	if cfg.maxMsgSize <= 0 {
 		return ingestConfig{}, errors.New("-max-msg-size must be positive")
 	}
+	if cfg.flushDocs <= 0 {
+		return ingestConfig{}, errors.New("-flush-docs must be positive")
+	}
+	if cfg.flushInterval <= 0 {
+		return ingestConfig{}, errors.New("-flush-interval must be positive")
+	}
+	if cfg.pollInterval <= 0 {
+		return ingestConfig{}, errors.New("-poll-interval must be positive")
+	}
 	return cfg, nil
 }
 
@@ -60,6 +78,7 @@ type ingestServer struct {
 	lis        net.Listener
 	grpcServer *grpc.Server
 	store      objectstore.Store
+	flusher    *ingest.Flusher
 }
 
 func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, error) {
@@ -80,6 +99,16 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 		return nil, fmt.Errorf("create ingest server: %w", err)
 	}
 
+	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+		DocThreshold:  cfg.flushDocs,
+		TimeThreshold: cfg.flushInterval,
+		PollInterval:  cfg.pollInterval,
+	})
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("create flusher: %w", err)
+	}
+
 	grpcServer := grpc.NewServer(
 		grpc.MaxRecvMsgSize(cfg.maxMsgSize),
 		grpc.MaxSendMsgSize(cfg.maxMsgSize),
@@ -96,6 +125,7 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 		lis:        lis,
 		grpcServer: grpcServer,
 		store:      store,
+		flusher:    flusher,
 	}, nil
 }
 
@@ -104,21 +134,40 @@ func (s *ingestServer) Addr() net.Addr {
 }
 
 func (s *ingestServer) Serve(ctx context.Context) error {
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- s.grpcServer.Serve(s.lis)
-	}()
+	flusherCtx, cancelFlusher := context.WithCancel(context.Background())
+	defer cancelFlusher()
 
-	select {
-	case <-ctx.Done():
-		s.grpcServer.GracefulStop()
-		s.store.Close()
-		<-errCh
-		return nil
-	case err := <-errCh:
-		s.store.Close()
+	var g errgroup.Group
+
+	g.Go(func() error {
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- s.grpcServer.Serve(s.lis)
+		}()
+
+		select {
+		case <-ctx.Done():
+			s.grpcServer.GracefulStop()
+			<-errCh
+			cancelFlusher()
+			return nil
+		case err := <-errCh:
+			cancelFlusher()
+			return err
+		}
+	})
+
+	g.Go(func() error {
+		err := s.flusher.Run(flusherCtx)
+		if err != nil {
+			s.grpcServer.Stop()
+		}
 		return err
-	}
+	})
+
+	err := g.Wait()
+	s.store.Close()
+	return err
 }
 
 func runIngest(ctx context.Context, args []string) error {
