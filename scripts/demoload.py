@@ -8,7 +8,11 @@ import sys
 import time
 from typing import Any
 
+import google.protobuf  # noqa: F401
+import grpc
 import pyarrow.parquet as pq
+
+from proto.cloudyneigh.v1 import index_pb2, index_pb2_grpc
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,12 +22,26 @@ logging.basicConfig(
 logger = logging.getLogger("demoload")
 
 
-def send_batch(target: str, batch: list[dict[str, Any]]) -> None:
-    """Send a batch of documents to the cloudy-neigh ingestion service.
-
-    Empty stub for now. Will be wired to gRPC/REST Write API once available.
-    """
-    del target, batch
+def send_batch(
+    stub: index_pb2_grpc.IngestServiceStub,
+    namespace: str,
+    rows: list[dict[str, Any]],
+) -> None:
+    """Send a batch of documents to the cloudy-neigh ingestion service."""
+    docs = [
+        index_pb2.Document(
+            id=str(row["id"]),
+            vector=row["vector"],
+            attributes={
+                "url": str(row.get("url") or ""),
+                "title": str(row.get("title") or ""),
+                "text": str(row.get("text") or ""),
+                "lang": str(row.get("lang") or ""),
+            },
+        )
+        for row in rows
+    ]
+    stub.Upsert(index_pb2.UpsertRequest(namespace=namespace, documents=docs))
 
 
 def parse_lang_from_path(file_path: str) -> str:
@@ -39,6 +57,7 @@ def load_dataset(
     batch_size: int = 1000,
     max_docs: int | None = None,
     target: str = "localhost:50051",
+    namespace: str = "main",
 ) -> None:
     """Read Parquet files from data_dir and stream batches to the target service."""
     pattern = os.path.join(data_dir, "**", "*.parquet")
@@ -53,48 +72,55 @@ def load_dataset(
     total_batches = 0
     start_time = time.time()
 
-    for file_path in files:
-        lang = parse_lang_from_path(file_path)
-        logger.info("Reading %s (lang=%s)...", file_path, lang)
-        pf = pq.ParquetFile(file_path)
+    channel_options = [
+        ("grpc.max_receive_message_length", 64 * 1024 * 1024),
+        ("grpc.max_send_message_length", 64 * 1024 * 1024),
+    ]
+    with grpc.insecure_channel(target, options=channel_options) as channel:
+        stub = index_pb2_grpc.IngestServiceStub(channel)
 
-        for batch in pf.iter_batches(batch_size=batch_size):
-            pydict = batch.to_pydict()
-            n = len(pydict["_id"])
-            rows: list[dict[str, Any]] = []
+        for file_path in files:
+            lang = parse_lang_from_path(file_path)
+            logger.info("Reading %s (lang=%s)...", file_path, lang)
+            pf = pq.ParquetFile(file_path)
 
-            for i in range(n):
-                rows.append(
-                    {
-                        "id": pydict["_id"][i],
-                        "url": pydict["url"][i],
-                        "title": pydict["title"][i],
-                        "text": pydict["text"][i],
-                        "lang": lang,
-                        "vector": pydict["emb"][i],
-                    }
-                )
+            for batch in pf.iter_batches(batch_size=batch_size):
+                pydict = batch.to_pydict()
+                n = len(pydict["_id"])
+                rows: list[dict[str, Any]] = []
 
-            send_batch(target, rows)
-            total_docs += n
-            total_batches += 1
+                for i in range(n):
+                    rows.append(
+                        {
+                            "id": pydict["_id"][i],
+                            "url": pydict["url"][i],
+                            "title": pydict["title"][i],
+                            "text": pydict["text"][i],
+                            "lang": lang,
+                            "vector": pydict["emb"][i],
+                        }
+                    )
 
-            if total_batches % 10 == 0:
-                elapsed = time.time() - start_time
-                rate = total_docs / elapsed if elapsed > 0 else 0.0
-                logger.info(
-                    "Streamed %d docs (%d batches) [%.0f docs/s]",
-                    total_docs,
-                    total_batches,
-                    rate,
-                )
+                send_batch(stub, namespace, rows)
+                total_docs += n
+                total_batches += 1
+
+                if total_batches % 10 == 0:
+                    elapsed = time.time() - start_time
+                    rate = total_docs / elapsed if elapsed > 0 else 0.0
+                    logger.info(
+                        "Streamed %d docs (%d batches) [%.0f docs/s]",
+                        total_docs,
+                        total_batches,
+                        rate,
+                    )
+
+                if max_docs is not None and total_docs >= max_docs:
+                    logger.info("Reached limit of %d documents", max_docs)
+                    break
 
             if max_docs is not None and total_docs >= max_docs:
-                logger.info("Reached limit of %d documents", max_docs)
                 break
-
-        if max_docs is not None and total_docs >= max_docs:
-            break
 
     elapsed = time.time() - start_time
     rate = total_docs / elapsed if elapsed > 0 else 0.0
@@ -132,6 +158,11 @@ def main() -> None:
         default="localhost:50051",
         help="Target ingest address (default: localhost:50051)",
     )
+    parser.add_argument(
+        "--namespace",
+        default="main",
+        help="Target namespace (default: main)",
+    )
     args = parser.parse_args()
 
     load_dataset(
@@ -139,6 +170,7 @@ def main() -> None:
         batch_size=args.batch_size,
         max_docs=args.max_docs,
         target=args.target,
+        namespace=args.namespace,
     )
 
 
