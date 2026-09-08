@@ -54,17 +54,11 @@ type Scope struct {
 }
 
 func NewScope(tenant, ns string) (Scope, error) {
-	if tenant != "" {
-		if err := ValidateTenant(tenant); err != nil {
-			return Scope{}, err
-		}
+	s := Scope{Tenant: tenant, Namespace: ns}
+	if err := s.Validate(); err != nil {
+		return Scope{}, err
 	}
-	if ns != "" {
-		if err := ValidateNamespace(ns); err != nil {
-			return Scope{}, err
-		}
-	}
-	return Scope{Tenant: tenant, Namespace: ns}, nil
+	return s, nil
 }
 
 func (s Scope) Validate() error {
@@ -82,16 +76,7 @@ func (s Scope) Validate() error {
 }
 
 func (s Scope) Prefix() string {
-	switch {
-	case s.Tenant != "" && s.Namespace != "":
-		return path.Join(s.Tenant, s.Namespace)
-	case s.Tenant != "":
-		return s.Tenant
-	case s.Namespace != "":
-		return s.Namespace
-	default:
-		return ""
-	}
+	return path.Join(s.Tenant, s.Namespace)
 }
 
 func (s Scope) Path(subpath string) string {
