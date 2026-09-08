@@ -1,4 +1,5 @@
-common --incompatible_autoload_externally=+cc_library,+cc_binary,+cc_test
+ common --incompatible_default_to_explicit_init_py
+ common --incompatible_autoload_externally=+cc_library,+cc_binary,+cc_test
 
 test --test_output=errors
 test --test_arg=-test.shuffle=on

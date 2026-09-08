@@ -11,4 +11,4 @@ download-dataset-sample:
 		--repo-type dataset --local-dir datasets/cohere-wikipedia
 
 load-dataset *args:
-	uv run python scripts/demoload.py {{args}}
+	bazel run //scripts:demoload -- {{args}}
