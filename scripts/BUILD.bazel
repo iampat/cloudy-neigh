@@ -1,0 +1,15 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+py_binary(
+    name = "demoload",
+    srcs = ["demoload.py"],
+    visibility = ["//:__subpackages__"],
+    deps = ["@pip//pyarrow"],
+)
+
+py_library(
+    name = "scripts",
+    srcs = ["demoload.py"],
+    visibility = ["//:__subpackages__"],
+    deps = ["@pip//pyarrow"],
+)

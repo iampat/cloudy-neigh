@@ -2,6 +2,14 @@
 
 ### Added
 
+- Bazel Python and Protobuf integration:
+  - Hermetic Python 3.12 toolchain and pip package parsing via `rules_python`.
+  - Python Protobuf and gRPC stubs via `rules_proto_grpc_python`.
+  - Python target generation in `BUILD.bazel` files via `rules_python_gazelle_plugin`.
+  - Dependency manifest mapping and validation via `gazelle_python_manifest`.
+  - Hermetic requirements compilation and locking via `rules_uv`.
+  - Ruff formatting for Python files via `//:format`.
+  - `//scripts:demoload` runnable `py_binary` target.
 - `kvfs`: Layer 2 Key-Value Store foundation.
   - `proto/kvfs/v1/kvfs.proto`: Protobuf schemas for `Manifest`, `ManifestEntry`,
     and `Mutation`.
@@ -29,6 +37,8 @@
 
 ### Changed
 
+- Replaced `scripts/requirements.txt` with root `requirements.txt`.
+- Standardized Protobuf dependencies across `grpcapi`, `kvfs`, and `segment` on generated `*_go_proto` targets.
 - `logstream`: Unified stream and prefix into a single prefix path parameter in `logstream.New`. Removed `WithPrefix` option.
 
 ### Fixed

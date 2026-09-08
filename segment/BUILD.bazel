@@ -10,7 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//namespace",
-        "//proto/storage/v1:storage",
+        "//proto/storage/v1:storagepb_go_proto",
         "//recordio",
         "@org_golang_google_protobuf//proto",
     ],
@@ -22,7 +22,7 @@ go_test(
     deps = [
         ":segment",
         "//namespace",
-        "//proto/storage/v1:storage",
+        "//proto/storage/v1:storagepb_go_proto",
         "//recordio",
         "@org_golang_google_protobuf//proto",
     ],
