@@ -21,16 +21,12 @@ var (
 
 const refPrefix = "refs/heads/"
 
-func ValidateBranch(branch string) error {
-	return namespace.ValidateBranch(branch)
-}
-
 func branchKey(branch string) string {
 	return refPrefix + branch
 }
 
 func ResolveBranch(ctx context.Context, store objectstore.Store, branch string) (*storagepb.BranchManifest, string, error) {
-	if err := ValidateBranch(branch); err != nil {
+	if err := namespace.Validate(branch); err != nil {
 		return nil, "", err
 	}
 
@@ -53,7 +49,7 @@ func ResolveBranch(ctx context.Context, store objectstore.Store, branch string) 
 }
 
 func UpdateBranch(ctx context.Context, store objectstore.Store, branch string, m *storagepb.BranchManifest, expectedGen string) (string, error) {
-	if err := ValidateBranch(branch); err != nil {
+	if err := namespace.Validate(branch); err != nil {
 		return "", err
 	}
 	if m == nil {
@@ -80,10 +76,10 @@ func UpdateBranch(ctx context.Context, store objectstore.Store, branch string, m
 }
 
 func CreateBranch(ctx context.Context, store objectstore.Store, newBranch, parentBranch string) (*storagepb.BranchManifest, string, error) {
-	if err := ValidateBranch(newBranch); err != nil {
+	if err := namespace.Validate(newBranch); err != nil {
 		return nil, "", err
 	}
-	if err := ValidateBranch(parentBranch); err != nil {
+	if err := namespace.Validate(parentBranch); err != nil {
 		return nil, "", err
 	}
 
@@ -108,7 +104,7 @@ func CreateBranch(ctx context.Context, store objectstore.Store, newBranch, paren
 }
 
 func DeleteBranch(ctx context.Context, store objectstore.Store, branch string) error {
-	if err := ValidateBranch(branch); err != nil {
+	if err := namespace.Validate(branch); err != nil {
 		return err
 	}
 	return store.Delete(ctx, branchKey(branch))
