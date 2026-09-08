@@ -21,6 +21,7 @@ go_test(
     srcs = ["segment_test.go"],
     deps = [
         ":segment",
+        "//namespace",
         "//proto/storage/v1:storage",
         "//recordio",
         "@org_golang_google_protobuf//proto",

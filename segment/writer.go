@@ -11,10 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var (
-	ErrInvalidBranchName = namespace.ErrInvalidName
-	ErrNilMutation       = errors.New("segment: nil mutation")
-)
+var ErrNilMutation = errors.New("segment: nil mutation")
 
 type Writer struct {
 	w   *recordio.Writer

@@ -15,7 +15,6 @@ import (
 
 var (
 	ErrBranchAlreadyExists = errors.New("kvfs: branch already exists")
-	ErrInvalidBranchName   = namespace.ErrInvalidName
 	ErrNilManifest         = errors.New("kvfs: nil manifest")
 )
 

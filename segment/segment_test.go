@@ -7,6 +7,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/iampat/cloudy-neigh/namespace"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"github.com/iampat/cloudy-neigh/recordio"
 	"github.com/iampat/cloudy-neigh/segment"
@@ -308,8 +309,8 @@ func TestInvalidBranch(t *testing.T) {
 			DocId:  "doc-1",
 			Op:     storagepb.MutationOp_PUT,
 		}
-		if err := w.Write(m); !errors.Is(err, segment.ErrInvalidBranchName) {
-			t.Errorf("expected ErrInvalidBranchName for %q, got: %v", branch, err)
+		if err := w.Write(m); !errors.Is(err, namespace.ErrInvalidName) {
+			t.Errorf("expected ErrInvalidName for %q, got: %v", branch, err)
 		}
 	}
 }

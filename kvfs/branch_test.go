@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"github.com/stretchr/testify/assert"
@@ -127,16 +128,16 @@ func TestBranchNameValidation(t *testing.T) {
 		for _, name := range invalidNames {
 			t.Run(name, func(t *testing.T) {
 				_, _, err := kvfs.ResolveBranch(ctx, s, name)
-				assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
+				assert.ErrorIs(t, err, namespace.ErrInvalidName)
 
 				_, err = kvfs.UpdateBranch(ctx, s, name, m, "")
-				assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
+				assert.ErrorIs(t, err, namespace.ErrInvalidName)
 
 				_, _, err = kvfs.CreateBranch(ctx, s, name, "main")
-				assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
+				assert.ErrorIs(t, err, namespace.ErrInvalidName)
 
 				err = kvfs.DeleteBranch(ctx, s, name)
-				assert.ErrorIs(t, err, kvfs.ErrInvalidBranchName)
+				assert.ErrorIs(t, err, namespace.ErrInvalidName)
 			})
 		}
 	})
