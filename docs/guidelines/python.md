@@ -11,9 +11,10 @@ Python edit in a task. Review Python changes against them.
 
 ## Dependencies
 
+- Dependencies are declared in `requirements.in` and compiled to `requirements.txt` via `bazel run //:requirements`.
 - Dependencies must be pinned to an exact version (`package==x.y.z`).
 - Never use ranges (`>=`, `~=`) or unpinned package names.
-- List dependencies in `requirements.txt`. Do not use inline script metadata.
+- Do not use inline script metadata.
 
 ## Style
 

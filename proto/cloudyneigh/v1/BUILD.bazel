@@ -1,6 +1,7 @@
-load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
-load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
+load("@protobuf//bazel:proto_library.bzl", "proto_library")
+load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//proto:def.bzl", "go_proto_library")
+load("@rules_proto_grpc_python//:defs.bzl", "python_grpc_library")
 
 proto_library(
     name = "cloudyneighpb_proto",
@@ -11,8 +12,8 @@ proto_library(
 go_proto_library(
     name = "cloudyneighpb_go_proto",
     compilers = [
-        "@io_bazel_rules_go//proto:go_proto",
-        "@io_bazel_rules_go//proto:go_grpc_v2",
+        "@rules_go//proto:go_proto",
+        "@rules_go//proto:go_grpc_v2",
     ],
     importpath = "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1",
     proto = ":cloudyneighpb_proto",
@@ -23,5 +24,11 @@ go_library(
     name = "cloudyneigh",
     embed = [":cloudyneighpb_go_proto"],
     importpath = "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1",
+    visibility = ["//visibility:public"],
+)
+
+python_grpc_library(
+    name = "cloudyneighpb_py_grpc",
+    protos = [":cloudyneighpb_proto"],
     visibility = ["//visibility:public"],
 )

@@ -1,11 +1,16 @@
+ common --incompatible_default_to_explicit_init_py
+ common --incompatible_autoload_externally=+cc_library,+cc_binary,+cc_test
+
 test --test_output=errors
 test --test_arg=-test.shuffle=on
 
-build:go1.26 --@io_bazel_rules_go//go/toolchain:sdk_version=1.26.5
-build:go1.27 --@io_bazel_rules_go//go/toolchain:sdk_version=1.27.0
+build:go1.26 --@rules_go//go/toolchain:sdk_version=1.26
+build:go1.27 --@rules_go//go/toolchain:sdk_version=1.27
 
-build:race --@io_bazel_rules_go//go/config:race
+build:race --@rules_go//go/config:race
 build --config=race
+build --features=-use_header_modules
+build --features=-module_maps
 
 test:fuzz --test_arg=-test.fuzz=.
 test:fuzz --test_arg=-test.fuzztime=600s

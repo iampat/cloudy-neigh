@@ -35,7 +35,7 @@
         model, not the Go.
 - [ ] The `quality` workflow is slow. Most of the time goes to a build of
       golangci-lint. The step runs `go run <tool>@<version>` through
-      `bazel run @io_bazel_rules_go//go`, so it compiles the tool from source
+      `bazel run @rules_go//go`, so it compiles the tool from source
       on every run. `setup-bazel` caches the Bazel disk cache and the
       repository cache. Neither one holds the Go build cache that `go run`
       writes, so no Bazel action covers this work. `govulncheck` has the same
@@ -79,8 +79,8 @@
   - [ ] Build deterministic `FaultStore` proxy wrapping `objectstore.memDriver`.
   - [ ] Implement shadow invariant differential test harness for `logstream` and `kvfs`.
 - [ ] Integrate Python into Bazel.
-  - [ ] Configure `rules_python` in `MODULE.bazel` for hermetic Python toolchains.
-  - [ ] Add Bazel targets (`py_binary`, `py_library`) for Python scripts.
+  - [X] Configure `rules_python` in `MODULE.bazel` for hermetic Python toolchains.
+  - [X] Add Bazel targets (`py_binary`, `py_library`) for Python scripts.
   - [ ] Integrate `ruff` and type-checking into `bazel test` and format targets.
 
 ## Done
