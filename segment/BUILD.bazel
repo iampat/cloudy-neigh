@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "segment",
@@ -10,7 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//namespace",
-        "//proto/storage/v1:storagepb_go_proto",
+        "//proto/storage/v1:storage",
         "//recordio",
         "@org_golang_google_protobuf//proto",
     ],
@@ -22,7 +22,7 @@ go_test(
     deps = [
         ":segment",
         "//namespace",
-        "//proto/storage/v1:storagepb_go_proto",
+        "//proto/storage/v1:storage",
         "//recordio",
         "@org_golang_google_protobuf//proto",
     ],

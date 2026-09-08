@@ -1,8 +1,8 @@
 load("@aspect_rules_lint//format:defs.bzl", "format_multirun")
-load("@bazel_gazelle//:def.bzl", "gazelle", "gazelle_binary")
 load("@buildifier_prebuilt//:rules.bzl", "buildifier")
-load("@rules_go//go:def.bzl", "TOOLS_NOGO", "nogo")
+load("@gazelle//:def.bzl", "DEFAULT_LANGUAGES", "gazelle", "gazelle_binary")
 load("@pip//:requirements.bzl", "all_whl_requirements")
+load("@rules_go//go:def.bzl", "TOOLS_NOGO", "nogo")
 load("@rules_python_gazelle_plugin//manifest:defs.bzl", "gazelle_python_manifest")
 load("@rules_python_gazelle_plugin//modules_mapping:def.bzl", "modules_mapping")
 load("@rules_uv//uv:pip.bzl", "pip_compile")
@@ -33,11 +33,11 @@ gazelle_python_manifest(
 # gazelle:prefix github.com/iampat/cloudy-neigh
 # gazelle:exclude .venv
 # gazelle:exclude datasets
+# gazelle:go_proto_compilers @rules_go//proto:go_proto
+# gazelle:go_grpc_compilers @rules_go//proto:go_proto,@rules_go//proto:go_grpc_v2
 gazelle_binary(
     name = "gazelle_bin",
-    languages = [
-        "@bazel_gazelle//language/go",
-        "@bazel_gazelle//language/proto",
+    languages = DEFAULT_LANGUAGES + [
         "@rules_python_gazelle_plugin//python",
     ],
 )

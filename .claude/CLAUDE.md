@@ -23,13 +23,13 @@ with `--config=race`.
 | `go test -run TestX ./pkg` | `bazel test --config=race //pkg:pkg_test --test_filter=TestX` |
 | `go test -v` | `bazel test --config=race //... --test_output=all` |
 | `go test -bench=.` | `bazel test --config=race //... --test_arg=-test.bench=. --test_output=all` |
-| add a dependency | add the import, then `bazel run @io_bazel_rules_go//go -- mod tidy` |
-| `go mod tidy` | `bazel run @io_bazel_rules_go//go -- mod tidy` (also runs `bazel mod tidy`) |
+| add a dependency | add the import, then `bazel run @rules_go//go -- mod tidy` |
+| `go mod tidy` | `bazel run @rules_go//go -- mod tidy` (also runs `bazel mod tidy`) |
 | `go fmt ./...` | `bazel run //:format` (check-only: `//:format.check`) |
 | `go vet ./...` | nogo, which runs inside `bazel build` |
 | `go run ./cmd/x -- a b` | `bazel run //cmd/x -- a b` |
-| `go run <tool>@<version>` | `bazel run @io_bazel_rules_go//go -- run <tool>@<version>` |
-| anything else | `bazel run @io_bazel_rules_go//go -- <args>` |
+| `go run <tool>@<version>` | `bazel run @rules_go//go -- run <tool>@<version>` |
+| anything else | `bazel run @rules_go//go -- <args>` |
 
 ### Useful commands
 
@@ -41,7 +41,7 @@ bazel query "somepath(//a, //b)"               # why does A depend on B
 bazel build //... --verbose_failures --keep_going
 bazel aquery //proto/cloudyneigh:cloudyneigh_go_proto  # generated file paths
 find -L bazel-bin/proto -name '*.pb.go' -exec cp {} proto/cloudyneigh/ \;  # stage
-bazel mod show_extension @bazel_gazelle//:extensions.bzl%go_deps  # resolved Go repos
+bazel mod show_extension @gazelle//:extensions.bzl%go_deps  # resolved Go repos
 ```
 
 The last one stages the generated protobuf code in the source tree. A tool that
