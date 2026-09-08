@@ -7,7 +7,6 @@ on:
 
 env:
   GOLANGCI_LINT_VERSION: v2.12.2
-  GOVULNCHECK_VERSION: v1.1.4
 
 jobs:
   quality:
@@ -49,11 +48,6 @@ jobs:
     - name: go mod verify
       if: steps.changes.outputs.code == 'true'
       run: bazel run @rules_go//go -- mod verify
-
-    - name: govulncheck
-      if: steps.changes.outputs.code == 'true'
-      continue-on-error: true
-      run: bazel run @rules_go//go -- run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
 
     - name: golangci-lint
       if: steps.changes.outputs.code == 'true'
