@@ -3,7 +3,7 @@
 ### Added
 
 - Bazel Python and Protobuf integration:
-  - Hermetic Python 3.12 toolchain and pip package parsing via `rules_python`.
+  - Hermetic Python 3.13 toolchain and pip package parsing via `rules_python`.
   - Python Protobuf and gRPC stubs via `rules_proto_grpc_python`.
   - Python target generation in `BUILD.bazel` files via `rules_python_gazelle_plugin`.
   - Dependency manifest mapping and validation via `gazelle_python_manifest`.

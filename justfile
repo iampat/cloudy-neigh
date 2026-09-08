@@ -15,4 +15,3 @@ load-dataset *args:
 
 setup-python:
 	uv venv --allow-existing .venv
-	uv pip install -r requirements.txt
