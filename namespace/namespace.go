@@ -13,7 +13,7 @@ const (
 
 var ErrInvalidName = errors.New("namespace: invalid name")
 
-func Validate(name string) error {
+func validate(name string) error {
 	if name == "" {
 		return fmt.Errorf("%w: empty name", ErrInvalidName)
 	}
@@ -37,15 +37,15 @@ func Validate(name string) error {
 }
 
 func ValidateTenant(tenant string) error {
-	return Validate(tenant)
+	return validate(tenant)
 }
 
 func ValidateNamespace(ns string) error {
-	return Validate(ns)
+	return validate(ns)
 }
 
 func ValidateBranch(branch string) error {
-	return Validate(branch)
+	return validate(branch)
 }
 
 type Scope struct {

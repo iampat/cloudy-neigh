@@ -29,7 +29,7 @@ func (w *Writer) Write(m *storagepb.DocumentMutation) error {
 	if m == nil {
 		return ErrNilMutation
 	}
-	if err := namespace.Validate(m.Branch); err != nil {
+	if err := namespace.ValidateBranch(m.Branch); err != nil {
 		return err
 	}
 	var err error

@@ -33,12 +33,20 @@ func TestValidate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := namespace.Validate(tc.input)
+			errTenant := namespace.ValidateTenant(tc.input)
+			errNS := namespace.ValidateNamespace(tc.input)
+			errBranch := namespace.ValidateBranch(tc.input)
 			if tc.wantErr {
-				require.Error(t, err)
-				assert.True(t, errors.Is(err, namespace.ErrInvalidName))
+				require.Error(t, errTenant)
+				assert.True(t, errors.Is(errTenant, namespace.ErrInvalidName))
+				require.Error(t, errNS)
+				assert.True(t, errors.Is(errNS, namespace.ErrInvalidName))
+				require.Error(t, errBranch)
+				assert.True(t, errors.Is(errBranch, namespace.ErrInvalidName))
 			} else {
-				require.NoError(t, err)
+				require.NoError(t, errTenant)
+				require.NoError(t, errNS)
+				require.NoError(t, errBranch)
 			}
 		})
 	}
@@ -113,7 +121,7 @@ func TestScope_ValidationErrors(t *testing.T) {
 func BenchmarkValidate(b *testing.B) {
 	const name = "cloudy-benchmark_namespace-123"
 	for b.Loop() {
-		if err := namespace.Validate(name); err != nil {
+		if err := namespace.ValidateNamespace(name); err != nil {
 			b.Fatal(err)
 		}
 	}
