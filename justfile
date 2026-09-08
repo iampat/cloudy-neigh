@@ -12,6 +12,3 @@ download-dataset-sample:
 
 load-dataset *args:
 	uv run python scripts/demoload.py {{args}}
-
-setup-python:
-	uv venv --allow-existing .venv
