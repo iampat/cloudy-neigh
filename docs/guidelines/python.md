@@ -15,6 +15,7 @@ Python edit in a task. Review Python changes against them.
 - Dependencies must be pinned to an exact version (`package==x.y.z`).
 - Never use ranges (`>=`, `~=`) or unpinned package names.
 - Do not use inline script metadata.
+- Map generated protobuf packages with `# gazelle:resolve py <module> <target>` in root `BUILD.bazel`.
 
 ## Style
 
