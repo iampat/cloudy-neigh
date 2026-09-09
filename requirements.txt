@@ -2,6 +2,10 @@
 #    bazel run @@//:requirements
 --index-url https://pypi.org/simple
 
+absl-py==2.5.0 \
+    --hash=sha256:0c996f25c0490700fadabe6351630f6111534fa0ae252cc6d2014ea3b141135f \
+    --hash=sha256:0f17b89f2a4eaaedc4f28c622998aa690564b3012a396a4ffad0821007fe03ba
+    # via -r requirements.in
 grpcio==1.70.0 \
     --hash=sha256:0495c86a55a04a874c7627fd33e5beaee771917d92c0e6d9d797628ac40e7655 \
     --hash=sha256:07269ff4940f6fb6710951116a04cd70284da86d0a4368fd5a3b552744511f5a \

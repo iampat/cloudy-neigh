@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "cloudyd_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/iampat/cloudy-neigh/cmd/cloudyd",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//grpcapi",
+        "//logstream",
+        "//objectstore",
+        "//proto/cloudyneigh/v1:cloudyneigh",
+        "@org_golang_google_grpc//:grpc",
+    ],
+)
+
+go_binary(
+    name = "cloudyd",
+    embed = [":cloudyd_lib"],
+    visibility = ["//visibility:public"],
+)

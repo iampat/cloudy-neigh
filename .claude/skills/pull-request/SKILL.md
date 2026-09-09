@@ -15,3 +15,5 @@ allowed-tools: Bash
 - Keep the PR description to 300 characters or less.
 - After you change a file on a branch that has a pull request, commit, push,
   and update the description in the same turn. Do not wait to be asked.
+- Never include files under `docs/reviews/` in a pull request. Remove review
+  transcripts before opening or updating a PR.
