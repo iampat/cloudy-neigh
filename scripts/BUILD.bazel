@@ -1,8 +1,5 @@
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 
-# gazelle:resolve py proto.cloudyneigh.v1.index_pb2 //proto/cloudyneigh/v1:cloudyneighpb_py_grpc
-# gazelle:resolve py proto.cloudyneigh.v1.index_pb2_grpc //proto/cloudyneigh/v1:cloudyneighpb_py_grpc
-
 py_binary(
     name = "demoload",
     srcs = ["demoload.py"],
