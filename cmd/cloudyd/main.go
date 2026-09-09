@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net"
 	"os"
@@ -157,7 +158,6 @@ func main() {
 	defer stop()
 
 	if err := run(ctx, os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "cloudyd:", err)
-		os.Exit(1)
+		log.Fatalf("cloudyd: %v", err)
 	}
 }

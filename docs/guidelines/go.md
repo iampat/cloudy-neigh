@@ -51,7 +51,7 @@ into the smallest hook the library offers, such as the `As` escape hatch in
 - No panic in library code. Return an error and let the caller decide.
 - Validate at the boundary, not deep in the call stack.
 - Use `errors.Is`/`errors.As`. Never a single-value type assertion on an error.
-- Prefer a returned error over a fatal-level log.
+- Return errors to the caller. Do not log fatal errors inside library code.
 
 ## Context
 
@@ -103,6 +103,9 @@ writing and in review.
 ## Logging
 
 Use stdlib `log/slog` for structured logging.
+Use `log.Fatal` only in binary `main` to indicate that the process failed.
+Use it with caution because `log.Fatal` bypasses deferred functions.
+Never call `log.Fatal` or `os.Exit` in library packages.
 
 ## Naming
 
