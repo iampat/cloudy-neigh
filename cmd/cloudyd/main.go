@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -29,7 +28,6 @@ type ingestConfig struct {
 
 func parseIngestFlags(args []string) (ingestConfig, error) {
 	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
 
 	var cfg ingestConfig
 	fs.StringVar(&cfg.listen, "listen", ":50051", "address:port to listen on")
@@ -126,6 +124,9 @@ func (s *ingestServer) Serve(ctx context.Context) error {
 func runIngest(ctx context.Context, args []string) error {
 	cfg, err := parseIngestFlags(args)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 
@@ -138,9 +139,18 @@ func runIngest(ctx context.Context, args []string) error {
 	return srv.Serve(ctx)
 }
 
+func usage() {
+	fmt.Fprintf(os.Stderr, "Usage: cloudyd <subcommand> [flags]\n\nSubcommands:\n  ingest    run ingest gRPC service\n  query     run query service\n")
+}
+
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
+		usage()
 		return errors.New("subcommand required: ingest, query")
+	}
+	if args[0] == "-h" || args[0] == "-help" || args[0] == "--help" {
+		usage()
+		return nil
 	}
 
 	switch args[0] {
@@ -149,6 +159,7 @@ func run(ctx context.Context, args []string) error {
 	case "query":
 		return errors.New("query engine not yet implemented")
 	default:
+		usage()
 		return fmt.Errorf("unknown subcommand %q", args[0])
 	}
 }
