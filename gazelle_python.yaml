@@ -6,9 +6,10 @@
 ---
 manifest:
   modules_mapping:
+    absl: absl_py
     google.protobuf: protobuf
     grpc: grpcio
     pyarrow: pyarrow
   pip_repository:
     name: pip
-integrity: 3192c5c0d1b2f222022b06adf6eb848991cd5dc9b171e221d79e14bc7711a26e
+integrity: 375c7d151e0d762d018de580c11eb18f949f1a3936019c911ac2af90c69a3e7a

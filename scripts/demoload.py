@@ -1,18 +1,27 @@
 """Dataset loader for cloudy-neigh customer demo."""
 
-import argparse
 import glob
 import logging
 import os
 import sys
 import time
-from typing import Any
 
-import google.protobuf  # noqa: F401
+from absl import app, flags
 import grpc
 import pyarrow.parquet as pq
 
 from proto.cloudyneigh.v1 import index_pb2, index_pb2_grpc
+
+FLAGS = flags.FLAGS
+flags.DEFINE_string(
+    "data_dir",
+    "datasets/cohere-wikipedia",
+    "Directory containing Parquet files",
+)
+flags.DEFINE_integer("batch_size", 1000, "Batch size for writes")
+flags.DEFINE_integer("max_docs", None, "Maximum documents to stream")
+flags.DEFINE_string("target", "localhost:50051", "Target ingest address")
+flags.DEFINE_string("namespace", "main", "Target namespace")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,22 +34,9 @@ logger = logging.getLogger("demoload")
 def send_batch(
     stub: index_pb2_grpc.IngestServiceStub,
     namespace: str,
-    rows: list[dict[str, Any]],
+    docs: list[index_pb2.Document],
 ) -> None:
     """Send a batch of documents to the cloudy-neigh ingestion service."""
-    docs = [
-        index_pb2.Document(
-            id=str(row["id"]),
-            vector=row["vector"],
-            attributes={
-                "url": str(row.get("url") or ""),
-                "title": str(row.get("title") or ""),
-                "text": str(row.get("text") or ""),
-                "lang": str(row.get("lang") or ""),
-            },
-        )
-        for row in rows
-    ]
     stub.Upsert(index_pb2.UpsertRequest(namespace=namespace, documents=docs))
 
 
@@ -68,15 +64,11 @@ def load_dataset(
         sys.exit(1)
 
     logger.info("Found %d Parquet file(s) in %s", len(files), data_dir)
-    total_docs = 0
+    total = 0
     total_batches = 0
     start_time = time.time()
 
-    channel_options = [
-        ("grpc.max_receive_message_length", 64 * 1024 * 1024),
-        ("grpc.max_send_message_length", 64 * 1024 * 1024),
-    ]
-    with grpc.insecure_channel(target, options=channel_options) as channel:
+    with grpc.insecure_channel(target) as channel:
         stub = index_pb2_grpc.IngestServiceStub(channel)
 
         for file_path in files:
@@ -87,92 +79,63 @@ def load_dataset(
             for batch in pf.iter_batches(batch_size=batch_size):
                 pydict = batch.to_pydict()
                 n = len(pydict["_id"])
-                rows: list[dict[str, Any]] = []
+                docs: list[index_pb2.Document] = []
 
                 for i in range(n):
-                    rows.append(
-                        {
-                            "id": pydict["_id"][i],
-                            "url": pydict["url"][i],
-                            "title": pydict["title"][i],
-                            "text": pydict["text"][i],
-                            "lang": lang,
-                            "vector": pydict["emb"][i],
-                        }
+                    docs.append(
+                        index_pb2.Document(
+                            id=str(pydict["_id"][i]),
+                            vector=pydict["emb"][i],
+                            attributes={
+                                "url": str(pydict["url"][i] or ""),
+                                "title": str(pydict["title"][i] or ""),
+                                "text": str(pydict["text"][i] or ""),
+                                "lang": lang,
+                            },
+                        )
                     )
 
-                send_batch(stub, namespace, rows)
-                total_docs += n
+                send_batch(stub, namespace, docs)
+                total += n
                 total_batches += 1
 
                 if total_batches % 10 == 0:
                     elapsed = time.time() - start_time
-                    rate = total_docs / elapsed if elapsed > 0 else 0.0
+                    rate = total / elapsed if elapsed > 0 else 0.0
                     logger.info(
                         "Streamed %d docs (%d batches) [%.0f docs/s]",
-                        total_docs,
+                        total,
                         total_batches,
                         rate,
                     )
 
-                if max_docs is not None and total_docs >= max_docs:
+                if max_docs and total >= max_docs:
                     logger.info("Reached limit of %d documents", max_docs)
                     break
 
-            if max_docs is not None and total_docs >= max_docs:
+            if max_docs and total >= max_docs:
                 break
 
     elapsed = time.time() - start_time
-    rate = total_docs / elapsed if elapsed > 0 else 0.0
+    rate = total / elapsed if elapsed > 0 else 0.0
     logger.info(
         "Finished streaming %d documents in %.2fs (%.0f docs/s)",
-        total_docs,
+        total,
         elapsed,
         rate,
     )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Stream Wikipedia dataset into cloudy-neigh"
-    )
-    parser.add_argument(
-        "--data-dir",
-        default="datasets/cohere-wikipedia",
-        help="Directory containing Parquet files (default: datasets/cohere-wikipedia)",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=1000,
-        help="Batch size for writes (default: 1000)",
-    )
-    parser.add_argument(
-        "--max-docs",
-        type=int,
-        default=None,
-        help="Maximum documents to stream (default: all)",
-    )
-    parser.add_argument(
-        "--target",
-        default="localhost:50051",
-        help="Target ingest address (default: localhost:50051)",
-    )
-    parser.add_argument(
-        "--namespace",
-        default="main",
-        help="Target namespace (default: main)",
-    )
-    args = parser.parse_args()
-
+def main(argv: list[str]) -> None:
+    del argv  # Unused.
     load_dataset(
-        data_dir=args.data_dir,
-        batch_size=args.batch_size,
-        max_docs=args.max_docs,
-        target=args.target,
-        namespace=args.namespace,
+        data_dir=FLAGS.data_dir,
+        batch_size=FLAGS.batch_size,
+        max_docs=FLAGS.max_docs,
+        target=FLAGS.target,
+        namespace=FLAGS.namespace,
     )
 
 
 if __name__ == "__main__":
-    main()
+    app.run(main)

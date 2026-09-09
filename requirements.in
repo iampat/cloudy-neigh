@@ -1,3 +1,4 @@
 pyarrow
 grpcio
 protobuf
+absl-py
