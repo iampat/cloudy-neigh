@@ -48,6 +48,9 @@ func waitForManifest(t *testing.T, ctx context.Context, store objectstore.Store,
 
 	for {
 		select {
+		case <-ctx.Done():
+			t.Fatalf("context canceled waiting for branch %s manifest: %v", branch, ctx.Err())
+			return nil
 		case <-timeout:
 			t.Fatalf("timed out waiting for branch %s manifest", branch)
 			return nil
@@ -231,6 +234,9 @@ func TestRestartResume(t *testing.T) {
 	require.Len(t, manifest2.Segments, 2)
 	assert.Equal(t, uint64(5), manifest2.Segments[0].DocCount)
 	assert.Equal(t, uint64(2), manifest2.Segments[1].DocCount)
+	assert.Regexp(t, `^\d{14}-[0-9a-f]{16}$`, manifest2.Segments[0].SegmentId)
+	assert.Regexp(t, `^\d{14}-[0-9a-f]{16}$`, manifest2.Segments[1].SegmentId)
+	assert.Less(t, manifest2.Segments[0].SegmentId, manifest2.Segments[1].SegmentId)
 
 	muts1 := readSegmentMutations(t, ctx, store, "main", manifest2.Segments[0].SegmentId)
 	require.Len(t, muts1, 5)
@@ -339,17 +345,10 @@ func TestGracefulShutdownFlush(t *testing.T) {
 	appendDoc(t, ctx, log, "main", "doc-1", []byte("val-1"))
 	appendDoc(t, ctx, log, "main", "doc-2", []byte("val-2"))
 
-	idleCh := make(chan struct{}, 1)
 	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
 		DocThreshold:  1000,
 		TimeThreshold: 10 * time.Minute,
 		PollInterval:  10 * time.Millisecond,
-		OnIdle: func() {
-			select {
-			case idleCh <- struct{}{}:
-			default:
-			}
-		},
 	})
 	require.NoError(t, err)
 
@@ -358,7 +357,6 @@ func TestGracefulShutdownFlush(t *testing.T) {
 		flusherErrCh <- flusher.Run(ctx)
 	}()
 
-	<-idleCh
 	cancel()
 
 	err = <-flusherErrCh

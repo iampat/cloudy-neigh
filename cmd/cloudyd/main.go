@@ -134,7 +134,7 @@ func (s *ingestServer) Addr() net.Addr {
 }
 
 func (s *ingestServer) Serve(ctx context.Context) error {
-	flusherCtx, cancelFlusher := context.WithCancel(context.Background())
+	flusherCtx, cancelFlusher := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelFlusher()
 
 	var g errgroup.Group

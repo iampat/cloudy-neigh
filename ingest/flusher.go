@@ -22,7 +22,6 @@ type Config struct {
 	DocThreshold  int
 	TimeThreshold time.Duration
 	PollInterval  time.Duration
-	OnIdle        func()
 }
 
 func (c *Config) setDefaults() {
@@ -52,6 +51,10 @@ type Flusher struct {
 	memtables         map[string]*memtable
 	branchCheckpoints map[string]uint64
 	checkpointSeq     uint64
+	checkpointsInited bool
+
+	lastSegTime string
+	lastMicros  uint64
 }
 
 func NewFlusher(store objectstore.Store, log *logstream.Log, cfg Config) (*Flusher, error) {
@@ -114,13 +117,14 @@ func (f *Flusher) initCheckpoints(ctx context.Context) error {
 	if hasBranch {
 		f.checkpointSeq = minCheckpoint
 	}
+	f.checkpointsInited = true
 	return nil
 }
 
 func (f *Flusher) Run(ctx context.Context) error {
 	if err := f.initCheckpoints(ctx); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil
+			return f.shutdownFlush(f.checkpointSeq + 1)
 		}
 		return err
 	}
@@ -133,35 +137,61 @@ func (f *Flusher) Run(ctx context.Context) error {
 			if errors.Is(err, logstream.ErrEndOfStream) {
 				if err := f.flushExpiredMemtables(ctx); err != nil {
 					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-						return f.flushAll(context.Background())
+						return f.shutdownFlush(seq)
 					}
 					return err
 				}
-				if f.cfg.OnIdle != nil {
-					f.cfg.OnIdle()
-				}
 				select {
 				case <-ctx.Done():
-					return f.flushAll(context.Background())
+					return f.shutdownFlush(seq)
 				case <-time.After(f.cfg.PollInterval):
 					continue
 				}
 			}
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return f.flushAll(context.Background())
+				return f.shutdownFlush(seq)
 			}
 			return fmt.Errorf("read log seq %d: %w", seq, err)
 		}
 
 		if err := f.processRecords(ctx, seq, records); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return f.flushAll(context.Background())
+				return f.shutdownFlush(seq + 1)
 			}
 			return err
 		}
 
 		seq++
 	}
+}
+
+func (f *Flusher) shutdownFlush(startSeq uint64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if !f.checkpointsInited {
+		if err := f.initCheckpoints(ctx); err != nil {
+			return fmt.Errorf("init checkpoints on shutdown: %w", err)
+		}
+		startSeq = f.checkpointSeq + 1
+	}
+
+	seq := startSeq
+	for {
+		records, err := f.log.Read(ctx, seq)
+		if err != nil {
+			if errors.Is(err, logstream.ErrEndOfStream) {
+				break
+			}
+			return fmt.Errorf("drain log seq %d: %w", seq, err)
+		}
+		if err := f.processRecords(ctx, seq, records); err != nil {
+			return err
+		}
+		seq++
+	}
+
+	return f.flushAll(ctx)
 }
 
 func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logstream.Record) error {
@@ -260,7 +290,10 @@ func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
 	}
 	data := buf.Bytes()
 
-	segID := newSegmentID()
+	segID, err := f.newSegmentID()
+	if err != nil {
+		return fmt.Errorf("generate segment id: %w", err)
+	}
 	segKey := fmt.Sprintf("segments/%s/%s.recordio", mt.branch, segID)
 	if _, err := f.store.Put(ctx, segKey, bytes.NewReader(data), objectstore.Condition{Absent: true}); err != nil {
 		return fmt.Errorf("upload segment %s: %w", segKey, err)
@@ -313,8 +346,24 @@ func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
 	}
 }
 
-func newSegmentID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
+func (f *Flusher) newSegmentID() (string, error) {
+	var b [5]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("read random bytes: %w", err)
+	}
+	now := time.Now().UTC()
+	ts := now.Format("20060102150405")
+	micros := uint64(now.Nanosecond() / 1000)
+
+	if ts < f.lastSegTime {
+		ts = f.lastSegTime
+		micros = f.lastMicros + 1
+	} else if ts == f.lastSegTime && micros <= f.lastMicros {
+		micros = f.lastMicros + 1
+	}
+
+	f.lastSegTime = ts
+	f.lastMicros = micros
+
+	return fmt.Sprintf("%s-%06d%s", ts, micros, hex.EncodeToString(b[:])), nil
 }
