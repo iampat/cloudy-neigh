@@ -133,7 +133,13 @@ func (s *ingestServer) Addr() net.Addr {
 	return s.lis.Addr()
 }
 
-func (s *ingestServer) Serve(ctx context.Context) error {
+func (s *ingestServer) Serve(ctx context.Context) (err error) {
+	defer func() {
+		if closeErr := s.store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
 	flusherCtx, cancelFlusher := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelFlusher()
 
@@ -147,10 +153,22 @@ func (s *ingestServer) Serve(ctx context.Context) error {
 
 		select {
 		case <-ctx.Done():
-			s.grpcServer.GracefulStop()
-			<-errCh
+			stopped := make(chan struct{})
+			go func() {
+				s.grpcServer.GracefulStop()
+				close(stopped)
+			}()
+
+			select {
+			case <-stopped:
+			case <-time.After(5 * time.Second):
+				s.grpcServer.Stop()
+				<-stopped
+			}
+
+			err := <-errCh
 			cancelFlusher()
-			return nil
+			return err
 		case err := <-errCh:
 			cancelFlusher()
 			return err
@@ -159,15 +177,11 @@ func (s *ingestServer) Serve(ctx context.Context) error {
 
 	g.Go(func() error {
 		err := s.flusher.Run(flusherCtx)
-		if err != nil {
-			s.grpcServer.Stop()
-		}
+		s.grpcServer.Stop()
 		return err
 	})
 
-	err := g.Wait()
-	s.store.Close()
-	return err
+	return g.Wait()
 }
 
 func runIngest(ctx context.Context, args []string) error {
