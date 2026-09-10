@@ -189,7 +189,7 @@ func runIngest(ctx context.Context, args []string) error {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: cloudyd <subcommand> [flags]\n\nSubcommands:\n  ingest    run ingest gRPC service\n  query     run query service\n")
+	fmt.Fprintf(os.Stderr, "Usage: cloudy <subcommand> [flags]\n\nSubcommands:\n  ingest    run ingest gRPC service\n  query     run query service\n")
 }
 
 func run(ctx context.Context, args []string) error {
@@ -218,6 +218,6 @@ func main() {
 	defer stop()
 
 	if err := run(ctx, os.Args[1:]); err != nil {
-		log.Fatalf("cloudyd: %v", err)
+		log.Fatalf("cloudy: %v", err)
 	}
 }

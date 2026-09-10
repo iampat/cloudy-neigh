@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
@@ -24,7 +23,7 @@ type Config struct {
 	PollInterval  time.Duration
 }
 
-func (c *Config) setDefaults() {
+func withDefaults(c Config) Config {
 	if c.DocThreshold <= 0 {
 		c.DocThreshold = 10000
 	}
@@ -34,6 +33,7 @@ func (c *Config) setDefaults() {
 	if c.PollInterval <= 0 {
 		c.PollInterval = 100 * time.Millisecond
 	}
+	return c
 }
 
 type memtable struct {
@@ -43,6 +43,8 @@ type memtable struct {
 	lastSeq   uint64
 }
 
+const listLimit = 1000
+
 type Flusher struct {
 	store objectstore.Store
 	log   *logstream.Log
@@ -50,8 +52,6 @@ type Flusher struct {
 
 	memtables         map[string]*memtable
 	branchCheckpoints map[string]uint64
-	checkpointSeq     uint64
-	checkpointsInited bool
 
 	lastSegTime string
 	lastMicros  uint64
@@ -64,42 +64,37 @@ func NewFlusher(store objectstore.Store, log *logstream.Log, cfg Config) (*Flush
 	if log == nil {
 		return nil, errors.New("ingest: nil log")
 	}
-	cfg.setDefaults()
 
 	return &Flusher{
 		store:             store,
 		log:               log,
-		cfg:               cfg,
+		cfg:               withDefaults(cfg),
 		memtables:         make(map[string]*memtable),
 		branchCheckpoints: make(map[string]uint64),
 	}, nil
 }
 
-func (f *Flusher) initCheckpoints(ctx context.Context) error {
+func (f *Flusher) initCheckpoints(ctx context.Context) (uint64, error) {
 	var startAfter string
 	var minCheckpoint uint64
 	hasBranch := false
 
 	for {
-		objs, err := f.store.List(ctx, "refs/heads/", startAfter, 1000)
+		branches, err := kvfs.ListBranches(ctx, f.store, startAfter, listLimit)
 		if err != nil {
-			return fmt.Errorf("list branch refs: %w", err)
+			return 0, fmt.Errorf("list branches: %w", err)
 		}
-		if len(objs) == 0 {
+		if len(branches) == 0 {
 			break
 		}
 
-		for _, obj := range objs {
-			branch := strings.TrimPrefix(obj.Key, "refs/heads/")
-			if branch == "" {
-				continue
-			}
+		for _, branch := range branches {
 			manifest, _, err := kvfs.ResolveBranch(ctx, f.store, branch)
 			if err != nil {
 				if errors.Is(err, objectstore.ErrNotFound) {
 					continue
 				}
-				return fmt.Errorf("resolve branch %s: %w", branch, err)
+				return 0, fmt.Errorf("resolve branch %s: %w", branch, err)
 			}
 			f.branchCheckpoints[branch] = manifest.CheckpointSeq
 			if !hasBranch || manifest.CheckpointSeq < minCheckpoint {
@@ -108,28 +103,28 @@ func (f *Flusher) initCheckpoints(ctx context.Context) error {
 			}
 		}
 
-		if len(objs) < 1000 {
+		if len(branches) < listLimit {
 			break
 		}
-		startAfter = objs[len(objs)-1].Key
+		startAfter = branches[len(branches)-1]
 	}
 
 	if hasBranch {
-		f.checkpointSeq = minCheckpoint
+		return minCheckpoint, nil
 	}
-	f.checkpointsInited = true
-	return nil
+	return 0, nil
 }
 
 func (f *Flusher) Run(ctx context.Context) error {
-	if err := f.initCheckpoints(ctx); err != nil {
+	minCheckpoint, err := f.initCheckpoints(ctx)
+	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return f.shutdownFlush(f.checkpointSeq + 1)
+			return f.shutdownFlush(0)
 		}
 		return err
 	}
 
-	seq := f.checkpointSeq + 1
+	seq := minCheckpoint + 1
 
 	for {
 		records, err := f.log.Read(ctx, seq)
@@ -169,11 +164,12 @@ func (f *Flusher) shutdownFlush(startSeq uint64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if !f.checkpointsInited {
-		if err := f.initCheckpoints(ctx); err != nil {
+	if startSeq == 0 {
+		minSeq, err := f.initCheckpoints(ctx)
+		if err != nil {
 			return fmt.Errorf("init checkpoints on shutdown: %w", err)
 		}
-		startSeq = f.checkpointSeq + 1
+		startSeq = minSeq + 1
 	}
 
 	seq := startSeq

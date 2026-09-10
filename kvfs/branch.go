@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -18,10 +19,35 @@ var (
 	ErrNilManifest         = errors.New("kvfs: nil manifest")
 )
 
-const refPrefix = "refs/heads/"
+const (
+	refPrefix        = "refs/heads/"
+	DefaultListLimit = 1000
+)
 
 func branchKey(branch string) string {
 	return refPrefix + branch
+}
+
+func ListBranches(ctx context.Context, store objectstore.Store, startAfter string, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = DefaultListLimit
+	}
+	var startKey string
+	if startAfter != "" {
+		startKey = branchKey(startAfter)
+	}
+	objs, err := store.List(ctx, refPrefix, startKey, limit)
+	if err != nil {
+		return nil, fmt.Errorf("kvfs: list branches: %w", err)
+	}
+	branches := make([]string, 0, len(objs))
+	for _, obj := range objs {
+		branch := strings.TrimPrefix(obj.Key, refPrefix)
+		if branch != "" {
+			branches = append(branches, branch)
+		}
+	}
+	return branches, nil
 }
 
 func ResolveBranch(ctx context.Context, store objectstore.Store, branch string) (*storagepb.BranchManifest, string, error) {

@@ -1,9 +1,9 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
-    name = "cloudyd_lib",
+    name = "cloudy_lib",
     srcs = ["main.go"],
-    importpath = "github.com/iampat/cloudy-neigh/cmd/cloudyd",
+    importpath = "github.com/iampat/cloudy-neigh/cmd/cloudy",
     visibility = ["//visibility:private"],
     deps = [
         "//grpcapi",
@@ -17,7 +17,7 @@ go_library(
 )
 
 go_binary(
-    name = "cloudyd",
-    embed = [":cloudyd_lib"],
+    name = "cloudy",
+    embed = [":cloudy_lib"],
     visibility = ["//visibility:public"],
 )
