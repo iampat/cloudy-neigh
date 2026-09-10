@@ -9,6 +9,7 @@ build:go1.27 --@rules_go//go/toolchain:sdk_version=1.27
 
 build:race --@rules_go//go/config:race
 build --config=race
+# Workaround for grpc C++ build failure with Apple Clang modules (grpc/grpc#29749).
 build --features=-use_header_modules
 build --features=-module_maps
 

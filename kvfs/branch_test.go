@@ -182,3 +182,27 @@ func TestConcurrentBranchUpdates(t *testing.T) {
 		assert.Equal(t, int32(writers-1), losses.Load())
 	})
 }
+
+func TestListBranches(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
+		ctx := context.Background()
+
+		for _, name := range []string{"alpha", "beta", "gamma"} {
+			m := sampleManifest(1)
+			_, err := kvfs.UpdateBranch(ctx, s, name, m, "")
+			require.NoError(t, err)
+		}
+
+		branches, err := kvfs.ListBranches(ctx, s, "", 0)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alpha", "beta", "gamma"}, branches)
+
+		page1, err := kvfs.ListBranches(ctx, s, "", 2)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alpha", "beta"}, page1)
+
+		page2, err := kvfs.ListBranches(ctx, s, page1[len(page1)-1], 2)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"gamma"}, page2)
+	})
+}

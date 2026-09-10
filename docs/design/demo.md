@@ -39,7 +39,7 @@ A namespace maps to the `branch` field of `WalRecord`. Storage sits in the middl
 2. **Process 2 (Flusher)**: Tails the WAL into a per-namespace memtable, flushes via `segment.Writer`, and commits the manifest with atomic CAS.
 3. **Process 3 (Query)**: Polls the manifest, streams new segments with `segment.Reader` into an in-memory vector array, and serves exact k-NN queries.
 
-For the demo binary, Process 1 and Process 2 are packaged under the `cloudyd ingest` subcommand, but maintain clean code isolation.
+For the demo binary, Process 1 and Process 2 are packaged under the `cloudy ingest` subcommand, but maintain clean code isolation.
 
 ## Components
 
@@ -51,7 +51,7 @@ For the demo binary, Process 1 and Process 2 are packaged under the `cloudyd ing
 | `query/` | manifest poll, segment load, k-NN, filter |
 | `grpcapi/` | the two service implementations |
 | `restgw/` | JSON-to-gRPC translation, demo search, web page |
-| `cmd/cloudyd` | one binary, `ingest` and `query` subcommands |
+| `cmd/cloudy` | one binary, `ingest` and `query` subcommands |
 | `scripts/demoload.py` | stream the corpus into `Upsert` calls |
 | `examples/search.py` | Python client example on the REST API |
 
@@ -100,7 +100,7 @@ All honest, all replaced later behind a stable boundary.
 - [ ] Flush on threshold: upload segment, CAS the manifest with
       `kvfs.UpdateBranch`, advance `checkpoint_seq`.
 - [ ] `grpcapi/`: `Upsert` encodes `WalRecord` and appends to logstream.
-- [ ] `cloudyd ingest` subcommand.
+- [ ] `cloudy ingest` subcommand.
 - [ ] On a 412 from the manifest CAS, reload the ref and retry.
 - [ ] Tests: flush, restart resume, crash between upload and CAS.
 
@@ -112,7 +112,7 @@ All honest, all replaced later behind a stable boundary.
       ids and attributes. No per-document heap pointers.
 - [ ] Exact cosine k-NN with goroutine fan-out, `Eq` filter.
 - [ ] `grpcapi/`: `Query`.
-- [ ] `cloudyd query` subcommand.
+- [ ] `cloudy query` subcommand.
 - [ ] Tests: k-NN correctness on a tiny corpus, delete visibility,
       manifest refresh picks up a new segment.
 
