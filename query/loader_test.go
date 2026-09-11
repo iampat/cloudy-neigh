@@ -30,7 +30,8 @@ func writeSegment(t *testing.T, store objectstore.Store, branch, segID string, m
 	require.NoError(t, err)
 }
 
-func putMutation(branch, id string, vec []float32, attrs map[string]*cloudyneighpb.AttributeValue) *storagepb.DocumentMutation {
+func putMutation(t *testing.T, branch, id string, vec []float32, attrs map[string]*cloudyneighpb.AttributeValue) *storagepb.DocumentMutation {
+	t.Helper()
 	var vectors map[string]*cloudyneighpb.Vector
 	if len(vec) > 0 {
 		vectors = map[string]*cloudyneighpb.Vector{
@@ -43,9 +44,7 @@ func putMutation(branch, id string, vec []float32, attrs map[string]*cloudyneigh
 		Attributes: attrs,
 	}
 	payload, err := proto.Marshal(rec)
-	if err != nil {
-		panic(err)
-	}
+	require.NoError(t, err)
 	return &storagepb.DocumentMutation{
 		Branch:  branch,
 		DocId:   id,
@@ -90,15 +89,14 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.NoError(t, err)
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
-		putMutation("main", "doc-1", []float32{1.0, 2.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")}),
-		putMutation("main", "doc-2", []float32{3.0, 4.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")}),
+		putMutation(t, "main", "doc-1", []float32{1.0, 2.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")}),
+		putMutation(t, "main", "doc-2", []float32{3.0, 4.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")}),
 	})
 	gen := updateManifest(t, store, "main", []string{"seg-1"}, "")
 
 	loaded, err := loader.Sync(ctx, "main")
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
-	require.True(t, loader.IsLoaded("seg-1"))
 	require.Equal(t, 2, table.Len())
 
 	rec1, ok := table.Get("doc-1")
@@ -112,16 +110,15 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.Equal(t, 2, table.Len())
 
 	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
-		putMutation("main", "doc-1", nil, map[string]*cloudyneighpb.AttributeValue{"category": stringAttr("tech")}),
+		putMutation(t, "main", "doc-1", nil, map[string]*cloudyneighpb.AttributeValue{"category": stringAttr("tech")}),
 		deleteMutation("main", "doc-2"),
-		putMutation("main", "doc-3", []float32{5.0, 6.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc3")}),
+		putMutation(t, "main", "doc-3", []float32{5.0, 6.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc3")}),
 	})
 	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, gen)
 
 	loaded, err = loader.Sync(ctx, "main")
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
-	require.True(t, loader.IsLoaded("seg-2"))
 	require.Equal(t, 2, table.Len())
 
 	rec1, ok = table.Get("doc-1")
@@ -229,7 +226,7 @@ func TestLoader_Run(t *testing.T) {
 	}()
 
 	writeSegment(t, store, "main", "seg-bg", []*storagepb.DocumentMutation{
-		putMutation("main", "doc-bg", []float32{9.9}, map[string]*cloudyneighpb.AttributeValue{"name": stringAttr("background")}),
+		putMutation(t, "main", "doc-bg", []float32{9.9}, map[string]*cloudyneighpb.AttributeValue{"name": stringAttr("background")}),
 	})
 	updateManifest(t, store, "main", []string{"seg-bg"}, "")
 
@@ -238,7 +235,7 @@ func TestLoader_Run(t *testing.T) {
 	timeout := time.After(3 * time.Second)
 
 	for {
-		if loader.IsLoaded("seg-bg") {
+		if table.Len() == 1 {
 			break
 		}
 		select {

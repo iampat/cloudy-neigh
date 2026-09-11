@@ -39,16 +39,7 @@ func NewLoader(store objectstore.Store, table *Table) (*Loader, error) {
 	}, nil
 }
 
-func (l *Loader) IsLoaded(segmentID string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.loaded[segmentID]
-}
-
 func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	manifest, _, err := kvfs.ResolveBranch(ctx, l.store, branch)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
@@ -59,13 +50,18 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 
 	loadedCount := 0
 	for _, seg := range manifest.Segments {
-		if l.loaded[seg.SegmentId] {
+		l.mu.Lock()
+		loaded := l.loaded[seg.SegmentId]
+		l.mu.Unlock()
+		if loaded {
 			continue
 		}
 		if err := l.loadSegment(ctx, branch, seg.SegmentId); err != nil {
 			return loadedCount, err
 		}
+		l.mu.Lock()
 		l.loaded[seg.SegmentId] = true
+		l.mu.Unlock()
 		loadedCount++
 	}
 	return loadedCount, nil

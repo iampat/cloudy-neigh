@@ -10,8 +10,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const DefaultChunkSize = 65536
-
 type rowLoc struct {
 	chunk int
 	row   int
@@ -41,6 +39,10 @@ func newChunk(size int, vectorDims map[string]int) *chunk {
 		c.vectorMask[col] = make([]uint64, words)
 	}
 	return c
+}
+
+func (c *chunk) dead(row int) bool {
+	return c.tombstones[row/64]&(uint64(1)<<(row%64)) != 0
 }
 
 func (c *chunk) setVector(col string, row, dim int, vec []float32) {
@@ -73,7 +75,7 @@ type Table struct {
 
 func NewTable(chunkSize int) *Table {
 	if chunkSize <= 0 {
-		chunkSize = DefaultChunkSize
+		chunkSize = 65536
 	}
 	return &Table{
 		chunkSize:  chunkSize,
@@ -125,7 +127,7 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 		c := t.chunks[loc.chunk]
 		word := loc.row / 64
 		bit := uint64(1) << (loc.row % 64)
-		if c.tombstones[word]&bit != 0 {
+		if c.dead(loc.row) {
 			c.tombstones[word] &^= bit
 			t.liveCount++
 		}
@@ -195,12 +197,10 @@ func (t *Table) Delete(id string) bool {
 		return false
 	}
 	c := t.chunks[loc.chunk]
-	word := loc.row / 64
-	bit := uint64(1) << (loc.row % 64)
-	if c.tombstones[word]&bit != 0 {
+	if c.dead(loc.row) {
 		return false
 	}
-	c.tombstones[word] |= bit
+	c.tombstones[loc.row/64] |= uint64(1) << (loc.row % 64)
 	t.liveCount--
 	return true
 }
@@ -214,11 +214,12 @@ func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
 		return nil, false
 	}
 	c := t.chunks[loc.chunk]
-	word := loc.row / 64
-	bit := uint64(1) << (loc.row % 64)
-	if c.tombstones[word]&bit != 0 {
+	if c.dead(loc.row) {
 		return nil, false
 	}
+
+	word := loc.row / 64
+	bit := uint64(1) << (loc.row % 64)
 
 	rec := &cloudyneighpb.Record{
 		Id:         id,
@@ -258,11 +259,12 @@ func (t *Table) Vector(id, col string) ([]float32, bool) {
 		return nil, false
 	}
 	c := t.chunks[loc.chunk]
-	word := loc.row / 64
-	bit := uint64(1) << (loc.row % 64)
-	if c.tombstones[word]&bit != 0 {
+	if c.dead(loc.row) {
 		return nil, false
 	}
+
+	word := loc.row / 64
+	bit := uint64(1) << (loc.row % 64)
 
 	mask, ok := c.vectorMask[col]
 	if !ok || mask[word]&bit == 0 {
@@ -283,11 +285,12 @@ func (t *Table) Attribute(id, key string) (*cloudyneighpb.AttributeValue, bool) 
 		return nil, false
 	}
 	c := t.chunks[loc.chunk]
-	word := loc.row / 64
-	bit := uint64(1) << (loc.row % 64)
-	if c.tombstones[word]&bit != 0 {
+	if c.dead(loc.row) {
 		return nil, false
 	}
+
+	word := loc.row / 64
+	bit := uint64(1) << (loc.row % 64)
 
 	mask, ok := c.attrMask[key]
 	if !ok || mask[word]&bit == 0 {
