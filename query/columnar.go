@@ -10,6 +10,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+var ErrDimensionMismatch = errors.New("query: vector dimension mismatch")
+
 type vectorCol struct {
 	dim      int
 	data     []float32
@@ -54,7 +56,7 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 		}
 		if vCol, ok := t.vectors[col]; ok {
 			if len(vec) != vCol.dim {
-				return fmt.Errorf("query: vector column %q dimension mismatch: got %d, want %d", col, len(vec), vCol.dim)
+				return fmt.Errorf("%w: column %q has dimension %d, got %d", ErrDimensionMismatch, col, vCol.dim, len(vec))
 			}
 		}
 	}

@@ -264,3 +264,37 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	_, ok = table.Get("doc-1")
 	require.False(t, ok)
 }
+
+func TestLoader_VectorDimensionMismatch(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	table := query.NewTable()
+	loader, err := query.NewLoader(store, table)
+	require.NoError(t, err)
+
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0, 2.0}, nil),
+	})
+	updateManifest(t, store, "main", []string{"seg-1"}, "")
+
+	loaded, err := loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-2", []float32{1.0, 2.0, 3.0}, nil),
+	})
+	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, "gen-1")
+
+	loaded, err = loader.Sync(ctx, "main")
+	require.Error(t, err)
+	require.ErrorIs(t, err, query.ErrDimensionMismatch)
+	require.Equal(t, 0, loaded)
+
+	_, ok := table.Get("doc-2")
+	require.False(t, ok)
+}
+
