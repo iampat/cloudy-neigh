@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "cloudy_lib",
@@ -20,4 +20,14 @@ go_binary(
     name = "cloudy",
     embed = [":cloudy_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "cloudy_test",
+    srcs = ["main_test.go"],
+    embed = [":cloudy_lib"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
 )

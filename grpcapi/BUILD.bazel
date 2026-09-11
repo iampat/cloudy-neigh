@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "grpcapi",
-    srcs = ["ingest.go"],
+    srcs = [
+        "ingest.go",
+        "query.go",
+    ],
     importpath = "github.com/iampat/cloudy-neigh/grpcapi",
     visibility = ["//visibility:public"],
     deps = [
@@ -18,7 +21,10 @@ go_library(
 
 go_test(
     name = "grpcapi_test",
-    srcs = ["ingest_test.go"],
+    srcs = [
+        "ingest_test.go",
+        "query_test.go",
+    ],
     deps = [
         ":grpcapi",
         "//logstream",
