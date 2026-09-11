@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -194,64 +193,4 @@ func TestLoader_Validation(t *testing.T) {
 
 	_, err = loader.Sync(ctx, "invalid/branch/name")
 	require.Error(t, err)
-
-	err = loader.Run(ctx, "invalid/branch/name", 10*time.Millisecond)
-	require.Error(t, err)
-
-	err = loader.Run(ctx, "main", 0)
-	require.Error(t, err)
-
-	err = loader.Run(ctx, "main", -1*time.Millisecond)
-	require.Error(t, err)
-}
-
-func TestLoader_Run(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	store, err := objectstore.Open(ctx, "mem://")
-	require.NoError(t, err)
-	t.Cleanup(func() { store.Close() })
-
-	table := query.NewTable()
-	loader, err := query.NewLoader(store, table)
-	require.NoError(t, err)
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- loader.Run(ctx, "main", 10*time.Millisecond)
-	}()
-
-	writeSegment(t, store, "main", "seg-bg", []*storagepb.DocumentMutation{
-		putMutation(t, "main", "doc-bg", []float32{9.9}, map[string]*cloudyneighpb.AttributeValue{"name": stringAttr("background")}),
-	})
-	updateManifest(t, store, "main", []string{"seg-bg"}, "")
-
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-	timeout := time.After(3 * time.Second)
-
-	for {
-		if _, ok := table.Get("doc-bg"); ok {
-			break
-		}
-		select {
-		case <-timeout:
-			t.Fatal("timed out waiting for background loader to sync segment")
-		case <-ticker.C:
-		}
-	}
-
-	rec, ok := table.Get("doc-bg")
-	require.True(t, ok)
-	require.True(t, proto.Equal(stringAttr("background"), rec.Attributes["name"]))
-
-	cancel()
-
-	select {
-	case err := <-errCh:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for loader.Run to exit")
-	}
 }

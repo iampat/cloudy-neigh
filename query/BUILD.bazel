@@ -10,7 +10,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kvfs",
-        "//namespace",
         "//objectstore",
         "//proto/cloudyneigh/v1:cloudyneigh",
         "//proto/storage/v1:storage",

@@ -5,12 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"sync"
-	"time"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
-	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -101,30 +98,4 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 		}
 	}
 	return nil
-}
-
-func (l *Loader) Run(ctx context.Context, branch string, pollInterval time.Duration) error {
-	if err := namespace.ValidateBranch(branch); err != nil {
-		return err
-	}
-	if pollInterval <= 0 {
-		return fmt.Errorf("query: pollInterval must be positive, got %v", pollInterval)
-	}
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	for {
-		if _, err := l.Sync(ctx, branch); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			slog.WarnContext(ctx, "manifest loader sync failed", "branch", branch, "err", err)
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
 }
