@@ -18,7 +18,7 @@ import (
 
 func setupQueryTestEnv(t *testing.T) cloudyneighpb.QueryServiceClient {
 	t.Helper()
-	srv := grpcapi.NewQueryServer()
+	srv := new(grpcapi.QueryServer)
 
 	lis := bufconn.Listen(1024 * 1024)
 	s := grpc.NewServer()
@@ -54,9 +54,11 @@ func TestQuery_Success(t *testing.T) {
 		Vector:    []float32{0.1, 0.2, 0.3},
 		TopK:      10,
 	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Empty(t, resp.Hits)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.Unimplemented, st.Code())
 }
 
 func TestQuery_Validation(t *testing.T) {
@@ -99,7 +101,7 @@ func TestQuery_Validation(t *testing.T) {
 }
 
 func TestQuery_NilRequest(t *testing.T) {
-	srv := grpcapi.NewQueryServer()
+	srv := new(grpcapi.QueryServer)
 	_, err := srv.Query(context.Background(), nil)
 	require.Error(t, err)
 	st, ok := status.FromError(err)

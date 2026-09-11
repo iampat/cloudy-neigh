@@ -13,10 +13,6 @@ type QueryServer struct {
 	cloudyneighpb.UnimplementedQueryServiceServer
 }
 
-func NewQueryServer() *QueryServer {
-	return &QueryServer{}
-}
-
 func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest) (*cloudyneighpb.QueryResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: nil request")
@@ -24,5 +20,5 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 	if err := namespace.ValidateNamespace(req.Namespace); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "grpcapi: invalid namespace: %v", err)
 	}
-	return &cloudyneighpb.QueryResponse{}, nil
+	return nil, status.Error(codes.Unimplemented, "grpcapi: query not implemented")
 }
