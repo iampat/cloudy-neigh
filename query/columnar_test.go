@@ -276,75 +276,6 @@ func TestTable_PartialUpdate(t *testing.T) {
 	}
 }
 
-func TestTable_DeleteTombstones(t *testing.T) {
-	table := query.NewTable()
-	require.NoError(t, table.Upsert("doc-1", map[string][]float32{"vec": {1.0}}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v1")}))
-	require.NoError(t, table.Upsert("doc-2", map[string][]float32{"vec": {2.0}}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v2")}))
-
-	tests := []struct {
-		name       string
-		op         string
-		id         string
-		vectors    map[string][]float32
-		attrs      map[string]*cloudyneighpb.AttributeValue
-		wantOk     bool
-		wantExists bool
-	}{
-		{
-			name:       "delete doc-1 marks tombstone",
-			op:         "delete",
-			id:         "doc-1",
-			wantOk:     true,
-			wantExists: false,
-		},
-		{
-			name:       "repeated delete of doc-1 returns false",
-			op:         "delete",
-			id:         "doc-1",
-			wantOk:     false,
-			wantExists: false,
-		},
-		{
-			name:       "delete nonexistent doc returns false",
-			op:         "delete",
-			id:         "nonexistent",
-			wantOk:     false,
-			wantExists: false,
-		},
-		{
-			name:       "re-upsert doc-1 clears tombstone and merges attributes",
-			op:         "upsert",
-			id:         "doc-1",
-			vectors:    map[string][]float32{"vec": {10.0}},
-			attrs:      map[string]*cloudyneighpb.AttributeValue{"extra": stringAttr("e")},
-			wantOk:     true,
-			wantExists: true,
-		},
-		{
-			name:       "re-delete doc-1 marks tombstone again",
-			op:         "delete",
-			id:         "doc-1",
-			wantOk:     true,
-			wantExists: false,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.op == "delete" {
-				ok := table.Delete(tc.id)
-				require.Equal(t, tc.wantOk, ok)
-			} else {
-				err := table.Upsert(tc.id, tc.vectors, tc.attrs)
-				require.NoError(t, err)
-			}
-
-			_, exists := table.Get(tc.id)
-			require.Equal(t, tc.wantExists, exists)
-		})
-	}
-}
-
 func TestTable_FlatStorage(t *testing.T) {
 	table := query.NewTable()
 
@@ -386,12 +317,7 @@ func TestTable_FlatStorage(t *testing.T) {
 		})
 	}
 
-	require.True(t, table.Delete("d"))
-	require.False(t, table.Delete("d"))
-
-	_, ok := table.Get("d")
-	require.False(t, ok)
-	_, ok = table.Get("c")
+	_, ok := table.Get("c")
 	require.True(t, ok)
 	_, ok = table.Get("e")
 	require.True(t, ok)
@@ -408,7 +334,6 @@ func TestTable_ZeroValue(t *testing.T) {
 
 	_, ok := table.Get("nonexistent")
 	require.False(t, ok)
-	require.False(t, table.Delete("nonexistent"))
 
 	err := table.Upsert("doc-1", map[string][]float32{
 		"vec": {1.0, 2.0},
@@ -422,8 +347,4 @@ func TestTable_ZeroValue(t *testing.T) {
 	require.Equal(t, "doc-1", rec.Id)
 	require.True(t, proto.Equal(stringAttr("zero-value-test"), rec.Attributes["title"]))
 	require.Equal(t, []float32{1.0, 2.0}, rec.Vectors["vec"].Values)
-
-	require.True(t, table.Delete("doc-1"))
-	_, ok = table.Get("doc-1")
-	require.False(t, ok)
 }

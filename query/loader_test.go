@@ -194,3 +194,73 @@ func TestLoader_Validation(t *testing.T) {
 	_, err = loader.Sync(ctx, "invalid/branch/name")
 	require.Error(t, err)
 }
+
+func TestLoader_DeleteTombstones(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	table := query.NewTable()
+	loader, err := query.NewLoader(store, table)
+	require.NoError(t, err)
+
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v1")}),
+		putMutation(t, "main", "doc-2", []float32{2.0}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v2")}),
+	})
+	gen := updateManifest(t, store, "main", []string{"seg-1"}, "")
+
+	loaded, err := loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	rec1, ok := table.Get("doc-1")
+	require.True(t, ok)
+	require.Equal(t, "doc-1", rec1.Id)
+
+	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
+		deleteMutation("main", "doc-1"),
+		deleteMutation("main", "doc-1"),
+		deleteMutation("main", "nonexistent"),
+	})
+	gen = updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, gen)
+
+	loaded, err = loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	_, ok = table.Get("doc-1")
+	require.False(t, ok)
+
+	rec2, ok := table.Get("doc-2")
+	require.True(t, ok)
+	require.Equal(t, "doc-2", rec2.Id)
+
+	writeSegment(t, store, "main", "seg-3", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{10.0}, map[string]*cloudyneighpb.AttributeValue{"extra": stringAttr("e")}),
+	})
+	gen = updateManifest(t, store, "main", []string{"seg-1", "seg-2", "seg-3"}, gen)
+
+	loaded, err = loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	rec1, ok = table.Get("doc-1")
+	require.True(t, ok)
+	require.Equal(t, []float32{10.0}, rec1.Vectors["default"].Values)
+	require.True(t, proto.Equal(stringAttr("v1"), rec1.Attributes["k"]))
+	require.True(t, proto.Equal(stringAttr("e"), rec1.Attributes["extra"]))
+
+	writeSegment(t, store, "main", "seg-4", []*storagepb.DocumentMutation{
+		deleteMutation("main", "doc-1"),
+	})
+	updateManifest(t, store, "main", []string{"seg-1", "seg-2", "seg-3", "seg-4"}, gen)
+
+	loaded, err = loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	_, ok = table.Get("doc-1")
+	require.False(t, ok)
+}

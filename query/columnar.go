@@ -136,7 +136,7 @@ func (t *Table) UpsertRecord(rec *cloudyneighpb.Record) error {
 	return t.Upsert(rec.Id, vectors, rec.Attributes)
 }
 
-func (t *Table) Delete(id string) bool {
+func (t *Table) delete(id string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 

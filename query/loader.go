@@ -92,7 +92,7 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 				return fmt.Errorf("upsert record %s from %s: %w", rec.Id, segKey, err)
 			}
 		case storagepb.MutationOp_DELETE:
-			l.table.Delete(mut.DocId)
+			l.table.delete(mut.DocId)
 		default:
 			return fmt.Errorf("unknown mutation op %v in %s", mut.Op, segKey)
 		}
