@@ -65,6 +65,10 @@ func TestNewIngestServer_NilLog(t *testing.T) {
 	assert.ErrorIs(t, err, grpcapi.ErrNilLog)
 }
 
+func stringAttr(s string) *cloudyneighpb.AttributeValue {
+	return &cloudyneighpb.AttributeValue{Value: &cloudyneighpb.AttributeValue_StringValue{StringValue: s}}
+}
+
 func TestUpsert_Success(t *testing.T) {
 	client, log := setupTestEnv(t)
 	ctx := context.Background()
@@ -74,9 +78,9 @@ func TestUpsert_Success(t *testing.T) {
 		Vectors: map[string]*cloudyneighpb.Vector{
 			"default": {Values: []float32{0.1, 0.2, 0.3}},
 		},
-		Attributes: map[string]string{
-			"title": "Document One",
-			"lang":  "en",
+		Attributes: map[string]*cloudyneighpb.AttributeValue{
+			"title": stringAttr("Document One"),
+			"lang":  stringAttr("en"),
 		},
 	}
 	rec2 := &cloudyneighpb.Record{
@@ -84,9 +88,9 @@ func TestUpsert_Success(t *testing.T) {
 		Vectors: map[string]*cloudyneighpb.Vector{
 			"default": {Values: []float32{0.4, 0.5, 0.6}},
 		},
-		Attributes: map[string]string{
-			"title": "Document Two",
-			"lang":  "fr",
+		Attributes: map[string]*cloudyneighpb.AttributeValue{
+			"title": stringAttr("Document Two"),
+			"lang":  stringAttr("fr"),
 		},
 	}
 
@@ -344,9 +348,9 @@ func TestLocalFSBackend(t *testing.T) {
 		Vectors: map[string]*cloudyneighpb.Vector{
 			"default": {Values: []float32{0.123, 0.456, 0.789}},
 		},
-		Attributes: map[string]string{
-			"title": "Machine Learning",
-			"lang":  "en",
+		Attributes: map[string]*cloudyneighpb.AttributeValue{
+			"title": stringAttr("Machine Learning"),
+			"lang":  stringAttr("en"),
 		},
 	}
 

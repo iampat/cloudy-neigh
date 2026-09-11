@@ -6,7 +6,20 @@ import (
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
+
+func stringAttr(s string) *cloudyneighpb.AttributeValue {
+	return &cloudyneighpb.AttributeValue{Value: &cloudyneighpb.AttributeValue_StringValue{StringValue: s}}
+}
+
+func assertAttrsEqual(t *testing.T, want, got map[string]*cloudyneighpb.AttributeValue) {
+	t.Helper()
+	require.Equal(t, len(want), len(got))
+	for k, v := range want {
+		require.True(t, proto.Equal(v, got[k]))
+	}
+}
 
 func TestTable_Upsert(t *testing.T) {
 	tests := []struct {
@@ -14,7 +27,7 @@ func TestTable_Upsert(t *testing.T) {
 		rec      *cloudyneighpb.Record
 		wantErr  bool
 		wantVec  []float32
-		wantAttr map[string]string
+		wantAttr map[string]*cloudyneighpb.AttributeValue
 	}{
 		{
 			name: "record with vector and attributes",
@@ -23,19 +36,29 @@ func TestTable_Upsert(t *testing.T) {
 				Vectors: map[string]*cloudyneighpb.Vector{
 					"default": {Values: []float32{1.1, 2.2, 3.3}},
 				},
-				Attributes: map[string]string{"title": "hello", "lang": "en"},
+				Attributes: map[string]*cloudyneighpb.AttributeValue{
+					"title": stringAttr("hello"),
+					"lang":  stringAttr("en"),
+				},
 			},
-			wantVec:  []float32{1.1, 2.2, 3.3},
-			wantAttr: map[string]string{"title": "hello", "lang": "en"},
+			wantVec: []float32{1.1, 2.2, 3.3},
+			wantAttr: map[string]*cloudyneighpb.AttributeValue{
+				"title": stringAttr("hello"),
+				"lang":  stringAttr("en"),
+			},
 		},
 		{
 			name: "record without vector",
 			rec: &cloudyneighpb.Record{
-				Id:         "doc-2",
-				Attributes: map[string]string{"tag": "test"},
+				Id: "doc-2",
+				Attributes: map[string]*cloudyneighpb.AttributeValue{
+					"tag": stringAttr("test"),
+				},
 			},
-			wantVec:  nil,
-			wantAttr: map[string]string{"tag": "test"},
+			wantVec: nil,
+			wantAttr: map[string]*cloudyneighpb.AttributeValue{
+				"tag": stringAttr("test"),
+			},
 		},
 		{
 			name: "record without attributes",
@@ -46,7 +69,7 @@ func TestTable_Upsert(t *testing.T) {
 				},
 			},
 			wantVec:  []float32{4.4, 5.5, 6.6},
-			wantAttr: map[string]string{},
+			wantAttr: map[string]*cloudyneighpb.AttributeValue{},
 		},
 		{
 			name: "empty record id rejected",
@@ -88,7 +111,7 @@ func TestTable_Upsert(t *testing.T) {
 			rec, ok := table.Get(tc.rec.Id)
 			require.True(t, ok)
 			require.Equal(t, tc.rec.Id, rec.Id)
-			require.Equal(t, tc.wantAttr, rec.Attributes)
+			assertAttrsEqual(t, tc.wantAttr, rec.Attributes)
 
 			if len(tc.wantVec) > 0 {
 				require.Equal(t, tc.wantVec, rec.Vectors["default"].Values)
@@ -105,12 +128,12 @@ func TestTable_Upsert(t *testing.T) {
 	t.Run("mutation isolation on read", func(t *testing.T) {
 		rec, ok := table.Get("doc-1")
 		require.True(t, ok)
-		rec.Attributes["title"] = "corrupted"
+		rec.Attributes["title"] = stringAttr("corrupted")
 		rec.Vectors["default"].Values[0] = 999.0
 
 		fresh, ok := table.Get("doc-1")
 		require.True(t, ok)
-		require.Equal(t, "hello", fresh.Attributes["title"])
+		require.True(t, proto.Equal(stringAttr("hello"), fresh.Attributes["title"]))
 		require.Equal(t, float32(1.1), fresh.Vectors["default"].Values[0])
 	})
 }
@@ -120,7 +143,7 @@ func TestTable_MultiVector(t *testing.T) {
 		name    string
 		id      string
 		vectors map[string][]float32
-		attrs   map[string]string
+		attrs   map[string]*cloudyneighpb.AttributeValue
 		wantErr bool
 	}{
 		{
@@ -130,7 +153,7 @@ func TestTable_MultiVector(t *testing.T) {
 				"title_emb": {0.1, 0.2},
 				"body_emb":  {0.3, 0.4, 0.5, 0.6},
 			},
-			attrs: map[string]string{"type": "article"},
+			attrs: map[string]*cloudyneighpb.AttributeValue{"type": stringAttr("article")},
 		},
 		{
 			name: "sparse vector columns",
@@ -138,7 +161,7 @@ func TestTable_MultiVector(t *testing.T) {
 			vectors: map[string][]float32{
 				"title_emb": {0.7, 0.8},
 			},
-			attrs: map[string]string{"type": "headline"},
+			attrs: map[string]*cloudyneighpb.AttributeValue{"type": stringAttr("headline")},
 		},
 		{
 			name: "dimension mismatch rejected",
@@ -180,30 +203,30 @@ func TestTable_PartialUpdate(t *testing.T) {
 	table := query.NewTable(0)
 	err := table.Upsert("doc-p", map[string][]float32{
 		"vec": {1.0, 2.0},
-	}, map[string]string{
-		"a": "initial-a",
-		"b": "initial-b",
+	}, map[string]*cloudyneighpb.AttributeValue{
+		"a": stringAttr("initial-a"),
+		"b": stringAttr("initial-b"),
 	})
 	require.NoError(t, err)
 
 	tests := []struct {
 		name     string
 		vectors  map[string][]float32
-		attrs    map[string]string
+		attrs    map[string]*cloudyneighpb.AttributeValue
 		wantVec  []float32
-		wantAttr map[string]string
+		wantAttr map[string]*cloudyneighpb.AttributeValue
 	}{
 		{
 			name: "merge attributes key-by-key preserving existing keys",
-			attrs: map[string]string{
-				"b": "updated-b",
-				"c": "new-c",
+			attrs: map[string]*cloudyneighpb.AttributeValue{
+				"b": stringAttr("updated-b"),
+				"c": stringAttr("new-c"),
 			},
 			wantVec: []float32{1.0, 2.0},
-			wantAttr: map[string]string{
-				"a": "initial-a",
-				"b": "updated-b",
-				"c": "new-c",
+			wantAttr: map[string]*cloudyneighpb.AttributeValue{
+				"a": stringAttr("initial-a"),
+				"b": stringAttr("updated-b"),
+				"c": stringAttr("new-c"),
 			},
 		},
 		{
@@ -212,10 +235,10 @@ func TestTable_PartialUpdate(t *testing.T) {
 				"vec": {3.0, 4.0},
 			},
 			wantVec: []float32{3.0, 4.0},
-			wantAttr: map[string]string{
-				"a": "initial-a",
-				"b": "updated-b",
-				"c": "new-c",
+			wantAttr: map[string]*cloudyneighpb.AttributeValue{
+				"a": stringAttr("initial-a"),
+				"b": stringAttr("updated-b"),
+				"c": stringAttr("new-c"),
 			},
 		},
 		{
@@ -223,15 +246,15 @@ func TestTable_PartialUpdate(t *testing.T) {
 			vectors: map[string][]float32{
 				"vec": {},
 			},
-			attrs: map[string]string{
-				"d": "new-d",
+			attrs: map[string]*cloudyneighpb.AttributeValue{
+				"d": stringAttr("new-d"),
 			},
 			wantVec: []float32{3.0, 4.0},
-			wantAttr: map[string]string{
-				"a": "initial-a",
-				"b": "updated-b",
-				"c": "new-c",
-				"d": "new-d",
+			wantAttr: map[string]*cloudyneighpb.AttributeValue{
+				"a": stringAttr("initial-a"),
+				"b": stringAttr("updated-b"),
+				"c": stringAttr("new-c"),
+				"d": stringAttr("new-d"),
 			},
 		},
 	}
@@ -244,15 +267,15 @@ func TestTable_PartialUpdate(t *testing.T) {
 			rec, ok := table.Get("doc-p")
 			require.True(t, ok)
 			require.Equal(t, tc.wantVec, rec.Vectors["vec"].Values)
-			require.Equal(t, tc.wantAttr, rec.Attributes)
+			assertAttrsEqual(t, tc.wantAttr, rec.Attributes)
 		})
 	}
 }
 
 func TestTable_DeleteTombstones(t *testing.T) {
 	table := query.NewTable(0)
-	require.NoError(t, table.Upsert("doc-1", map[string][]float32{"vec": {1.0}}, map[string]string{"k": "v1"}))
-	require.NoError(t, table.Upsert("doc-2", map[string][]float32{"vec": {2.0}}, map[string]string{"k": "v2"}))
+	require.NoError(t, table.Upsert("doc-1", map[string][]float32{"vec": {1.0}}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v1")}))
+	require.NoError(t, table.Upsert("doc-2", map[string][]float32{"vec": {2.0}}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v2")}))
 	require.Equal(t, 2, table.Len())
 
 	tests := []struct {
@@ -260,7 +283,7 @@ func TestTable_DeleteTombstones(t *testing.T) {
 		op         string
 		id         string
 		vectors    map[string][]float32
-		attrs      map[string]string
+		attrs      map[string]*cloudyneighpb.AttributeValue
 		wantOk     bool
 		wantLen    int
 		wantExists bool
@@ -294,7 +317,7 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			op:         "upsert",
 			id:         "doc-1",
 			vectors:    map[string][]float32{"vec": {10.0}},
-			attrs:      map[string]string{"extra": "e"},
+			attrs:      map[string]*cloudyneighpb.AttributeValue{"extra": stringAttr("e")},
 			wantOk:     true,
 			wantLen:    2,
 			wantExists: true,
@@ -333,8 +356,8 @@ func TestTable_ChunkBoundaries(t *testing.T) {
 		id := string(rune('a' + i))
 		err := table.Upsert(id, map[string][]float32{
 			"v": {float32(i)},
-		}, map[string]string{
-			"idx": string(rune('0' + i)),
+		}, map[string]*cloudyneighpb.AttributeValue{
+			"idx": stringAttr(string(rune('0' + i))),
 		})
 		require.NoError(t, err)
 	}
@@ -344,16 +367,16 @@ func TestTable_ChunkBoundaries(t *testing.T) {
 	tests := []struct {
 		id      string
 		wantVal float32
-		wantIdx string
+		wantIdx *cloudyneighpb.AttributeValue
 	}{
-		{"a", 0.0, "0"},
-		{"b", 1.0, "1"},
-		{"c", 2.0, "2"},
-		{"d", 3.0, "3"},
-		{"e", 4.0, "4"},
-		{"f", 5.0, "5"},
-		{"g", 6.0, "6"},
-		{"h", 7.0, "7"},
+		{"a", 0.0, stringAttr("0")},
+		{"b", 1.0, stringAttr("1")},
+		{"c", 2.0, stringAttr("2")},
+		{"d", 3.0, stringAttr("3")},
+		{"e", 4.0, stringAttr("4")},
+		{"f", 5.0, stringAttr("5")},
+		{"g", 6.0, stringAttr("6")},
+		{"h", 7.0, stringAttr("7")},
 	}
 
 	for _, tc := range tests {
@@ -361,7 +384,7 @@ func TestTable_ChunkBoundaries(t *testing.T) {
 			rec, ok := table.Get(tc.id)
 			require.True(t, ok)
 			require.Equal(t, tc.id, rec.Id)
-			require.Equal(t, tc.wantIdx, rec.Attributes["idx"])
+			require.True(t, proto.Equal(tc.wantIdx, rec.Attributes["idx"]))
 
 			vec, ok := table.Vector(tc.id, "v")
 			require.True(t, ok)
@@ -380,9 +403,9 @@ func TestTable_ChunkBoundaries(t *testing.T) {
 	_, ok = table.Get("e")
 	require.True(t, ok)
 
-	err := table.Upsert("h", nil, map[string]string{"idx": "updated"})
+	err := table.Upsert("h", nil, map[string]*cloudyneighpb.AttributeValue{"idx": stringAttr("updated")})
 	require.NoError(t, err)
 	attr, ok := table.Attribute("h", "idx")
 	require.True(t, ok)
-	require.Equal(t, "updated", attr)
+	require.True(t, proto.Equal(stringAttr("updated"), attr))
 }

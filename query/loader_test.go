@@ -30,7 +30,7 @@ func writeSegment(t *testing.T, store objectstore.Store, branch, segID string, m
 	require.NoError(t, err)
 }
 
-func putMutation(branch, id string, vec []float32, attrs map[string]string) *storagepb.DocumentMutation {
+func putMutation(branch, id string, vec []float32, attrs map[string]*cloudyneighpb.AttributeValue) *storagepb.DocumentMutation {
 	var vectors map[string]*cloudyneighpb.Vector
 	if len(vec) > 0 {
 		vectors = map[string]*cloudyneighpb.Vector{
@@ -90,8 +90,8 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.NoError(t, err)
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
-		putMutation("main", "doc-1", []float32{1.0, 2.0}, map[string]string{"title": "doc1"}),
-		putMutation("main", "doc-2", []float32{3.0, 4.0}, map[string]string{"title": "doc2"}),
+		putMutation("main", "doc-1", []float32{1.0, 2.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")}),
+		putMutation("main", "doc-2", []float32{3.0, 4.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")}),
 	})
 	gen := updateManifest(t, store, "main", []string{"seg-1"}, "")
 
@@ -103,7 +103,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 
 	rec1, ok := table.Get("doc-1")
 	require.True(t, ok)
-	require.Equal(t, "doc1", rec1.Attributes["title"])
+	require.True(t, proto.Equal(stringAttr("doc1"), rec1.Attributes["title"]))
 	require.Equal(t, []float32{1.0, 2.0}, rec1.Vectors["default"].Values)
 
 	loaded, err = loader.Sync(ctx, "main")
@@ -112,9 +112,9 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.Equal(t, 2, table.Len())
 
 	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
-		putMutation("main", "doc-1", nil, map[string]string{"category": "tech"}),
+		putMutation("main", "doc-1", nil, map[string]*cloudyneighpb.AttributeValue{"category": stringAttr("tech")}),
 		deleteMutation("main", "doc-2"),
-		putMutation("main", "doc-3", []float32{5.0, 6.0}, map[string]string{"title": "doc3"}),
+		putMutation("main", "doc-3", []float32{5.0, 6.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc3")}),
 	})
 	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, gen)
 
@@ -126,8 +126,8 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 
 	rec1, ok = table.Get("doc-1")
 	require.True(t, ok)
-	require.Equal(t, "doc1", rec1.Attributes["title"])
-	require.Equal(t, "tech", rec1.Attributes["category"])
+	require.True(t, proto.Equal(stringAttr("doc1"), rec1.Attributes["title"]))
+	require.True(t, proto.Equal(stringAttr("tech"), rec1.Attributes["category"]))
 	require.Equal(t, []float32{1.0, 2.0}, rec1.Vectors["default"].Values)
 
 	_, ok = table.Get("doc-2")
@@ -135,7 +135,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 
 	rec3, ok := table.Get("doc-3")
 	require.True(t, ok)
-	require.Equal(t, "doc3", rec3.Attributes["title"])
+	require.True(t, proto.Equal(stringAttr("doc3"), rec3.Attributes["title"]))
 
 	loaded, err = loader.Sync(ctx, "main")
 	require.NoError(t, err)
@@ -229,7 +229,7 @@ func TestLoader_Run(t *testing.T) {
 	}()
 
 	writeSegment(t, store, "main", "seg-bg", []*storagepb.DocumentMutation{
-		putMutation("main", "doc-bg", []float32{9.9}, map[string]string{"name": "background"}),
+		putMutation("main", "doc-bg", []float32{9.9}, map[string]*cloudyneighpb.AttributeValue{"name": stringAttr("background")}),
 	})
 	updateManifest(t, store, "main", []string{"seg-bg"}, "")
 
@@ -251,7 +251,7 @@ func TestLoader_Run(t *testing.T) {
 	require.Equal(t, 1, table.Len())
 	rec, ok := table.Get("doc-bg")
 	require.True(t, ok)
-	require.Equal(t, "background", rec.Attributes["name"])
+	require.True(t, proto.Equal(stringAttr("background"), rec.Attributes["name"]))
 
 	cancel()
 

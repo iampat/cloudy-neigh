@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 const DefaultChunkSize = 65536
@@ -21,7 +22,7 @@ type chunk struct {
 	tombstones []uint64
 	vectors    map[string][]float32
 	vectorMask map[string][]uint64
-	attrs      map[string][]string
+	attrs      map[string][]*cloudyneighpb.AttributeValue
 	attrMask   map[string][]uint64
 }
 
@@ -32,7 +33,7 @@ func newChunk(size int, vectorDims map[string]int) *chunk {
 		tombstones: make([]uint64, words),
 		vectors:    make(map[string][]float32, len(vectorDims)),
 		vectorMask: make(map[string][]uint64, len(vectorDims)),
-		attrs:      make(map[string][]string),
+		attrs:      make(map[string][]*cloudyneighpb.AttributeValue),
 		attrMask:   make(map[string][]uint64),
 	}
 	for col, dim := range vectorDims {
@@ -47,12 +48,15 @@ func (c *chunk) setVector(col string, row, dim int, vec []float32) {
 	c.vectorMask[col][row/64] |= (uint64(1) << (row % 64))
 }
 
-func (c *chunk) setAttribute(col string, row int, val string, chunkSize int) {
+func (c *chunk) setAttribute(col string, row int, val *cloudyneighpb.AttributeValue, chunkSize int) {
 	s, ok := c.attrs[col]
 	if !ok {
-		s = make([]string, chunkSize)
+		s = make([]*cloudyneighpb.AttributeValue, chunkSize)
 		c.attrs[col] = s
 		c.attrMask[col] = make([]uint64, (chunkSize+63)/64)
+	}
+	if val != nil {
+		val = proto.Clone(val).(*cloudyneighpb.AttributeValue)
 	}
 	s[row] = val
 	c.attrMask[col][row/64] |= (uint64(1) << (row % 64))
@@ -88,7 +92,7 @@ func (t *Table) ensureVectorColLocked(col string, dim int) {
 	}
 }
 
-func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string]string) error {
+func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
 	if id == "" {
 		return errors.New("query: empty doc id")
 	}
@@ -219,7 +223,7 @@ func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
 	rec := &cloudyneighpb.Record{
 		Id:         id,
 		Vectors:    make(map[string]*cloudyneighpb.Vector),
-		Attributes: make(map[string]string),
+		Attributes: make(map[string]*cloudyneighpb.AttributeValue),
 	}
 
 	for col, mask := range c.vectorMask {
@@ -234,7 +238,11 @@ func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
 
 	for col, mask := range c.attrMask {
 		if mask[word]&bit != 0 {
-			rec.Attributes[col] = c.attrs[col][loc.row]
+			val := c.attrs[col][loc.row]
+			if val != nil {
+				val = proto.Clone(val).(*cloudyneighpb.AttributeValue)
+			}
+			rec.Attributes[col] = val
 		}
 	}
 
@@ -266,27 +274,31 @@ func (t *Table) Vector(id, col string) ([]float32, bool) {
 	return slices.Clone(c.vectors[col][offset : offset+dim]), true
 }
 
-func (t *Table) Attribute(id, key string) (string, bool) {
+func (t *Table) Attribute(id, key string) (*cloudyneighpb.AttributeValue, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
 	loc, ok := t.index[id]
 	if !ok {
-		return "", false
+		return nil, false
 	}
 	c := t.chunks[loc.chunk]
 	word := loc.row / 64
 	bit := uint64(1) << (loc.row % 64)
 	if c.tombstones[word]&bit != 0 {
-		return "", false
+		return nil, false
 	}
 
 	mask, ok := c.attrMask[key]
 	if !ok || mask[word]&bit == 0 {
-		return "", false
+		return nil, false
 	}
 
-	return c.attrs[key][loc.row], true
+	val := c.attrs[key][loc.row]
+	if val != nil {
+		val = proto.Clone(val).(*cloudyneighpb.AttributeValue)
+	}
+	return val, true
 }
 
 func (t *Table) Len() int {

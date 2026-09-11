@@ -89,10 +89,16 @@ def load_dataset(
                                 "default": index_pb2.Vector(values=pydict["emb"][i])
                             },
                             attributes={
-                                "url": str(pydict["url"][i] or ""),
-                                "title": str(pydict["title"][i] or ""),
-                                "text": str(pydict["text"][i] or ""),
-                                "lang": lang,
+                                "url": index_pb2.AttributeValue(
+                                    string_value=str(pydict["url"][i] or "")
+                                ),
+                                "title": index_pb2.AttributeValue(
+                                    string_value=str(pydict["title"][i] or "")
+                                ),
+                                "text": index_pb2.AttributeValue(
+                                    string_value=str(pydict["text"][i] or "")
+                                ),
+                                "lang": index_pb2.AttributeValue(string_value=lang),
                             },
                         )
                     )
