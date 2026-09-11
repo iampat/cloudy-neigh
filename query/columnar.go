@@ -10,22 +10,27 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+type vectorCol struct {
+	dim      int
+	data     []float32
+	rowToVec []int
+	vecToRow []int
+}
+
 type Table struct {
 	mu         sync.RWMutex
 	docIDs     []string
-	index      map[string]int // docID -> row
+	index      map[string]int
 	tombstones []bool
-	vectors    map[string][]float32 // col -> contiguous flat slice (row * dim)
-	vectorDims map[string]int
+	vectors    map[string]*vectorCol
 	attrs      map[string][]*cloudyneighpb.AttributeValue
 }
 
 func NewTable() *Table {
 	return &Table{
-		index:      make(map[string]int),
-		vectors:    make(map[string][]float32),
-		vectorDims: make(map[string]int),
-		attrs:      make(map[string][]*cloudyneighpb.AttributeValue),
+		index:   make(map[string]int),
+		vectors: make(map[string]*vectorCol),
+		attrs:   make(map[string][]*cloudyneighpb.AttributeValue),
 	}
 }
 
@@ -39,8 +44,7 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 
 	if t.index == nil {
 		t.index = make(map[string]int)
-		t.vectors = make(map[string][]float32)
-		t.vectorDims = make(map[string]int)
+		t.vectors = make(map[string]*vectorCol)
 		t.attrs = make(map[string][]*cloudyneighpb.AttributeValue)
 	}
 
@@ -48,9 +52,10 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 		if len(vec) == 0 {
 			continue
 		}
-		dim, ok := t.vectorDims[col]
-		if ok && len(vec) != dim {
-			return fmt.Errorf("query: vector column %q dimension mismatch: got %d, want %d", col, len(vec), dim)
+		if vCol, ok := t.vectors[col]; ok {
+			if len(vec) != vCol.dim {
+				return fmt.Errorf("query: vector column %q dimension mismatch: got %d, want %d", col, len(vec), vCol.dim)
+			}
 		}
 	}
 
@@ -58,9 +63,15 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 		if len(vec) == 0 {
 			continue
 		}
-		if _, ok := t.vectorDims[col]; !ok {
-			t.vectorDims[col] = len(vec)
-			t.vectors[col] = make([]float32, len(t.docIDs)*len(vec))
+		if _, ok := t.vectors[col]; !ok {
+			vCol := &vectorCol{
+				dim:      len(vec),
+				rowToVec: make([]int, len(t.docIDs)),
+			}
+			for i := range vCol.rowToVec {
+				vCol.rowToVec[i] = -1
+			}
+			t.vectors[col] = vCol
 		}
 	}
 
@@ -82,9 +93,17 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 			if len(vec) == 0 {
 				continue
 			}
-			dim := t.vectorDims[col]
-			offset := row * dim
-			copy(t.vectors[col][offset:offset+dim], vec)
+			vCol := t.vectors[col]
+			vecIdx := vCol.rowToVec[row]
+			if vecIdx >= 0 {
+				offset := vecIdx * vCol.dim
+				copy(vCol.data[offset:offset+vCol.dim], vec)
+			} else {
+				vecIdx = len(vCol.vecToRow)
+				vCol.data = append(vCol.data, vec...)
+				vCol.vecToRow = append(vCol.vecToRow, row)
+				vCol.rowToVec[row] = vecIdx
+			}
 		}
 
 		for k, v := range attrs {
@@ -101,11 +120,14 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 	t.tombstones = append(t.tombstones, false)
 	t.index[id] = row
 
-	for col, dim := range t.vectorDims {
+	for col, vCol := range t.vectors {
 		if vec, ok := vectors[col]; ok && len(vec) > 0 {
-			t.vectors[col] = append(t.vectors[col], vec...)
+			vecIdx := len(vCol.vecToRow)
+			vCol.data = append(vCol.data, vec...)
+			vCol.vecToRow = append(vCol.vecToRow, row)
+			vCol.rowToVec = append(vCol.rowToVec, vecIdx)
 		} else {
-			t.vectors[col] = append(t.vectors[col], make([]float32, dim)...)
+			vCol.rowToVec = append(vCol.rowToVec, -1)
 		}
 	}
 
@@ -159,14 +181,19 @@ func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
 
 	rec := &cloudyneighpb.Record{
 		Id:         id,
-		Vectors:    make(map[string]*cloudyneighpb.Vector, len(t.vectorDims)),
+		Vectors:    make(map[string]*cloudyneighpb.Vector, len(t.vectors)),
 		Attributes: make(map[string]*cloudyneighpb.AttributeValue, len(t.attrs)),
 	}
 
-	for col, dim := range t.vectorDims {
-		offset := row * dim
-		rec.Vectors[col] = &cloudyneighpb.Vector{
-			Values: slices.Clone(t.vectors[col][offset : offset+dim]),
+	for col, vCol := range t.vectors {
+		if row < len(vCol.rowToVec) {
+			vecIdx := vCol.rowToVec[row]
+			if vecIdx >= 0 {
+				offset := vecIdx * vCol.dim
+				rec.Vectors[col] = &cloudyneighpb.Vector{
+					Values: slices.Clone(vCol.data[offset : offset+vCol.dim]),
+				}
+			}
 		}
 	}
 
@@ -187,12 +214,16 @@ func (t *Table) Vector(id, col string) ([]float32, bool) {
 	if !ok || t.tombstones[row] {
 		return nil, false
 	}
-	dim, ok := t.vectorDims[col]
-	if !ok {
+	vCol, ok := t.vectors[col]
+	if !ok || row >= len(vCol.rowToVec) {
 		return nil, false
 	}
-	offset := row * dim
-	return slices.Clone(t.vectors[col][offset : offset+dim]), true
+	vecIdx := vCol.rowToVec[row]
+	if vecIdx < 0 {
+		return nil, false
+	}
+	offset := vecIdx * vCol.dim
+	return slices.Clone(vCol.data[offset : offset+vCol.dim]), true
 }
 
 func (t *Table) Attribute(id, key string) (*cloudyneighpb.AttributeValue, bool) {

@@ -1,6 +1,7 @@
 package query_test
 
 import (
+	"strconv"
 	"testing"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -55,7 +56,7 @@ func TestTable_Upsert(t *testing.T) {
 					"tag": stringAttr("test"),
 				},
 			},
-			wantVec: []float32{0.0, 0.0, 0.0},
+			wantVec: nil,
 			wantAttr: map[string]*cloudyneighpb.AttributeValue{
 				"tag": stringAttr("test"),
 			},
@@ -119,6 +120,7 @@ func TestTable_Upsert(t *testing.T) {
 				require.True(t, ok)
 				require.Equal(t, tc.wantVec, vec)
 			} else {
+				require.Nil(t, rec.Vectors["default"])
 				_, ok := table.Vector(tc.rec.Id, "default")
 				require.False(t, ok)
 			}
@@ -195,8 +197,8 @@ func TestTable_MultiVector(t *testing.T) {
 	}
 
 	vec, ok := table.Vector("doc-mv-2", "body_emb")
-	require.True(t, ok)
-	require.Equal(t, []float32{0.0, 0.0, 0.0, 0.0}, vec)
+	require.False(t, ok)
+	require.Nil(t, vec)
 
 	vec, ok = table.Vector("doc-mv-2", "nonexistent")
 	require.False(t, ok)
@@ -347,4 +349,38 @@ func TestTable_ZeroValue(t *testing.T) {
 	require.Equal(t, "doc-1", rec.Id)
 	require.True(t, proto.Equal(stringAttr("zero-value-test"), rec.Attributes["title"]))
 	require.Equal(t, []float32{1.0, 2.0}, rec.Vectors["vec"].Values)
+}
+
+func TestTable_SparseVectors(t *testing.T) {
+	table := query.NewTable()
+
+	for i := 0; i < 50; i++ {
+		err := table.Upsert("doc-"+strconv.Itoa(i), nil, map[string]*cloudyneighpb.AttributeValue{
+			"k": stringAttr("v"),
+		})
+		require.NoError(t, err)
+	}
+
+	err := table.Upsert("doc-50", map[string][]float32{
+		"v": {1.0, 2.0, 3.0, 4.0},
+	}, nil)
+	require.NoError(t, err)
+
+	for i := 0; i < 50; i++ {
+		id := "doc-" + strconv.Itoa(i)
+		_, ok := table.Vector(id, "v")
+		require.False(t, ok)
+
+		rec, ok := table.Get(id)
+		require.True(t, ok)
+		require.Nil(t, rec.Vectors["v"])
+	}
+
+	vec, ok := table.Vector("doc-50", "v")
+	require.True(t, ok)
+	require.Equal(t, []float32{1.0, 2.0, 3.0, 4.0}, vec)
+
+	rec, ok := table.Get("doc-50")
+	require.True(t, ok)
+	require.Equal(t, []float32{1.0, 2.0, 3.0, 4.0}, rec.Vectors["v"].Values)
 }
