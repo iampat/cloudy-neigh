@@ -11,24 +11,26 @@ import (
 func TestTable_Upsert(t *testing.T) {
 	tests := []struct {
 		name     string
-		doc      *cloudyneighpb.Document
+		rec      *cloudyneighpb.Record
 		wantErr  bool
 		wantVec  []float32
 		wantAttr map[string]string
 	}{
 		{
-			name: "doc with vector and attributes",
-			doc: &cloudyneighpb.Document{
-				Id:         "doc-1",
-				Vector:     []float32{1.1, 2.2, 3.3},
+			name: "record with vector and attributes",
+			rec: &cloudyneighpb.Record{
+				Id: "doc-1",
+				Vectors: map[string]*cloudyneighpb.Vector{
+					query.DefaultVectorColumn: {Values: []float32{1.1, 2.2, 3.3}},
+				},
 				Attributes: map[string]string{"title": "hello", "lang": "en"},
 			},
 			wantVec:  []float32{1.1, 2.2, 3.3},
 			wantAttr: map[string]string{"title": "hello", "lang": "en"},
 		},
 		{
-			name: "doc without vector",
-			doc: &cloudyneighpb.Document{
+			name: "record without vector",
+			rec: &cloudyneighpb.Record{
 				Id:         "doc-2",
 				Attributes: map[string]string{"tag": "test"},
 			},
@@ -36,25 +38,29 @@ func TestTable_Upsert(t *testing.T) {
 			wantAttr: map[string]string{"tag": "test"},
 		},
 		{
-			name: "doc without attributes",
-			doc: &cloudyneighpb.Document{
-				Id:     "doc-3",
-				Vector: []float32{4.4, 5.5, 6.6},
+			name: "record without attributes",
+			rec: &cloudyneighpb.Record{
+				Id: "doc-3",
+				Vectors: map[string]*cloudyneighpb.Vector{
+					query.DefaultVectorColumn: {Values: []float32{4.4, 5.5, 6.6}},
+				},
 			},
 			wantVec:  []float32{4.4, 5.5, 6.6},
 			wantAttr: map[string]string{},
 		},
 		{
-			name: "empty doc id rejected",
-			doc: &cloudyneighpb.Document{
-				Id:     "",
-				Vector: []float32{1.0},
+			name: "empty record id rejected",
+			rec: &cloudyneighpb.Record{
+				Id: "",
+				Vectors: map[string]*cloudyneighpb.Vector{
+					query.DefaultVectorColumn: {Values: []float32{1.0}},
+				},
 			},
 			wantErr: true,
 		},
 		{
-			name:    "nil doc rejected",
-			doc:     nil,
+			name:    "nil record rejected",
+			rec:     nil,
 			wantErr: true,
 		},
 	}
@@ -62,25 +68,25 @@ func TestTable_Upsert(t *testing.T) {
 	table := query.NewTable(0)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := table.UpsertDoc(tc.doc)
+			err := table.UpsertRecord(tc.rec)
 			if tc.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
 
-			rec, ok := table.Get(tc.doc.Id)
+			rec, ok := table.Get(tc.rec.Id)
 			require.True(t, ok)
-			require.Equal(t, tc.doc.Id, rec.ID)
+			require.Equal(t, tc.rec.Id, rec.Id)
 			require.Equal(t, tc.wantAttr, rec.Attributes)
 
 			if len(tc.wantVec) > 0 {
-				require.Equal(t, tc.wantVec, rec.Vectors[query.DefaultVectorColumn])
-				vec, ok := table.Vector(tc.doc.Id, query.DefaultVectorColumn)
+				require.Equal(t, tc.wantVec, rec.Vectors[query.DefaultVectorColumn].Values)
+				vec, ok := table.Vector(tc.rec.Id, query.DefaultVectorColumn)
 				require.True(t, ok)
 				require.Equal(t, tc.wantVec, vec)
 			} else {
-				_, ok := table.Vector(tc.doc.Id, query.DefaultVectorColumn)
+				_, ok := table.Vector(tc.rec.Id, query.DefaultVectorColumn)
 				require.False(t, ok)
 			}
 		})
@@ -90,12 +96,12 @@ func TestTable_Upsert(t *testing.T) {
 		rec, ok := table.Get("doc-1")
 		require.True(t, ok)
 		rec.Attributes["title"] = "corrupted"
-		rec.Vectors[query.DefaultVectorColumn][0] = 999.0
+		rec.Vectors[query.DefaultVectorColumn].Values[0] = 999.0
 
 		fresh, ok := table.Get("doc-1")
 		require.True(t, ok)
 		require.Equal(t, "hello", fresh.Attributes["title"])
-		require.Equal(t, float32(1.1), fresh.Vectors[query.DefaultVectorColumn][0])
+		require.Equal(t, float32(1.1), fresh.Vectors[query.DefaultVectorColumn].Values[0])
 	})
 }
 
@@ -147,7 +153,7 @@ func TestTable_MultiVector(t *testing.T) {
 			rec, ok := table.Get(tc.id)
 			require.True(t, ok)
 			for col, expected := range tc.vectors {
-				require.Equal(t, expected, rec.Vectors[col])
+				require.Equal(t, expected, rec.Vectors[col].Values)
 				vec, ok := table.Vector(tc.id, col)
 				require.True(t, ok)
 				require.Equal(t, expected, vec)
@@ -227,7 +233,7 @@ func TestTable_PartialUpdate(t *testing.T) {
 
 			rec, ok := table.Get("doc-p")
 			require.True(t, ok)
-			require.Equal(t, tc.wantVec, rec.Vectors["vec"])
+			require.Equal(t, tc.wantVec, rec.Vectors["vec"].Values)
 			require.Equal(t, tc.wantAttr, rec.Attributes)
 		})
 	}
@@ -344,7 +350,7 @@ func TestTable_ChunkBoundaries(t *testing.T) {
 		t.Run("retrieve "+tc.id, func(t *testing.T) {
 			rec, ok := table.Get(tc.id)
 			require.True(t, ok)
-			require.Equal(t, tc.id, rec.ID)
+			require.Equal(t, tc.id, rec.Id)
 			require.Equal(t, tc.wantIdx, rec.Attributes["idx"])
 
 			vec, ok := table.Vector(tc.id, "v")

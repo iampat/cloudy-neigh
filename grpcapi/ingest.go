@@ -34,33 +34,33 @@ func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequ
 	if err := namespace.ValidateNamespace(req.Namespace); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "grpcapi: invalid namespace: %v", err)
 	}
-	if len(req.Documents) == 0 {
+	if len(req.Records) == 0 {
 		return &cloudyneighpb.UpsertResponse{}, nil
 	}
 
-	records := make([]logstream.Record, len(req.Documents))
-	for i, doc := range req.Documents {
-		if doc == nil {
-			return nil, status.Errorf(codes.InvalidArgument, "grpcapi: document at index %d is nil", i)
+	records := make([]logstream.Record, len(req.Records))
+	for i, rec := range req.Records {
+		if rec == nil {
+			return nil, status.Errorf(codes.InvalidArgument, "grpcapi: record at index %d is nil", i)
 		}
-		if doc.Id == "" {
-			return nil, status.Errorf(codes.InvalidArgument, "grpcapi: document at index %d has empty id", i)
+		if rec.Id == "" {
+			return nil, status.Errorf(codes.InvalidArgument, "grpcapi: record at index %d has empty id", i)
 		}
-		payload, err := proto.Marshal(doc)
+		payload, err := proto.Marshal(rec)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "grpcapi: marshal document: %v", err)
+			return nil, status.Errorf(codes.Internal, "grpcapi: marshal record: %v", err)
 		}
-		rec := &storagepb.WalRecord{
+		walRec := &storagepb.WalRecord{
 			Record: &storagepb.WalRecord_Mutation{
 				Mutation: &storagepb.DocumentMutation{
 					Branch:  req.Namespace,
-					DocId:   doc.Id,
+					DocId:   rec.Id,
 					Op:      storagepb.MutationOp_PUT,
 					Payload: payload,
 				},
 			},
 		}
-		recBytes, err := proto.Marshal(rec)
+		recBytes, err := proto.Marshal(walRec)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "grpcapi: marshal wal record: %v", err)
 		}
@@ -78,7 +78,7 @@ func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequ
 	}
 
 	return &cloudyneighpb.UpsertResponse{
-		UpsertedCount: uint32(len(req.Documents)),
+		UpsertedCount: uint32(len(req.Records)),
 	}, nil
 }
 

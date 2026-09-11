@@ -4,15 +4,19 @@ package cloudyneigh.v1;
 
 option go_package = "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1;cloudyneighpb";
 
-message Document {
+message Vector {
+  repeated float values = 1;
+}
+
+message Record {
   string id = 1;
-  repeated float vector = 2;
+  map<string, Vector> vectors = 2;
   map<string, string> attributes = 3;
 }
 
 message UpsertRequest {
   string namespace = 1;
-  repeated Document documents = 2;
+  repeated Record records = 2;
 }
 
 message UpsertResponse {
@@ -40,13 +44,13 @@ message QueryRequest {
   EqualityFilter filter = 4;
 }
 
-message ScoredDocument {
-  Document document = 1;
+message ScoredRecord {
+  Record record = 1;
   float score = 2;
 }
 
 message QueryResponse {
-  repeated ScoredDocument hits = 1;
+  repeated ScoredRecord hits = 1;
 }
 
 service IngestService {

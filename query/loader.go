@@ -91,12 +91,12 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 
 		switch mut.Op {
 		case storagepb.MutationOp_PUT:
-			var doc cloudyneighpb.Document
-			if err := proto.Unmarshal(mut.Payload, &doc); err != nil {
-				return fmt.Errorf("unmarshal document from %s: %w", segKey, err)
+			var rec cloudyneighpb.Record
+			if err := proto.Unmarshal(mut.Payload, &rec); err != nil {
+				return fmt.Errorf("unmarshal record from %s: %w", segKey, err)
 			}
-			if err := l.table.UpsertDoc(&doc); err != nil {
-				return fmt.Errorf("upsert document %s from %s: %w", doc.Id, segKey, err)
+			if err := l.table.UpsertRecord(&rec); err != nil {
+				return fmt.Errorf("upsert record %s from %s: %w", rec.Id, segKey, err)
 			}
 		case storagepb.MutationOp_DELETE:
 			l.table.Delete(mut.DocId)

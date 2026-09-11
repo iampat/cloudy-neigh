@@ -11,18 +11,12 @@ import (
 
 const (
 	DefaultChunkSize    = 65536
-	DefaultVectorColumn = "vector"
+	DefaultVectorColumn = "default"
 )
 
 type rowLoc struct {
 	chunk int
 	row   int
-}
-
-type Record struct {
-	ID         string
-	Vectors    map[string][]float32
-	Attributes map[string]string
 }
 
 type chunk struct {
@@ -174,15 +168,20 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 	return nil
 }
 
-func (t *Table) UpsertDoc(doc *cloudyneighpb.Document) error {
-	if doc == nil {
-		return errors.New("query: nil document")
+func (t *Table) UpsertRecord(rec *cloudyneighpb.Record) error {
+	if rec == nil {
+		return errors.New("query: nil record")
 	}
 	var vectors map[string][]float32
-	if len(doc.Vector) > 0 {
-		vectors = map[string][]float32{DefaultVectorColumn: doc.Vector}
+	if len(rec.Vectors) > 0 {
+		vectors = make(map[string][]float32, len(rec.Vectors))
+		for name, vec := range rec.Vectors {
+			if vec != nil {
+				vectors[name] = vec.Values
+			}
+		}
 	}
-	return t.Upsert(doc.Id, vectors, doc.Attributes)
+	return t.Upsert(rec.Id, vectors, rec.Attributes)
 }
 
 func (t *Table) Delete(id string) bool {
@@ -204,24 +203,24 @@ func (t *Table) Delete(id string) bool {
 	return true
 }
 
-func (t *Table) Get(id string) (Record, bool) {
+func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
 	loc, ok := t.index[id]
 	if !ok {
-		return Record{}, false
+		return nil, false
 	}
 	c := t.chunks[loc.chunk]
 	word := loc.row / 64
 	bit := uint64(1) << (loc.row % 64)
 	if c.tombstones[word]&bit != 0 {
-		return Record{}, false
+		return nil, false
 	}
 
-	rec := Record{
-		ID:         id,
-		Vectors:    make(map[string][]float32),
+	rec := &cloudyneighpb.Record{
+		Id:         id,
+		Vectors:    make(map[string]*cloudyneighpb.Vector),
 		Attributes: make(map[string]string),
 	}
 
@@ -229,7 +228,9 @@ func (t *Table) Get(id string) (Record, bool) {
 		if mask[word]&bit != 0 {
 			dim := t.vectorDims[col]
 			offset := loc.row * dim
-			rec.Vectors[col] = slices.Clone(c.vectors[col][offset : offset+dim])
+			rec.Vectors[col] = &cloudyneighpb.Vector{
+				Values: slices.Clone(c.vectors[col][offset : offset+dim]),
+			}
 		}
 	}
 

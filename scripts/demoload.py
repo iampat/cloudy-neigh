@@ -34,10 +34,10 @@ logger = logging.getLogger("demoload")
 def send_batch(
     stub: index_pb2_grpc.IngestServiceStub,
     namespace: str,
-    docs: list[index_pb2.Document],
+    records: list[index_pb2.Record],
 ) -> None:
-    """Send a batch of documents to the cloudy-neigh ingestion service."""
-    stub.Upsert(index_pb2.UpsertRequest(namespace=namespace, documents=docs))
+    """Send a batch of records to the cloudy-neigh ingestion service."""
+    stub.Upsert(index_pb2.UpsertRequest(namespace=namespace, records=records))
 
 
 def parse_lang_from_path(file_path: str) -> str:
@@ -79,13 +79,15 @@ def load_dataset(
             for batch in pf.iter_batches(batch_size=batch_size):
                 pydict = batch.to_pydict()
                 n = len(pydict["_id"])
-                docs: list[index_pb2.Document] = []
+                records: list[index_pb2.Record] = []
 
                 for i in range(n):
-                    docs.append(
-                        index_pb2.Document(
+                    records.append(
+                        index_pb2.Record(
                             id=str(pydict["_id"][i]),
-                            vector=pydict["emb"][i],
+                            vectors={
+                                "default": index_pb2.Vector(values=pydict["emb"][i])
+                            },
                             attributes={
                                 "url": str(pydict["url"][i] or ""),
                                 "title": str(pydict["title"][i] or ""),
@@ -95,7 +97,7 @@ def load_dataset(
                         )
                     )
 
-                send_batch(stub, namespace, docs)
+                send_batch(stub, namespace, records)
                 total += n
                 total_batches += 1
 
