@@ -168,8 +168,8 @@ not trust memory over the help output.
 - A correction changes the rules, not only the file. When the user corrects a
   class of mistake, fix the instance and update the guideline or the skill in
   the same turn.
-- An agy review transcript lives in `docs/reviews/<date>-<topic>.md` for the
-  pull request only. `git rm` it before the merge.
+- Never commit or include files under `docs/reviews/` in a pull request. Review
+  transcripts remain local only.
 - When asked for a review, start immediately without asking for approval.
   Let the reviewer persona decide what to focus on and how to review, unless
   the user gives an explicit instruction.
