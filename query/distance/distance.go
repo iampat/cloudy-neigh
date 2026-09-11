@@ -2,6 +2,7 @@ package distance
 
 import (
 	"errors"
+	"slices"
 )
 
 var (
@@ -41,11 +42,7 @@ func DotProduct(a, b []float32) (float32, error) {
 }
 
 func Normalize(v []float32) ([]float32, error) {
-	if len(v) == 0 {
-		return nil, ErrEmptyVector
-	}
-	out := make([]float32, len(v))
-	copy(out, v)
+	out := slices.Clone(v)
 	if err := NormalizeInPlace(out); err != nil {
 		return nil, err
 	}

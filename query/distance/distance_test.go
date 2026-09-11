@@ -245,62 +245,26 @@ func TestParity(t *testing.T) {
 	}
 }
 
-func BenchmarkL2Squared(b *testing.B) {
-	for _, dim := range []int{128, 768, 1024} {
-		b.Run(strconv.Itoa(dim), func(b *testing.B) {
-			v1 := randomVector(dim, 1)
-			v2 := randomVector(dim, 2)
-			var total float32
-			for b.Loop() {
-				res, err := distance.L2Squared(v1, v2)
-				if err != nil {
-					b.Fatal(err)
-				}
-				total += res
-			}
-			if total == 0 {
-				b.Log(total)
-			}
-		})
+func BenchmarkDistance(b *testing.B) {
+	funcs := []struct {
+		name string
+		fn   func(a, b []float32) (float32, error)
+	}{
+		{"L2Squared", distance.L2Squared},
+		{"DotProduct", distance.DotProduct},
+		{"Cosine", distance.Cosine},
 	}
-}
-
-func BenchmarkCosine(b *testing.B) {
-	for _, dim := range []int{128, 768, 1024} {
-		b.Run(strconv.Itoa(dim), func(b *testing.B) {
-			v1 := randomVector(dim, 1)
-			v2 := randomVector(dim, 2)
-			var total float32
-			for b.Loop() {
-				res, err := distance.Cosine(v1, v2)
-				if err != nil {
-					b.Fatal(err)
+	for _, f := range funcs {
+		for _, dim := range []int{128, 768, 1024} {
+			b.Run(f.name+"/"+strconv.Itoa(dim), func(b *testing.B) {
+				v1 := randomVector(dim, 1)
+				v2 := randomVector(dim, 2)
+				for b.Loop() {
+					if _, err := f.fn(v1, v2); err != nil {
+						b.Fatal(err)
+					}
 				}
-				total += res
-			}
-			if total == 0 {
-				b.Log(total)
-			}
-		})
-	}
-}
-
-func BenchmarkDotProduct(b *testing.B) {
-	for _, dim := range []int{128, 768, 1024} {
-		b.Run(strconv.Itoa(dim), func(b *testing.B) {
-			v1 := randomVector(dim, 1)
-			v2 := randomVector(dim, 2)
-			var total float32
-			for b.Loop() {
-				res, err := distance.DotProduct(v1, v2)
-				if err != nil {
-					b.Fatal(err)
-				}
-				total += res
-			}
-			if total == 0 {
-				b.Log(total)
-			}
-		})
+			})
+		}
 	}
 }

@@ -103,20 +103,13 @@ func cosine(a, b []float32) (float32, error) {
 	}
 
 	denom := float32(math.Sqrt(float64(sumA)) * math.Sqrt(float64(sumB)))
-	if denom == 0 {
-		return 0, ErrZeroVector
-	}
 	sim := dot / denom
 	if sim > 1 {
 		sim = 1
 	} else if sim < -1 {
 		sim = -1
 	}
-	dist := 1 - sim
-	if dist < 0 {
-		dist = 0
-	}
-	return dist, nil
+	return 1 - sim, nil
 }
 
 func normalizeInPlace(v []float32) error {
@@ -125,9 +118,6 @@ func normalizeInPlace(v []float32) error {
 		return ErrZeroVector
 	}
 	norm := float32(math.Sqrt(float64(sum)))
-	if norm == 0 {
-		return ErrZeroVector
-	}
 	invNorm := 1 / norm
 
 	n := len(v)
