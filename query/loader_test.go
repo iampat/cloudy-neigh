@@ -3,7 +3,6 @@ package query_test
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
@@ -278,7 +277,7 @@ func TestLoader_VectorDimensionMismatch(t *testing.T) {
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-1", []float32{1.0, 2.0}, nil),
 	})
-	updateManifest(t, store, "main", []string{"seg-1"}, "")
+	gen := updateManifest(t, store, "main", []string{"seg-1"}, "")
 
 	loaded, err := loader.Sync(ctx, "main")
 	require.NoError(t, err)
@@ -287,7 +286,7 @@ func TestLoader_VectorDimensionMismatch(t *testing.T) {
 	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-2", []float32{1.0, 2.0, 3.0}, nil),
 	})
-	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, "gen-1")
+	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, gen)
 
 	loaded, err = loader.Sync(ctx, "main")
 	require.Error(t, err)
@@ -297,4 +296,3 @@ func TestLoader_VectorDimensionMismatch(t *testing.T) {
 	_, ok := table.Get("doc-2")
 	require.False(t, ok)
 }
-
