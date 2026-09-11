@@ -12,7 +12,7 @@ import (
 
 var ErrDimensionMismatch = errors.New("query: vector dimension mismatch")
 
-type vectorCol struct {
+type packedVectorCol struct {
 	dim      int
 	data     []float32
 	rowToVec []int
@@ -24,14 +24,14 @@ type Table struct {
 	docIDs     []string
 	index      map[string]int
 	tombstones []bool
-	vectors    map[string]*vectorCol
+	vectors    map[string]*packedVectorCol
 	attrs      map[string][]*cloudyneighpb.AttributeValue
 }
 
 func NewTable() *Table {
 	return &Table{
 		index:   make(map[string]int),
-		vectors: make(map[string]*vectorCol),
+		vectors: make(map[string]*packedVectorCol),
 		attrs:   make(map[string][]*cloudyneighpb.AttributeValue),
 	}
 }
@@ -46,7 +46,7 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 
 	if t.index == nil {
 		t.index = make(map[string]int)
-		t.vectors = make(map[string]*vectorCol)
+		t.vectors = make(map[string]*packedVectorCol)
 		t.attrs = make(map[string][]*cloudyneighpb.AttributeValue)
 	}
 
@@ -66,7 +66,7 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 			continue
 		}
 		if _, ok := t.vectors[col]; !ok {
-			vCol := &vectorCol{
+			vCol := &packedVectorCol{
 				dim:      len(vec),
 				rowToVec: make([]int, len(t.docIDs)),
 			}
