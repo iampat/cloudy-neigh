@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "distance",
+    srcs = [
+        "distance.go",
+        "distance_fallback.go",
+        "distance_pure.go",
+        "distance_simd.go",
+    ],
+    importpath = "github.com/iampat/cloudy-neigh/query/distance",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "distance_test",
+    srcs = [
+        "distance_test.go",
+        "export_test.go",
+    ],
+    embed = [":distance"],
+    deps = ["@com_github_stretchr_testify//require"],
+)
