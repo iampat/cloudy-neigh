@@ -117,7 +117,7 @@ Never call `log.Fatal` or `os.Exit` in library packages.
 
 - Tests must use an external test package (`package <name>_test`): `package kvfs_test` tests `package kvfs`.
 - External tests verify that the exported API is sufficient.
-- Binary packages (`main`) do not need tests unless explicitly required.
+- Never write tests for binary packages (package main). Flag any main_test.go as a violation. Binary packages do not have unit tests unless explicitly required.
 - Use internal tests (`package <name>`) only for unexported internals that public APIs cannot exercise. Every internal test requires justification.
 - Never export an identifier solely for tests.
 - Never `time.Sleep` to synchronize a test. Poll, or use channels or

@@ -146,33 +146,9 @@ func (s *ingestServer) Serve(ctx context.Context) (err error) {
 	var g errgroup.Group
 
 	g.Go(func() error {
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- s.grpcServer.Serve(s.lis)
-		}()
-
-		select {
-		case <-ctx.Done():
-			stopped := make(chan struct{})
-			go func() {
-				s.grpcServer.GracefulStop()
-				close(stopped)
-			}()
-
-			select {
-			case <-stopped:
-			case <-time.After(5 * time.Second):
-				s.grpcServer.Stop()
-				<-stopped
-			}
-
-			err := <-errCh
-			cancelFlusher()
-			return err
-		case err := <-errCh:
-			cancelFlusher()
-			return err
-		}
+		err := serveGRPC(ctx, s.grpcServer, s.lis)
+		cancelFlusher()
+		return err
 	})
 
 	g.Go(func() error {
@@ -182,6 +158,40 @@ func (s *ingestServer) Serve(ctx context.Context) (err error) {
 	})
 
 	return g.Wait()
+}
+
+func serveGRPC(ctx context.Context, srv *grpc.Server, lis net.Listener) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Serve(lis)
+	}()
+
+	select {
+	case <-ctx.Done():
+		stopped := make(chan struct{})
+		go func() {
+			srv.GracefulStop()
+			close(stopped)
+		}()
+
+		select {
+		case <-stopped:
+		case <-time.After(5 * time.Second):
+			srv.Stop()
+			<-stopped
+		}
+
+		err := <-errCh
+		if errors.Is(err, grpc.ErrServerStopped) {
+			return nil
+		}
+		return err
+	case err := <-errCh:
+		if errors.Is(err, grpc.ErrServerStopped) {
+			return nil
+		}
+		return err
+	}
 }
 
 func runIngest(ctx context.Context, args []string) error {
@@ -198,6 +208,82 @@ func runIngest(ctx context.Context, args []string) error {
 		return err
 	}
 	slog.Info("ingest server listening", "addr", srv.Addr().String(), "stream", cfg.stream, "url", cfg.url)
+
+	return srv.Serve(ctx)
+}
+
+type queryConfig struct {
+	listen     string
+	maxMsgSize int
+}
+
+func parseQueryFlags(args []string) (queryConfig, error) {
+	fs := flag.NewFlagSet("query", flag.ContinueOnError)
+
+	var cfg queryConfig
+	fs.StringVar(&cfg.listen, "listen", ":50052", "address:port to listen on")
+	fs.IntVar(&cfg.maxMsgSize, "max-msg-size", 64*1024*1024, "maximum message size in bytes")
+
+	if err := fs.Parse(args); err != nil {
+		return queryConfig{}, err
+	}
+	if len(fs.Args()) > 0 {
+		return queryConfig{}, fmt.Errorf("unexpected arguments: %v", fs.Args())
+	}
+	if cfg.listen == "" {
+		return queryConfig{}, errors.New("-listen cannot be empty")
+	}
+	if cfg.maxMsgSize <= 0 {
+		return queryConfig{}, errors.New("-max-msg-size must be positive")
+	}
+	return cfg, nil
+}
+
+type queryServer struct {
+	lis        net.Listener
+	grpcServer *grpc.Server
+}
+
+func newQueryServer(cfg queryConfig) (*queryServer, error) {
+	lis, err := net.Listen("tcp", cfg.listen)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %s: %w", cfg.listen, err)
+	}
+
+	grpcServer := grpc.NewServer(
+		grpc.MaxRecvMsgSize(cfg.maxMsgSize),
+		grpc.MaxSendMsgSize(cfg.maxMsgSize),
+	)
+	cloudyneighpb.RegisterQueryServiceServer(grpcServer, new(grpcapi.QueryServer))
+
+	return &queryServer{
+		lis:        lis,
+		grpcServer: grpcServer,
+	}, nil
+}
+
+func (s *queryServer) Addr() net.Addr {
+	return s.lis.Addr()
+}
+
+func (s *queryServer) Serve(ctx context.Context) error {
+	return serveGRPC(ctx, s.grpcServer, s.lis)
+}
+
+func runQuery(ctx context.Context, args []string) error {
+	cfg, err := parseQueryFlags(args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	srv, err := newQueryServer(cfg)
+	if err != nil {
+		return err
+	}
+	slog.Info("query server listening", "addr", srv.Addr().String())
 
 	return srv.Serve(ctx)
 }
@@ -220,7 +306,7 @@ func run(ctx context.Context, args []string) error {
 	case "ingest":
 		return runIngest(ctx, args[1:])
 	case "query":
-		return errors.New("query engine not yet implemented")
+		return runQuery(ctx, args[1:])
 	default:
 		usage()
 		return fmt.Errorf("unknown subcommand %q", args[0])
