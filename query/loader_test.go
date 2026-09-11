@@ -97,7 +97,6 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	loaded, err := loader.Sync(ctx, "main")
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
-	require.Equal(t, 2, table.Len())
 
 	rec1, ok := table.Get("doc-1")
 	require.True(t, ok)
@@ -107,7 +106,6 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	loaded, err = loader.Sync(ctx, "main")
 	require.NoError(t, err)
 	require.Equal(t, 0, loaded)
-	require.Equal(t, 2, table.Len())
 
 	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-1", nil, map[string]*cloudyneighpb.AttributeValue{"category": stringAttr("tech")}),
@@ -119,7 +117,6 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	loaded, err = loader.Sync(ctx, "main")
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
-	require.Equal(t, 2, table.Len())
 
 	rec1, ok = table.Get("doc-1")
 	require.True(t, ok)
@@ -235,7 +232,7 @@ func TestLoader_Run(t *testing.T) {
 	timeout := time.After(3 * time.Second)
 
 	for {
-		if table.Len() == 1 {
+		if _, ok := table.Get("doc-bg"); ok {
 			break
 		}
 		select {
@@ -245,7 +242,6 @@ func TestLoader_Run(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, 1, table.Len())
 	rec, ok := table.Get("doc-bg")
 	require.True(t, ok)
 	require.True(t, proto.Equal(stringAttr("background"), rec.Attributes["name"]))

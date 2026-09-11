@@ -18,7 +18,6 @@ type Table struct {
 	vectors    map[string][]float32 // col -> contiguous flat slice (row * dim)
 	vectorDims map[string]int
 	attrs      map[string][]*cloudyneighpb.AttributeValue
-	liveCount  int
 }
 
 func NewTable() *Table {
@@ -77,7 +76,6 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 	if row, exists := t.index[id]; exists {
 		if t.tombstones[row] {
 			t.tombstones[row] = false
-			t.liveCount++
 		}
 
 		for col, vec := range vectors {
@@ -102,7 +100,6 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 	t.docIDs = append(t.docIDs, id)
 	t.tombstones = append(t.tombstones, false)
 	t.index[id] = row
-	t.liveCount++
 
 	for col, dim := range t.vectorDims {
 		if vec, ok := vectors[col]; ok && len(vec) > 0 {
@@ -148,7 +145,6 @@ func (t *Table) Delete(id string) bool {
 		return false
 	}
 	t.tombstones[row] = true
-	t.liveCount--
 	return true
 }
 
@@ -216,10 +212,4 @@ func (t *Table) Attribute(id, key string) (*cloudyneighpb.AttributeValue, bool) 
 		return nil, false
 	}
 	return proto.Clone(val).(*cloudyneighpb.AttributeValue), true
-}
-
-func (t *Table) Len() int {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.liveCount
 }

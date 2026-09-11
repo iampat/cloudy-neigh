@@ -280,7 +280,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 	table := query.NewTable()
 	require.NoError(t, table.Upsert("doc-1", map[string][]float32{"vec": {1.0}}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v1")}))
 	require.NoError(t, table.Upsert("doc-2", map[string][]float32{"vec": {2.0}}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v2")}))
-	require.Equal(t, 2, table.Len())
 
 	tests := []struct {
 		name       string
@@ -289,7 +288,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 		vectors    map[string][]float32
 		attrs      map[string]*cloudyneighpb.AttributeValue
 		wantOk     bool
-		wantLen    int
 		wantExists bool
 	}{
 		{
@@ -297,7 +295,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			op:         "delete",
 			id:         "doc-1",
 			wantOk:     true,
-			wantLen:    1,
 			wantExists: false,
 		},
 		{
@@ -305,7 +302,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			op:         "delete",
 			id:         "doc-1",
 			wantOk:     false,
-			wantLen:    1,
 			wantExists: false,
 		},
 		{
@@ -313,7 +309,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			op:         "delete",
 			id:         "nonexistent",
 			wantOk:     false,
-			wantLen:    1,
 			wantExists: false,
 		},
 		{
@@ -323,7 +318,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			vectors:    map[string][]float32{"vec": {10.0}},
 			attrs:      map[string]*cloudyneighpb.AttributeValue{"extra": stringAttr("e")},
 			wantOk:     true,
-			wantLen:    2,
 			wantExists: true,
 		},
 		{
@@ -331,7 +325,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			op:         "delete",
 			id:         "doc-1",
 			wantOk:     true,
-			wantLen:    1,
 			wantExists: false,
 		},
 	}
@@ -346,7 +339,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			require.Equal(t, tc.wantLen, table.Len())
 			_, exists := table.Get(tc.id)
 			require.Equal(t, tc.wantExists, exists)
 		})
@@ -365,8 +357,6 @@ func TestTable_FlatStorage(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
-
-	require.Equal(t, 8, table.Len())
 
 	tests := []struct {
 		id      string
@@ -398,7 +388,6 @@ func TestTable_FlatStorage(t *testing.T) {
 
 	require.True(t, table.Delete("d"))
 	require.False(t, table.Delete("d"))
-	require.Equal(t, 7, table.Len())
 
 	_, ok := table.Get("d")
 	require.False(t, ok)
@@ -417,7 +406,6 @@ func TestTable_FlatStorage(t *testing.T) {
 func TestTable_ZeroValue(t *testing.T) {
 	var table query.Table
 
-	require.Equal(t, 0, table.Len())
 	_, ok := table.Get("nonexistent")
 	require.False(t, ok)
 	require.False(t, table.Delete("nonexistent"))
@@ -428,7 +416,6 @@ func TestTable_ZeroValue(t *testing.T) {
 		"title": stringAttr("zero-value-test"),
 	})
 	require.NoError(t, err)
-	require.Equal(t, 1, table.Len())
 
 	rec, ok := table.Get("doc-1")
 	require.True(t, ok)
@@ -437,7 +424,6 @@ func TestTable_ZeroValue(t *testing.T) {
 	require.Equal(t, []float32{1.0, 2.0}, rec.Vectors["vec"].Values)
 
 	require.True(t, table.Delete("doc-1"))
-	require.Equal(t, 0, table.Len())
 	_, ok = table.Get("doc-1")
 	require.False(t, ok)
 }
