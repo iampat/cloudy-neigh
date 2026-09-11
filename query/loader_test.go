@@ -34,7 +34,7 @@ func putMutation(branch, id string, vec []float32, attrs map[string]string) *sto
 	var vectors map[string]*cloudyneighpb.Vector
 	if len(vec) > 0 {
 		vectors = map[string]*cloudyneighpb.Vector{
-			query.DefaultVectorColumn: {Values: vec},
+			"default": {Values: vec},
 		}
 	}
 	rec := &cloudyneighpb.Record{
@@ -104,7 +104,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	rec1, ok := table.Get("doc-1")
 	require.True(t, ok)
 	require.Equal(t, "doc1", rec1.Attributes["title"])
-	require.Equal(t, []float32{1.0, 2.0}, rec1.Vectors[query.DefaultVectorColumn].Values)
+	require.Equal(t, []float32{1.0, 2.0}, rec1.Vectors["default"].Values)
 
 	loaded, err = loader.Sync(ctx, "main")
 	require.NoError(t, err)
@@ -128,7 +128,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "doc1", rec1.Attributes["title"])
 	require.Equal(t, "tech", rec1.Attributes["category"])
-	require.Equal(t, []float32{1.0, 2.0}, rec1.Vectors[query.DefaultVectorColumn].Values)
+	require.Equal(t, []float32{1.0, 2.0}, rec1.Vectors["default"].Values)
 
 	_, ok = table.Get("doc-2")
 	require.False(t, ok)

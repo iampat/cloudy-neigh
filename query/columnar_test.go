@@ -21,7 +21,7 @@ func TestTable_Upsert(t *testing.T) {
 			rec: &cloudyneighpb.Record{
 				Id: "doc-1",
 				Vectors: map[string]*cloudyneighpb.Vector{
-					query.DefaultVectorColumn: {Values: []float32{1.1, 2.2, 3.3}},
+					"default": {Values: []float32{1.1, 2.2, 3.3}},
 				},
 				Attributes: map[string]string{"title": "hello", "lang": "en"},
 			},
@@ -42,7 +42,7 @@ func TestTable_Upsert(t *testing.T) {
 			rec: &cloudyneighpb.Record{
 				Id: "doc-3",
 				Vectors: map[string]*cloudyneighpb.Vector{
-					query.DefaultVectorColumn: {Values: []float32{4.4, 5.5, 6.6}},
+					"default": {Values: []float32{4.4, 5.5, 6.6}},
 				},
 			},
 			wantVec:  []float32{4.4, 5.5, 6.6},
@@ -53,7 +53,17 @@ func TestTable_Upsert(t *testing.T) {
 			rec: &cloudyneighpb.Record{
 				Id: "",
 				Vectors: map[string]*cloudyneighpb.Vector{
-					query.DefaultVectorColumn: {Values: []float32{1.0}},
+					"default": {Values: []float32{1.0}},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "nil vector in record rejected",
+			rec: &cloudyneighpb.Record{
+				Id: "doc-nil-vec",
+				Vectors: map[string]*cloudyneighpb.Vector{
+					"default": nil,
 				},
 			},
 			wantErr: true,
@@ -81,12 +91,12 @@ func TestTable_Upsert(t *testing.T) {
 			require.Equal(t, tc.wantAttr, rec.Attributes)
 
 			if len(tc.wantVec) > 0 {
-				require.Equal(t, tc.wantVec, rec.Vectors[query.DefaultVectorColumn].Values)
-				vec, ok := table.Vector(tc.rec.Id, query.DefaultVectorColumn)
+				require.Equal(t, tc.wantVec, rec.Vectors["default"].Values)
+				vec, ok := table.Vector(tc.rec.Id, "default")
 				require.True(t, ok)
 				require.Equal(t, tc.wantVec, vec)
 			} else {
-				_, ok := table.Vector(tc.rec.Id, query.DefaultVectorColumn)
+				_, ok := table.Vector(tc.rec.Id, "default")
 				require.False(t, ok)
 			}
 		})
@@ -96,12 +106,12 @@ func TestTable_Upsert(t *testing.T) {
 		rec, ok := table.Get("doc-1")
 		require.True(t, ok)
 		rec.Attributes["title"] = "corrupted"
-		rec.Vectors[query.DefaultVectorColumn].Values[0] = 999.0
+		rec.Vectors["default"].Values[0] = 999.0
 
 		fresh, ok := table.Get("doc-1")
 		require.True(t, ok)
 		require.Equal(t, "hello", fresh.Attributes["title"])
-		require.Equal(t, float32(1.1), fresh.Vectors[query.DefaultVectorColumn].Values[0])
+		require.Equal(t, float32(1.1), fresh.Vectors["default"].Values[0])
 	})
 }
 

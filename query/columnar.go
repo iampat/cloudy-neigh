@@ -9,10 +9,7 @@ import (
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 )
 
-const (
-	DefaultChunkSize    = 65536
-	DefaultVectorColumn = "default"
-)
+const DefaultChunkSize = 65536
 
 type rowLoc struct {
 	chunk int
@@ -176,9 +173,10 @@ func (t *Table) UpsertRecord(rec *cloudyneighpb.Record) error {
 	if len(rec.Vectors) > 0 {
 		vectors = make(map[string][]float32, len(rec.Vectors))
 		for name, vec := range rec.Vectors {
-			if vec != nil {
-				vectors[name] = vec.Values
+			if vec == nil {
+				return fmt.Errorf("query: nil vector %q", name)
 			}
+			vectors[name] = vec.Values
 		}
 	}
 	return t.Upsert(rec.Id, vectors, rec.Attributes)
