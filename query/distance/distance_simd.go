@@ -15,6 +15,22 @@ import (
 var _ bridge.ZeroSized
 
 func l2Squared(a, b []float32) float32 {
+	return l2SquaredPortable(a, b)
+}
+
+func dotProduct(a, b []float32) float32 {
+	return dotProductPortable(a, b)
+}
+
+func cosine(a, b []float32) (float32, error) {
+	return cosinePortable(a, b)
+}
+
+func normalizeInPlace(v []float32) error {
+	return normalizeInPlacePortable(v)
+}
+
+func l2SquaredArch(a, b []float32) float32 {
 	n := len(a)
 	chunks := n &^ 3
 	acc := archsimd.Float32x4{}
@@ -37,7 +53,7 @@ func l2Squared(a, b []float32) float32 {
 	return sum
 }
 
-func dotProduct(a, b []float32) float32 {
+func dotProductArch(a, b []float32) float32 {
 	n := len(a)
 	chunks := n &^ 3
 	acc := archsimd.Float32x4{}
@@ -58,7 +74,7 @@ func dotProduct(a, b []float32) float32 {
 	return sum
 }
 
-func cosine(a, b []float32) (float32, error) {
+func cosineArch(a, b []float32) (float32, error) {
 	n := len(a)
 	chunks := n &^ 3
 	accDot := archsimd.Float32x4{}
@@ -107,8 +123,8 @@ func cosine(a, b []float32) (float32, error) {
 	return 1 - sim, nil
 }
 
-func normalizeInPlace(v []float32) error {
-	sum := dotProduct(v, v)
+func normalizeInPlaceArch(v []float32) error {
+	sum := dotProductArch(v, v)
 	if sum == 0 {
 		return ErrZeroVector
 	}

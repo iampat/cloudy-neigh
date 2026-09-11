@@ -84,6 +84,8 @@
   - [ ] Integrate `ruff` and type-checking into `bazel test` and format targets.
 - [ ] Refactor segment reader to follow the `bufio.Scanner` pattern.
       Replace `Next() (*DocumentMutation, error)` returning `io.EOF` with `Scan() bool`, `Mutation() *DocumentMutation`, and `Err() error`.
+- [ ] Add CPU-feature guards or arch gating for the simd kernels. archsimd needs an AVX check on amd64 before use.
+- [ ] Try multi-accumulator unrolling in the simd kernels.
 
 ## Done
 

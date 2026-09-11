@@ -1,7 +1,7 @@
 package distance_test
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"slices"
 	"strconv"
 	"testing"
@@ -11,8 +11,8 @@ import (
 	"github.com/iampat/cloudy-neigh/query/distance"
 )
 
-func randomVector(dim int, seed int64) []float32 {
-	rng := rand.New(rand.NewSource(seed))
+func randomVector(dim int, seed uint64) []float32 {
+	rng := rand.New(rand.NewPCG(seed, seed+1))
 	v := make([]float32, dim)
 	for i := range v {
 		v[i] = rng.Float32()*2 - 1
@@ -60,8 +60,9 @@ func TestL2Squared(t *testing.T) {
 	})
 
 	t.Run("empty vectors", func(t *testing.T) {
-		_, err := distance.L2Squared([]float32{}, []float32{})
-		require.ErrorIs(t, err, distance.ErrEmptyVector)
+		got, err := distance.L2Squared([]float32{}, []float32{})
+		require.NoError(t, err)
+		require.Equal(t, float32(0), got)
 	})
 }
 
@@ -105,8 +106,9 @@ func TestDotProduct(t *testing.T) {
 	})
 
 	t.Run("empty vectors", func(t *testing.T) {
-		_, err := distance.DotProduct([]float32{}, []float32{})
-		require.ErrorIs(t, err, distance.ErrEmptyVector)
+		got, err := distance.DotProduct([]float32{}, []float32{})
+		require.NoError(t, err)
+		require.Equal(t, float32(0), got)
 	})
 }
 
@@ -164,7 +166,7 @@ func TestCosine(t *testing.T) {
 
 	t.Run("empty vectors", func(t *testing.T) {
 		_, err := distance.Cosine([]float32{}, []float32{})
-		require.ErrorIs(t, err, distance.ErrEmptyVector)
+		require.ErrorIs(t, err, distance.ErrZeroVector)
 	})
 }
 
@@ -180,7 +182,7 @@ func TestNormalize(t *testing.T) {
 
 	t.Run("empty vector", func(t *testing.T) {
 		_, err := distance.Normalize([]float32{})
-		require.ErrorIs(t, err, distance.ErrEmptyVector)
+		require.ErrorIs(t, err, distance.ErrZeroVector)
 	})
 
 	t.Run("zero vector", func(t *testing.T) {
@@ -200,7 +202,7 @@ func TestNormalizeInPlace(t *testing.T) {
 
 	t.Run("empty vector", func(t *testing.T) {
 		err := distance.NormalizeInPlace([]float32{})
-		require.ErrorIs(t, err, distance.ErrEmptyVector)
+		require.ErrorIs(t, err, distance.ErrZeroVector)
 	})
 
 	t.Run("zero vector", func(t *testing.T) {
@@ -213,44 +215,55 @@ func TestParity(t *testing.T) {
 	dimensions := []int{1, 2, 3, 4, 7, 8, 9, 15, 16, 128, 768, 1024}
 	for _, dim := range dimensions {
 		t.Run("dim-"+strconv.Itoa(dim), func(t *testing.T) {
-			a, err := distance.Normalize(randomVector(dim, int64(dim*10+1)))
+			a, err := distance.Normalize(randomVector(dim, uint64(dim*10+1)))
 			require.NoError(t, err)
-			b, err := distance.Normalize(randomVector(dim, int64(dim*10+2)))
+			b, err := distance.Normalize(randomVector(dim, uint64(dim*10+2)))
 			require.NoError(t, err)
 
 			l2Pure := distance.L2SquaredPure(a, b)
 			l2Acc := distance.L2SquaredAccelerated(a, b)
 			l2Port := distance.L2SquaredPortable(a, b)
+			l2Arch := distance.L2SquaredArch(a, b)
 			require.InDelta(t, l2Pure, l2Acc, 1e-5)
 			require.InDelta(t, l2Pure, l2Port, 1e-5)
+			require.InDelta(t, l2Pure, l2Arch, 1e-5)
 
 			dotPure := distance.DotProductPure(a, b)
 			dotAcc := distance.DotProductAccelerated(a, b)
 			dotPort := distance.DotProductPortable(a, b)
+			dotArch := distance.DotProductArch(a, b)
 			require.InDelta(t, dotPure, dotAcc, 1e-5)
 			require.InDelta(t, dotPure, dotPort, 1e-5)
+			require.InDelta(t, dotPure, dotArch, 1e-5)
 
 			cosPure, errPure := distance.CosinePure(a, b)
 			cosAcc, errAcc := distance.CosineAccelerated(a, b)
 			cosPort, errPort := distance.CosinePortable(a, b)
+			cosArch, errArch := distance.CosineArch(a, b)
 			require.NoError(t, errPure)
 			require.NoError(t, errAcc)
 			require.NoError(t, errPort)
+			require.NoError(t, errArch)
 			require.InDelta(t, cosPure, cosAcc, 1e-5)
 			require.InDelta(t, cosPure, cosPort, 1e-5)
+			require.InDelta(t, cosPure, cosArch, 1e-5)
 
 			normPure := slices.Clone(a)
 			normAcc := slices.Clone(a)
 			normPort := slices.Clone(a)
+			normArch := slices.Clone(a)
 			errPure = distance.NormalizeInPlacePure(normPure)
 			errAcc = distance.NormalizeInPlaceAccelerated(normAcc)
 			errPort = distance.NormalizeInPlacePortable(normPort)
+			errArch = distance.NormalizeInPlaceArch(normArch)
 			require.NoError(t, errPure)
 			require.NoError(t, errAcc)
 			require.NoError(t, errPort)
+			require.NoError(t, errArch)
 			for i := range normPure {
 				require.InDelta(t, normPure[i], normAcc[i], 1e-5)
 				require.InDelta(t, normPure[i], normPort[i], 1e-5)
+				require.InDelta(t, normPure[i], normArch[i], 1e-5)
 			}
 		})
 	}
