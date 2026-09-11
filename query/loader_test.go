@@ -84,7 +84,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable(0)
+	table := query.NewTable()
 	loader, err := query.NewLoader(store, table)
 	require.NoError(t, err)
 
@@ -145,7 +145,7 @@ func TestLoader_UnknownMutationOp(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable(0)
+	table := query.NewTable()
 	loader, err := query.NewLoader(store, table)
 	require.NoError(t, err)
 
@@ -169,7 +169,7 @@ func TestLoader_EmptyBranch(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable(0)
+	table := query.NewTable()
 	loader, err := query.NewLoader(store, table)
 	require.NoError(t, err)
 
@@ -184,7 +184,7 @@ func TestLoader_Validation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable(0)
+	table := query.NewTable()
 
 	_, err = query.NewLoader(nil, table)
 	require.Error(t, err)
@@ -216,7 +216,7 @@ func TestLoader_Run(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable(0)
+	table := query.NewTable()
 	loader, err := query.NewLoader(store, table)
 	require.NoError(t, err)
 

@@ -55,7 +55,7 @@ func TestTable_Upsert(t *testing.T) {
 					"tag": stringAttr("test"),
 				},
 			},
-			wantVec: nil,
+			wantVec: []float32{0.0, 0.0, 0.0},
 			wantAttr: map[string]*cloudyneighpb.AttributeValue{
 				"tag": stringAttr("test"),
 			},
@@ -98,7 +98,7 @@ func TestTable_Upsert(t *testing.T) {
 		},
 	}
 
-	table := query.NewTable(0)
+	table := query.NewTable()
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			err := table.UpsertRecord(tc.rec)
@@ -173,7 +173,7 @@ func TestTable_MultiVector(t *testing.T) {
 		},
 	}
 
-	table := query.NewTable(0)
+	table := query.NewTable()
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			err := table.Upsert(tc.id, tc.vectors, tc.attrs)
@@ -195,12 +195,16 @@ func TestTable_MultiVector(t *testing.T) {
 	}
 
 	vec, ok := table.Vector("doc-mv-2", "body_emb")
+	require.True(t, ok)
+	require.Equal(t, []float32{0.0, 0.0, 0.0, 0.0}, vec)
+
+	vec, ok = table.Vector("doc-mv-2", "nonexistent")
 	require.False(t, ok)
 	require.Nil(t, vec)
 }
 
 func TestTable_PartialUpdate(t *testing.T) {
-	table := query.NewTable(0)
+	table := query.NewTable()
 	err := table.Upsert("doc-p", map[string][]float32{
 		"vec": {1.0, 2.0},
 	}, map[string]*cloudyneighpb.AttributeValue{
@@ -273,7 +277,7 @@ func TestTable_PartialUpdate(t *testing.T) {
 }
 
 func TestTable_DeleteTombstones(t *testing.T) {
-	table := query.NewTable(0)
+	table := query.NewTable()
 	require.NoError(t, table.Upsert("doc-1", map[string][]float32{"vec": {1.0}}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v1")}))
 	require.NoError(t, table.Upsert("doc-2", map[string][]float32{"vec": {2.0}}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v2")}))
 	require.Equal(t, 2, table.Len())
@@ -349,8 +353,8 @@ func TestTable_DeleteTombstones(t *testing.T) {
 	}
 }
 
-func TestTable_ChunkBoundaries(t *testing.T) {
-	table := query.NewTable(3)
+func TestTable_FlatStorage(t *testing.T) {
+	table := query.NewTable()
 
 	for i := 0; i < 8; i++ {
 		id := string(rune('a' + i))
@@ -408,4 +412,32 @@ func TestTable_ChunkBoundaries(t *testing.T) {
 	attr, ok := table.Attribute("h", "idx")
 	require.True(t, ok)
 	require.True(t, proto.Equal(stringAttr("updated"), attr))
+}
+
+func TestTable_ZeroValue(t *testing.T) {
+	var table query.Table
+
+	require.Equal(t, 0, table.Len())
+	_, ok := table.Get("nonexistent")
+	require.False(t, ok)
+	require.False(t, table.Delete("nonexistent"))
+
+	err := table.Upsert("doc-1", map[string][]float32{
+		"vec": {1.0, 2.0},
+	}, map[string]*cloudyneighpb.AttributeValue{
+		"title": stringAttr("zero-value-test"),
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, table.Len())
+
+	rec, ok := table.Get("doc-1")
+	require.True(t, ok)
+	require.Equal(t, "doc-1", rec.Id)
+	require.True(t, proto.Equal(stringAttr("zero-value-test"), rec.Attributes["title"]))
+	require.Equal(t, []float32{1.0, 2.0}, rec.Vectors["vec"].Values)
+
+	require.True(t, table.Delete("doc-1"))
+	require.Equal(t, 0, table.Len())
+	_, ok = table.Get("doc-1")
+	require.False(t, ok)
 }
