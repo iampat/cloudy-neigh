@@ -24,7 +24,7 @@ func writeSegment(t *testing.T, store objectstore.Store, branch, segID string, m
 		require.NoError(t, w.Write(m))
 	}
 	require.NoError(t, w.Close())
-	segKey := fmt.Sprintf("segments/%s/%s.recordio", branch, segID)
+	segKey := segment.Key(branch, segID)
 	_, err := store.Put(context.Background(), segKey, bytes.NewReader(buf.Bytes()), objectstore.Condition{Absent: true})
 	require.NoError(t, err)
 }

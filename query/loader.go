@@ -65,7 +65,7 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 }
 
 func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
-	segKey := fmt.Sprintf("segments/%s/%s.recordio", branch, segID)
+	segKey := segment.Key(branch, segID)
 	rc, _, err := l.store.Get(ctx, segKey)
 	if err != nil {
 		return fmt.Errorf("get segment %s: %w", segKey, err)

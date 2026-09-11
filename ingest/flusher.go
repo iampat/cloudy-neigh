@@ -290,7 +290,7 @@ func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
 	if err != nil {
 		return fmt.Errorf("generate segment id: %w", err)
 	}
-	segKey := fmt.Sprintf("segments/%s/%s.recordio", mt.branch, segID)
+	segKey := segment.Key(mt.branch, segID)
 	if _, err := f.store.Put(ctx, segKey, bytes.NewReader(data), objectstore.Condition{Absent: true}); err != nil {
 		return fmt.Errorf("upload segment %s: %w", segKey, err)
 	}

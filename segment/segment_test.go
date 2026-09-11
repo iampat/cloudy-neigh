@@ -314,3 +314,11 @@ func TestInvalidBranch(t *testing.T) {
 		}
 	}
 }
+
+func TestKey(t *testing.T) {
+	got := segment.Key("main", "seg-1")
+	want := "segments/main/seg-1.recordio"
+	if got != want {
+		t.Fatalf("segment.Key() = %q, want %q", got, want)
+	}
+}
