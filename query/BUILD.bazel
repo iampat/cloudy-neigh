@@ -1,0 +1,37 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "query",
+    srcs = [
+        "columnar.go",
+        "loader.go",
+    ],
+    importpath = "github.com/iampat/cloudy-neigh/query",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kvfs",
+        "//objectstore",
+        "//proto/cloudyneigh/v1:cloudyneigh",
+        "//proto/storage/v1:storage",
+        "//segment",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_test(
+    name = "query_test",
+    srcs = [
+        "columnar_test.go",
+        "loader_test.go",
+    ],
+    deps = [
+        ":query",
+        "//kvfs",
+        "//objectstore",
+        "//proto/cloudyneigh/v1:cloudyneigh",
+        "//proto/storage/v1:storage",
+        "//segment",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_protobuf//proto",
+    ],
+)

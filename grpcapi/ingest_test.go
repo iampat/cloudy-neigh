@@ -65,30 +65,38 @@ func TestNewIngestServer_NilLog(t *testing.T) {
 	assert.ErrorIs(t, err, grpcapi.ErrNilLog)
 }
 
+func stringAttr(s string) *cloudyneighpb.AttributeValue {
+	return &cloudyneighpb.AttributeValue{Value: &cloudyneighpb.AttributeValue_StringValue{StringValue: s}}
+}
+
 func TestUpsert_Success(t *testing.T) {
 	client, log := setupTestEnv(t)
 	ctx := context.Background()
 
-	doc1 := &cloudyneighpb.Document{
-		Id:     "doc-1",
-		Vector: []float32{0.1, 0.2, 0.3},
-		Attributes: map[string]string{
-			"title": "Document One",
-			"lang":  "en",
+	rec1 := &cloudyneighpb.Record{
+		Id: "doc-1",
+		Vectors: map[string]*cloudyneighpb.Vector{
+			"default": {Values: []float32{0.1, 0.2, 0.3}},
+		},
+		Attributes: map[string]*cloudyneighpb.AttributeValue{
+			"title": stringAttr("Document One"),
+			"lang":  stringAttr("en"),
 		},
 	}
-	doc2 := &cloudyneighpb.Document{
-		Id:     "doc-2",
-		Vector: []float32{0.4, 0.5, 0.6},
-		Attributes: map[string]string{
-			"title": "Document Two",
-			"lang":  "fr",
+	rec2 := &cloudyneighpb.Record{
+		Id: "doc-2",
+		Vectors: map[string]*cloudyneighpb.Vector{
+			"default": {Values: []float32{0.4, 0.5, 0.6}},
+		},
+		Attributes: map[string]*cloudyneighpb.AttributeValue{
+			"title": stringAttr("Document Two"),
+			"lang":  stringAttr("fr"),
 		},
 	}
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
 		Namespace: "main",
-		Documents: []*cloudyneighpb.Document{doc1, doc2},
+		Records:   []*cloudyneighpb.Record{rec1, rec2},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.UpsertedCount)
@@ -101,7 +109,7 @@ func TestUpsert_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 
-	wantDocs := []*cloudyneighpb.Document{doc1, doc2}
+	wantRecs := []*cloudyneighpb.Record{rec1, rec2}
 	for i, r := range records {
 		var rec storagepb.WalRecord
 		require.NoError(t, proto.Unmarshal(r, &rec))
@@ -109,12 +117,12 @@ func TestUpsert_Success(t *testing.T) {
 		mutation := rec.GetMutation()
 		require.NotNil(t, mutation)
 		assert.Equal(t, "main", mutation.Branch)
-		assert.Equal(t, wantDocs[i].Id, mutation.DocId)
+		assert.Equal(t, wantRecs[i].Id, mutation.DocId)
 		assert.Equal(t, storagepb.MutationOp_PUT, mutation.Op)
 
-		var gotDoc cloudyneighpb.Document
-		require.NoError(t, proto.Unmarshal(mutation.Payload, &gotDoc))
-		assert.True(t, proto.Equal(wantDocs[i], &gotDoc))
+		var gotRec cloudyneighpb.Record
+		require.NoError(t, proto.Unmarshal(mutation.Payload, &gotRec))
+		assert.True(t, proto.Equal(wantRecs[i], &gotRec))
 	}
 }
 
@@ -124,7 +132,7 @@ func TestUpsert_Empty(t *testing.T) {
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
 		Namespace: "main",
-		Documents: nil,
+		Records:   nil,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), resp.UpsertedCount)
@@ -138,7 +146,7 @@ func TestUpsert_Validation(t *testing.T) {
 	client, _ := setupTestEnv(t)
 	ctx := context.Background()
 
-	validDoc := &cloudyneighpb.Document{Id: "doc-1"}
+	validRec := &cloudyneighpb.Record{Id: "doc-1"}
 
 	tests := []struct {
 		name string
@@ -148,35 +156,35 @@ func TestUpsert_Validation(t *testing.T) {
 			name: "empty namespace",
 			req: &cloudyneighpb.UpsertRequest{
 				Namespace: "",
-				Documents: []*cloudyneighpb.Document{validDoc},
+				Records:   []*cloudyneighpb.Record{validRec},
 			},
 		},
 		{
 			name: "invalid namespace starting with digit",
 			req: &cloudyneighpb.UpsertRequest{
 				Namespace: "123branch",
-				Documents: []*cloudyneighpb.Document{validDoc},
+				Records:   []*cloudyneighpb.Record{validRec},
 			},
 		},
 		{
 			name: "invalid namespace with slash",
 			req: &cloudyneighpb.UpsertRequest{
 				Namespace: "feature/branch",
-				Documents: []*cloudyneighpb.Document{validDoc},
+				Records:   []*cloudyneighpb.Record{validRec},
 			},
 		},
 		{
-			name: "nil document in batch",
+			name: "nil record in batch",
 			req: &cloudyneighpb.UpsertRequest{
 				Namespace: "main",
-				Documents: []*cloudyneighpb.Document{nil},
+				Records:   []*cloudyneighpb.Record{nil},
 			},
 		},
 		{
-			name: "empty document id",
+			name: "empty record id",
 			req: &cloudyneighpb.UpsertRequest{
 				Namespace: "main",
-				Documents: []*cloudyneighpb.Document{{Id: ""}},
+				Records:   []*cloudyneighpb.Record{{Id: ""}},
 			},
 		},
 	}
@@ -290,7 +298,7 @@ func TestUpsert_CanceledContext(t *testing.T) {
 
 	_, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
 		Namespace: "main",
-		Documents: []*cloudyneighpb.Document{{Id: "doc-1"}},
+		Records:   []*cloudyneighpb.Record{{Id: "doc-1"}},
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -335,18 +343,20 @@ func TestLocalFSBackend(t *testing.T) {
 	client := cloudyneighpb.NewIngestServiceClient(conn)
 	ctx := context.Background()
 
-	doc := &cloudyneighpb.Document{
-		Id:     "wiki-101",
-		Vector: []float32{0.123, 0.456, 0.789},
-		Attributes: map[string]string{
-			"title": "Machine Learning",
-			"lang":  "en",
+	rec := &cloudyneighpb.Record{
+		Id: "wiki-101",
+		Vectors: map[string]*cloudyneighpb.Vector{
+			"default": {Values: []float32{0.123, 0.456, 0.789}},
+		},
+		Attributes: map[string]*cloudyneighpb.AttributeValue{
+			"title": stringAttr("Machine Learning"),
+			"lang":  stringAttr("en"),
 		},
 	}
 
 	uResp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
 		Namespace: "wiki",
-		Documents: []*cloudyneighpb.Document{doc},
+		Records:   []*cloudyneighpb.Record{rec},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), uResp.UpsertedCount)
@@ -383,12 +393,12 @@ func TestLocalFSBackend(t *testing.T) {
 	assert.Equal(t, "wiki-101", m1.DocId)
 	assert.Equal(t, storagepb.MutationOp_PUT, m1.Op)
 
-	var doc1 cloudyneighpb.Document
-	require.NoError(t, proto.Unmarshal(m1.Payload, &doc1))
-	assert.True(t, proto.Equal(doc, &doc1))
+	var gotRec1 cloudyneighpb.Record
+	require.NoError(t, proto.Unmarshal(m1.Payload, &gotRec1))
+	assert.True(t, proto.Equal(rec, &gotRec1))
 	assert.False(t, scanner1.Scan())
 	require.NoError(t, scanner1.Err())
-	t.Logf("Validated segment 1: %s (%d bytes), doc_id=%s, vector_dims=%d", seg1Path, info1.Size(), doc1.Id, len(doc1.Vector))
+	t.Logf("Validated segment 1: %s (%d bytes), doc_id=%s, vector_dims=%d", seg1Path, info1.Size(), gotRec1.Id, len(gotRec1.Vectors["default"].Values))
 
 	f2, err := os.Open(seg2Path)
 	require.NoError(t, err)

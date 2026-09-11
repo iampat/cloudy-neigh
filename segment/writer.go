@@ -11,6 +11,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const KeyPattern = "segments/%s/%s.recordio"
+
+func Key(branch, segID string) string {
+	return fmt.Sprintf(KeyPattern, branch, segID)
+}
+
 var ErrNilMutation = errors.New("segment: nil mutation")
 
 type Writer struct {

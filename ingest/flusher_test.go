@@ -65,7 +65,7 @@ func waitForManifest(t *testing.T, ctx context.Context, store objectstore.Store,
 
 func readSegmentMutations(t *testing.T, ctx context.Context, store objectstore.Store, branch, segID string) []*storagepb.DocumentMutation {
 	t.Helper()
-	key := fmt.Sprintf("segments/%s/%s.recordio", branch, segID)
+	key := segment.Key(branch, segID)
 	rc, _, err := store.Get(ctx, key)
 	require.NoError(t, err)
 	defer rc.Close()

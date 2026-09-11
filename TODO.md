@@ -82,6 +82,8 @@
   - [X] Configure `rules_python` in `MODULE.bazel` for hermetic Python toolchains.
   - [X] Add Bazel targets (`py_binary`, `py_library`) for Python scripts.
   - [ ] Integrate `ruff` and type-checking into `bazel test` and format targets.
+- [ ] Refactor segment reader to follow the `bufio.Scanner` pattern.
+      Replace `Next() (*DocumentMutation, error)` returning `io.EOF` with `Scan() bool`, `Mutation() *DocumentMutation`, and `Err() error`.
 
 ## Done
 
