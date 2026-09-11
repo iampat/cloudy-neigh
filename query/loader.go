@@ -19,11 +19,10 @@ import (
 )
 
 type Loader struct {
-	store    objectstore.Store
-	table    *Table
-	mu       sync.Mutex
-	loaded   map[string]bool
-	inFlight map[string]bool
+	store  objectstore.Store
+	table  *Table
+	mu     sync.Mutex
+	loaded map[string]bool
 }
 
 func NewLoader(store objectstore.Store, table *Table) (*Loader, error) {
@@ -34,15 +33,10 @@ func NewLoader(store objectstore.Store, table *Table) (*Loader, error) {
 		return nil, errors.New("query: nil table")
 	}
 	return &Loader{
-		store:    store,
-		table:    table,
-		loaded:   make(map[string]bool),
-		inFlight: make(map[string]bool),
+		store:  store,
+		table:  table,
+		loaded: make(map[string]bool),
 	}, nil
-}
-
-func (l *Loader) Table() *Table {
-	return l.table
 }
 
 func (l *Loader) IsLoaded(segmentID string) bool {
@@ -51,13 +45,10 @@ func (l *Loader) IsLoaded(segmentID string) bool {
 	return l.loaded[segmentID]
 }
 
-func (l *Loader) LoadedCount() int {
+func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return len(l.loaded)
-}
 
-func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 	manifest, _, err := kvfs.ResolveBranch(ctx, l.store, branch)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
@@ -66,32 +57,17 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 		return 0, fmt.Errorf("sync branch %s: %w", branch, err)
 	}
 
-	l.mu.Lock()
-	var toLoad []*storagepb.SegmentRef
-	for _, seg := range manifest.Segments {
-		if !l.loaded[seg.SegmentId] && !l.inFlight[seg.SegmentId] {
-			l.inFlight[seg.SegmentId] = true
-			toLoad = append(toLoad, seg)
-		}
-	}
-	l.mu.Unlock()
-
 	loadedCount := 0
-	for _, seg := range toLoad {
-		err := l.loadSegment(ctx, branch, seg.SegmentId)
-		l.mu.Lock()
-		delete(l.inFlight, seg.SegmentId)
-		if err == nil {
-			l.loaded[seg.SegmentId] = true
-			loadedCount++
+	for _, seg := range manifest.Segments {
+		if l.loaded[seg.SegmentId] {
+			continue
 		}
-		l.mu.Unlock()
-
-		if err != nil {
+		if err := l.loadSegment(ctx, branch, seg.SegmentId); err != nil {
 			return loadedCount, err
 		}
+		l.loaded[seg.SegmentId] = true
+		loadedCount++
 	}
-
 	return loadedCount, nil
 }
 
@@ -112,9 +88,6 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 			}
 			return fmt.Errorf("read mutation from %s: %w", segKey, err)
 		}
-		if mut == nil {
-			continue
-		}
 
 		switch mut.Op {
 		case storagepb.MutationOp_PUT:
@@ -127,6 +100,8 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 			}
 		case storagepb.MutationOp_DELETE:
 			l.table.Delete(mut.DocId)
+		default:
+			return fmt.Errorf("unknown mutation op %v in %s", mut.Op, segKey)
 		}
 	}
 	return nil
@@ -137,14 +112,14 @@ func (l *Loader) Run(ctx context.Context, branch string, pollInterval time.Durat
 		return err
 	}
 	if pollInterval <= 0 {
-		pollInterval = 100 * time.Millisecond
+		return fmt.Errorf("query: pollInterval must be positive, got %v", pollInterval)
 	}
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	for {
 		if _, err := l.Sync(ctx, branch); err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			slog.WarnContext(ctx, "manifest loader sync failed", "branch", branch, "err", err)

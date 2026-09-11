@@ -79,10 +79,9 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable()
+	table := query.NewTable(0)
 	loader, err := query.NewLoader(store, table)
 	require.NoError(t, err)
-	require.Same(t, table, loader.Table())
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		putMutation("main", "doc-1", []float32{1.0, 2.0}, map[string]string{"title": "doc1"}),
@@ -94,7 +93,6 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 	require.True(t, loader.IsLoaded("seg-1"))
-	require.Equal(t, 1, loader.LoadedCount())
 	require.Equal(t, 2, table.Len())
 
 	rec1, ok := table.Get("doc-1")
@@ -118,7 +116,6 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 	require.True(t, loader.IsLoaded("seg-2"))
-	require.Equal(t, 2, loader.LoadedCount())
 	require.Equal(t, 2, table.Len())
 
 	rec1, ok = table.Get("doc-1")
@@ -139,13 +136,37 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.Equal(t, 0, loaded)
 }
 
+func TestLoader_UnknownMutationOp(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	table := query.NewTable(0)
+	loader, err := query.NewLoader(store, table)
+	require.NoError(t, err)
+
+	writeSegment(t, store, "main", "seg-unknown", []*storagepb.DocumentMutation{
+		{
+			Branch: "main",
+			DocId:  "doc-x",
+			Op:     storagepb.MutationOp(999),
+		},
+	})
+	updateManifest(t, store, "main", []string{"seg-unknown"}, "")
+
+	_, err = loader.Sync(ctx, "main")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown mutation op")
+}
+
 func TestLoader_EmptyBranch(t *testing.T) {
 	ctx := context.Background()
 	store, err := objectstore.Open(ctx, "mem://")
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable()
+	table := query.NewTable(0)
 	loader, err := query.NewLoader(store, table)
 	require.NoError(t, err)
 
@@ -160,7 +181,7 @@ func TestLoader_Validation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable()
+	table := query.NewTable(0)
 
 	_, err = query.NewLoader(nil, table)
 	require.Error(t, err)
@@ -176,6 +197,12 @@ func TestLoader_Validation(t *testing.T) {
 
 	err = loader.Run(ctx, "invalid/branch/name", 10*time.Millisecond)
 	require.Error(t, err)
+
+	err = loader.Run(ctx, "main", 0)
+	require.Error(t, err)
+
+	err = loader.Run(ctx, "main", -1*time.Millisecond)
+	require.Error(t, err)
 }
 
 func TestLoader_Run(t *testing.T) {
@@ -186,7 +213,7 @@ func TestLoader_Run(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable()
+	table := query.NewTable(0)
 	loader, err := query.NewLoader(store, table)
 	require.NoError(t, err)
 

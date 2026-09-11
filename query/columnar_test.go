@@ -59,7 +59,7 @@ func TestTable_Upsert(t *testing.T) {
 		},
 	}
 
-	table := query.NewTable()
+	table := query.NewTable(0)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			err := table.UpsertDoc(tc.doc)
@@ -134,7 +134,7 @@ func TestTable_MultiVector(t *testing.T) {
 		},
 	}
 
-	table := query.NewTable()
+	table := query.NewTable(0)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			err := table.Upsert(tc.id, tc.vectors, tc.attrs)
@@ -161,7 +161,7 @@ func TestTable_MultiVector(t *testing.T) {
 }
 
 func TestTable_PartialUpdate(t *testing.T) {
-	table := query.NewTable()
+	table := query.NewTable(0)
 	err := table.Upsert("doc-p", map[string][]float32{
 		"vec": {1.0, 2.0},
 	}, map[string]string{
@@ -234,14 +234,10 @@ func TestTable_PartialUpdate(t *testing.T) {
 }
 
 func TestTable_DeleteTombstones(t *testing.T) {
-	table := query.NewTable()
+	table := query.NewTable(0)
 	require.NoError(t, table.Upsert("doc-1", map[string][]float32{"vec": {1.0}}, map[string]string{"k": "v1"}))
 	require.NoError(t, table.Upsert("doc-2", map[string][]float32{"vec": {2.0}}, map[string]string{"k": "v2"}))
 	require.Equal(t, 2, table.Len())
-
-	loc1, ok := table.Loc("doc-1")
-	require.True(t, ok)
-	require.False(t, table.IsTombstoned(loc1))
 
 	tests := []struct {
 		name       string
@@ -251,7 +247,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 		attrs      map[string]string
 		wantOk     bool
 		wantLen    int
-		isTomb     bool
 		wantExists bool
 	}{
 		{
@@ -260,7 +255,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			id:         "doc-1",
 			wantOk:     true,
 			wantLen:    1,
-			isTomb:     true,
 			wantExists: false,
 		},
 		{
@@ -269,7 +263,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			id:         "doc-1",
 			wantOk:     false,
 			wantLen:    1,
-			isTomb:     true,
 			wantExists: false,
 		},
 		{
@@ -278,7 +271,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			id:         "nonexistent",
 			wantOk:     false,
 			wantLen:    1,
-			isTomb:     true,
 			wantExists: false,
 		},
 		{
@@ -289,7 +281,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			attrs:      map[string]string{"extra": "e"},
 			wantOk:     true,
 			wantLen:    2,
-			isTomb:     false,
 			wantExists: true,
 		},
 		{
@@ -298,7 +289,6 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			id:         "doc-1",
 			wantOk:     true,
 			wantLen:    1,
-			isTomb:     true,
 			wantExists: false,
 		},
 	}
@@ -314,16 +304,10 @@ func TestTable_DeleteTombstones(t *testing.T) {
 			}
 
 			require.Equal(t, tc.wantLen, table.Len())
-			if tc.id == "doc-1" {
-				require.Equal(t, tc.isTomb, table.IsTombstoned(loc1))
-			}
-
 			_, exists := table.Get(tc.id)
 			require.Equal(t, tc.wantExists, exists)
 		})
 	}
-
-	require.Equal(t, 2, table.TotalRows())
 }
 
 func TestTable_ChunkBoundaries(t *testing.T) {
@@ -340,31 +324,28 @@ func TestTable_ChunkBoundaries(t *testing.T) {
 	}
 
 	require.Equal(t, 8, table.Len())
-	require.Equal(t, 8, table.TotalRows())
-	require.Equal(t, 3, table.ChunkCount())
 
 	tests := []struct {
-		id        string
-		wantChunk int
-		wantRow   int
-		wantVal   float32
+		id      string
+		wantVal float32
+		wantIdx string
 	}{
-		{"a", 0, 0, 0.0},
-		{"b", 0, 1, 1.0},
-		{"c", 0, 2, 2.0},
-		{"d", 1, 0, 3.0},
-		{"e", 1, 1, 4.0},
-		{"f", 1, 2, 5.0},
-		{"g", 2, 0, 6.0},
-		{"h", 2, 1, 7.0},
+		{"a", 0.0, "0"},
+		{"b", 1.0, "1"},
+		{"c", 2.0, "2"},
+		{"d", 3.0, "3"},
+		{"e", 4.0, "4"},
+		{"f", 5.0, "5"},
+		{"g", 6.0, "6"},
+		{"h", 7.0, "7"},
 	}
 
 	for _, tc := range tests {
-		t.Run("locate "+tc.id, func(t *testing.T) {
-			loc, ok := table.Loc(tc.id)
+		t.Run("retrieve "+tc.id, func(t *testing.T) {
+			rec, ok := table.Get(tc.id)
 			require.True(t, ok)
-			require.Equal(t, tc.wantChunk, loc.Chunk)
-			require.Equal(t, tc.wantRow, loc.Row)
+			require.Equal(t, tc.id, rec.ID)
+			require.Equal(t, tc.wantIdx, rec.Attributes["idx"])
 
 			vec, ok := table.Vector(tc.id, "v")
 			require.True(t, ok)
@@ -375,7 +356,6 @@ func TestTable_ChunkBoundaries(t *testing.T) {
 	require.True(t, table.Delete("d"))
 	require.False(t, table.Delete("d"))
 	require.Equal(t, 7, table.Len())
-	require.Equal(t, 8, table.TotalRows())
 
 	_, ok := table.Get("d")
 	require.False(t, ok)

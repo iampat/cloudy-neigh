@@ -14,9 +14,9 @@ const (
 	DefaultVectorColumn = "vector"
 )
 
-type RowLoc struct {
-	Chunk int
-	Row   int
+type rowLoc struct {
+	chunk int
+	row   int
 }
 
 type Record struct {
@@ -71,32 +71,19 @@ type Table struct {
 	mu         sync.RWMutex
 	chunkSize  int
 	chunks     []*chunk
-	index      map[string]RowLoc
+	index      map[string]rowLoc
 	vectorDims map[string]int
 	liveCount  int
 }
 
-func NewTable(chunkSize ...int) *Table {
-	size := DefaultChunkSize
-	if len(chunkSize) > 0 && chunkSize[0] > 0 {
-		size = chunkSize[0]
+func NewTable(chunkSize int) *Table {
+	if chunkSize <= 0 {
+		chunkSize = DefaultChunkSize
 	}
 	return &Table{
-		chunkSize:  size,
-		index:      make(map[string]RowLoc),
+		chunkSize:  chunkSize,
+		index:      make(map[string]rowLoc),
 		vectorDims: make(map[string]int),
-	}
-}
-
-func (t *Table) initLocked() {
-	if t.chunkSize <= 0 {
-		t.chunkSize = DefaultChunkSize
-	}
-	if t.index == nil {
-		t.index = make(map[string]RowLoc)
-	}
-	if t.vectorDims == nil {
-		t.vectorDims = make(map[string]int)
 	}
 }
 
@@ -117,7 +104,6 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.initLocked()
 
 	for col, vec := range vectors {
 		if len(vec) == 0 {
@@ -141,9 +127,9 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 
 	loc, exists := t.index[id]
 	if exists {
-		c := t.chunks[loc.Chunk]
-		word := loc.Row / 64
-		bit := uint64(1) << (loc.Row % 64)
+		c := t.chunks[loc.chunk]
+		word := loc.row / 64
+		bit := uint64(1) << (loc.row % 64)
 		if c.tombstones[word]&bit != 0 {
 			c.tombstones[word] &^= bit
 			t.liveCount++
@@ -154,11 +140,11 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 				continue
 			}
 			dim := t.vectorDims[col]
-			c.setVector(col, loc.Row, dim, vec)
+			c.setVector(col, loc.row, dim, vec)
 		}
 
 		for k, v := range attrs {
-			c.setAttribute(k, loc.Row, v, t.chunkSize)
+			c.setAttribute(k, loc.row, v, t.chunkSize)
 		}
 		return nil
 	}
@@ -171,7 +157,7 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 	c := t.chunks[chunkIdx]
 	row := len(c.docIDs)
 	c.docIDs = append(c.docIDs, id)
-	t.index[id] = RowLoc{Chunk: chunkIdx, Row: row}
+	t.index[id] = rowLoc{chunk: chunkIdx, row: row}
 	t.liveCount++
 
 	for col, vec := range vectors {
@@ -202,15 +188,14 @@ func (t *Table) UpsertDoc(doc *cloudyneighpb.Document) error {
 func (t *Table) Delete(id string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.initLocked()
 
 	loc, ok := t.index[id]
 	if !ok {
 		return false
 	}
-	c := t.chunks[loc.Chunk]
-	word := loc.Row / 64
-	bit := uint64(1) << (loc.Row % 64)
+	c := t.chunks[loc.chunk]
+	word := loc.row / 64
+	bit := uint64(1) << (loc.row % 64)
 	if c.tombstones[word]&bit != 0 {
 		return false
 	}
@@ -227,9 +212,9 @@ func (t *Table) Get(id string) (Record, bool) {
 	if !ok {
 		return Record{}, false
 	}
-	c := t.chunks[loc.Chunk]
-	word := loc.Row / 64
-	bit := uint64(1) << (loc.Row % 64)
+	c := t.chunks[loc.chunk]
+	word := loc.row / 64
+	bit := uint64(1) << (loc.row % 64)
 	if c.tombstones[word]&bit != 0 {
 		return Record{}, false
 	}
@@ -243,14 +228,14 @@ func (t *Table) Get(id string) (Record, bool) {
 	for col, mask := range c.vectorMask {
 		if mask[word]&bit != 0 {
 			dim := t.vectorDims[col]
-			offset := loc.Row * dim
+			offset := loc.row * dim
 			rec.Vectors[col] = slices.Clone(c.vectors[col][offset : offset+dim])
 		}
 	}
 
 	for col, mask := range c.attrMask {
 		if mask[word]&bit != 0 {
-			rec.Attributes[col] = c.attrs[col][loc.Row]
+			rec.Attributes[col] = c.attrs[col][loc.row]
 		}
 	}
 
@@ -265,9 +250,9 @@ func (t *Table) Vector(id, col string) ([]float32, bool) {
 	if !ok {
 		return nil, false
 	}
-	c := t.chunks[loc.Chunk]
-	word := loc.Row / 64
-	bit := uint64(1) << (loc.Row % 64)
+	c := t.chunks[loc.chunk]
+	word := loc.row / 64
+	bit := uint64(1) << (loc.row % 64)
 	if c.tombstones[word]&bit != 0 {
 		return nil, false
 	}
@@ -278,7 +263,7 @@ func (t *Table) Vector(id, col string) ([]float32, bool) {
 	}
 
 	dim := t.vectorDims[col]
-	offset := loc.Row * dim
+	offset := loc.row * dim
 	return slices.Clone(c.vectors[col][offset : offset+dim]), true
 }
 
@@ -290,9 +275,9 @@ func (t *Table) Attribute(id, key string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	c := t.chunks[loc.Chunk]
-	word := loc.Row / 64
-	bit := uint64(1) << (loc.Row % 64)
+	c := t.chunks[loc.chunk]
+	word := loc.row / 64
+	bit := uint64(1) << (loc.row % 64)
 	if c.tombstones[word]&bit != 0 {
 		return "", false
 	}
@@ -302,60 +287,11 @@ func (t *Table) Attribute(id, key string) (string, bool) {
 		return "", false
 	}
 
-	return c.attrs[key][loc.Row], true
-}
-
-func (t *Table) Loc(id string) (RowLoc, bool) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	loc, ok := t.index[id]
-	if !ok {
-		return RowLoc{}, false
-	}
-	c := t.chunks[loc.Chunk]
-	word := loc.Row / 64
-	bit := uint64(1) << (loc.Row % 64)
-	if c.tombstones[word]&bit != 0 {
-		return RowLoc{}, false
-	}
-	return loc, true
-}
-
-func (t *Table) IsTombstoned(loc RowLoc) bool {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	if loc.Chunk < 0 || loc.Chunk >= len(t.chunks) {
-		return true
-	}
-	c := t.chunks[loc.Chunk]
-	if loc.Row < 0 || loc.Row >= len(c.docIDs) {
-		return true
-	}
-	word := loc.Row / 64
-	bit := uint64(1) << (loc.Row % 64)
-	return c.tombstones[word]&bit != 0
+	return c.attrs[key][loc.row], true
 }
 
 func (t *Table) Len() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.liveCount
-}
-
-func (t *Table) TotalRows() int {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	total := 0
-	for _, c := range t.chunks {
-		total += len(c.docIDs)
-	}
-	return total
-}
-
-func (t *Table) ChunkCount() int {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return len(t.chunks)
 }
