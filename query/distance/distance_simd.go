@@ -1,35 +1,35 @@
-//go:build go1.27
+//go:build goexperiment.simd && go1.27
 
 package distance
 
-import "math"
+import (
+	"math"
+	"simd"
+	"simd/archsimd"
+
+	// rules_go omits transitive standard-library dependencies of GOEXPERIMENT
+	// packages from -importcfg, so the explicit reference forces the entry.
+	"simd/internal/bridge"
+)
+
+var _ bridge.ZeroSized
 
 func l2Squared(a, b []float32) float32 {
 	n := len(a)
-	chunks := n &^ 7
-	var s0, s1, s2, s3, s4, s5, s6, s7 float32
+	chunks := n &^ 3
+	acc := archsimd.Float32x4{}
 
-	for i := 0; i < chunks; i += 8 {
-		d0 := a[i] - b[i]
-		d1 := a[i+1] - b[i+1]
-		d2 := a[i+2] - b[i+2]
-		d3 := a[i+3] - b[i+3]
-		d4 := a[i+4] - b[i+4]
-		d5 := a[i+5] - b[i+5]
-		d6 := a[i+6] - b[i+6]
-		d7 := a[i+7] - b[i+7]
-
-		s0 += d0 * d0
-		s1 += d1 * d1
-		s2 += d2 * d2
-		s3 += d3 * d3
-		s4 += d4 * d4
-		s5 += d5 * d5
-		s6 += d6 * d6
-		s7 += d7 * d7
+	for i := 0; i < chunks; i += 4 {
+		va := archsimd.LoadFloat32x4(a[i:])
+		vb := archsimd.LoadFloat32x4(b[i:])
+		diff := va.Sub(vb)
+		acc = diff.MulAdd(diff, acc)
 	}
 
-	sum := (s0 + s1) + (s2 + s3) + (s4 + s5) + (s6 + s7)
+	p1 := acc.ConcatAddPairs(acc)
+	p2 := p1.ConcatAddPairs(p1)
+	sum := p2.GetElem(0)
+
 	for i := chunks; i < n; i++ {
 		d := a[i] - b[i]
 		sum += d * d
@@ -39,21 +39,19 @@ func l2Squared(a, b []float32) float32 {
 
 func dotProduct(a, b []float32) float32 {
 	n := len(a)
-	chunks := n &^ 7
-	var s0, s1, s2, s3, s4, s5, s6, s7 float32
+	chunks := n &^ 3
+	acc := archsimd.Float32x4{}
 
-	for i := 0; i < chunks; i += 8 {
-		s0 += a[i] * b[i]
-		s1 += a[i+1] * b[i+1]
-		s2 += a[i+2] * b[i+2]
-		s3 += a[i+3] * b[i+3]
-		s4 += a[i+4] * b[i+4]
-		s5 += a[i+5] * b[i+5]
-		s6 += a[i+6] * b[i+6]
-		s7 += a[i+7] * b[i+7]
+	for i := 0; i < chunks; i += 4 {
+		va := archsimd.LoadFloat32x4(a[i:])
+		vb := archsimd.LoadFloat32x4(b[i:])
+		acc = va.MulAdd(vb, acc)
 	}
 
-	sum := (s0 + s1) + (s2 + s3) + (s4 + s5) + (s6 + s7)
+	p1 := acc.ConcatAddPairs(acc)
+	p2 := p1.ConcatAddPairs(p1)
+	sum := p2.GetElem(0)
+
 	for i := chunks; i < n; i++ {
 		sum += a[i] * b[i]
 	}
@@ -63,33 +61,30 @@ func dotProduct(a, b []float32) float32 {
 func cosine(a, b []float32) (float32, error) {
 	n := len(a)
 	chunks := n &^ 3
-	var d0, d1, d2, d3 float32
-	var a0, a1, a2, a3 float32
-	var b0, b1, b2, b3 float32
+	accDot := archsimd.Float32x4{}
+	accA := archsimd.Float32x4{}
+	accB := archsimd.Float32x4{}
 
 	for i := 0; i < chunks; i += 4 {
-		ai0, ai1, ai2, ai3 := a[i], a[i+1], a[i+2], a[i+3]
-		bi0, bi1, bi2, bi3 := b[i], b[i+1], b[i+2], b[i+3]
+		va := archsimd.LoadFloat32x4(a[i:])
+		vb := archsimd.LoadFloat32x4(b[i:])
 
-		d0 += ai0 * bi0
-		d1 += ai1 * bi1
-		d2 += ai2 * bi2
-		d3 += ai3 * bi3
-
-		a0 += ai0 * ai0
-		a1 += ai1 * ai1
-		a2 += ai2 * ai2
-		a3 += ai3 * ai3
-
-		b0 += bi0 * bi0
-		b1 += bi1 * bi1
-		b2 += bi2 * bi2
-		b3 += bi3 * bi3
+		accDot = va.MulAdd(vb, accDot)
+		accA = va.MulAdd(va, accA)
+		accB = vb.MulAdd(vb, accB)
 	}
 
-	dot := (d0 + d1) + (d2 + d3)
-	sumA := (a0 + a1) + (a2 + a3)
-	sumB := (b0 + b1) + (b2 + b3)
+	pDot1 := accDot.ConcatAddPairs(accDot)
+	pDot2 := pDot1.ConcatAddPairs(pDot1)
+	dot := pDot2.GetElem(0)
+
+	pA1 := accA.ConcatAddPairs(accA)
+	pA2 := pA1.ConcatAddPairs(pA1)
+	sumA := pA2.GetElem(0)
+
+	pB1 := accB.ConcatAddPairs(accB)
+	pB2 := pB1.ConcatAddPairs(pB1)
+	sumB := pB2.GetElem(0)
 
 	for i := chunks; i < n; i++ {
 		ai, bi := a[i], b[i]
@@ -121,17 +116,142 @@ func normalizeInPlace(v []float32) error {
 	invNorm := 1 / norm
 
 	n := len(v)
-	chunks := n &^ 7
-	for i := 0; i < chunks; i += 8 {
-		v[i] *= invNorm
-		v[i+1] *= invNorm
-		v[i+2] *= invNorm
-		v[i+3] *= invNorm
-		v[i+4] *= invNorm
-		v[i+5] *= invNorm
-		v[i+6] *= invNorm
-		v[i+7] *= invNorm
+	chunks := n &^ 3
+	vInv := archsimd.BroadcastFloat32x4(invNorm)
+
+	for i := 0; i < chunks; i += 4 {
+		vec := archsimd.LoadFloat32x4(v[i:])
+		vec = vec.Mul(vInv)
+		vec.Store(v[i:])
 	}
+
+	for i := chunks; i < n; i++ {
+		v[i] *= invNorm
+	}
+	return nil
+}
+
+func l2SquaredPortable(a, b []float32) float32 {
+	n := len(a)
+	vl := simd.Float32s{}.Len()
+	chunks := n - (n % vl)
+	acc := simd.Float32s{}
+
+	for i := 0; i < chunks; i += vl {
+		va := simd.LoadFloat32s(a[i:])
+		vb := simd.LoadFloat32s(b[i:])
+		diff := va.Sub(vb)
+		acc = diff.MulAdd(diff, acc)
+	}
+
+	var buf [16]float32
+	acc.Store(buf[:vl])
+	var sum float32
+	for i := 0; i < vl; i++ {
+		sum += buf[i]
+	}
+
+	for i := chunks; i < n; i++ {
+		d := a[i] - b[i]
+		sum += d * d
+	}
+	return sum
+}
+
+func dotProductPortable(a, b []float32) float32 {
+	n := len(a)
+	vl := simd.Float32s{}.Len()
+	chunks := n - (n % vl)
+	acc := simd.Float32s{}
+
+	for i := 0; i < chunks; i += vl {
+		va := simd.LoadFloat32s(a[i:])
+		vb := simd.LoadFloat32s(b[i:])
+		acc = va.MulAdd(vb, acc)
+	}
+
+	var buf [16]float32
+	acc.Store(buf[:vl])
+	var sum float32
+	for i := 0; i < vl; i++ {
+		sum += buf[i]
+	}
+
+	for i := chunks; i < n; i++ {
+		sum += a[i] * b[i]
+	}
+	return sum
+}
+
+func cosinePortable(a, b []float32) (float32, error) {
+	n := len(a)
+	vl := simd.Float32s{}.Len()
+	chunks := n - (n % vl)
+	accDot := simd.Float32s{}
+	accA := simd.Float32s{}
+	accB := simd.Float32s{}
+
+	for i := 0; i < chunks; i += vl {
+		va := simd.LoadFloat32s(a[i:])
+		vb := simd.LoadFloat32s(b[i:])
+
+		accDot = va.MulAdd(vb, accDot)
+		accA = va.MulAdd(va, accA)
+		accB = vb.MulAdd(vb, accB)
+	}
+
+	var bufDot, bufA, bufB [16]float32
+	accDot.Store(bufDot[:vl])
+	accA.Store(bufA[:vl])
+	accB.Store(bufB[:vl])
+
+	var dot, sumA, sumB float32
+	for i := 0; i < vl; i++ {
+		dot += bufDot[i]
+		sumA += bufA[i]
+		sumB += bufB[i]
+	}
+
+	for i := chunks; i < n; i++ {
+		ai, bi := a[i], b[i]
+		dot += ai * bi
+		sumA += ai * ai
+		sumB += bi * bi
+	}
+
+	if sumA == 0 || sumB == 0 {
+		return 0, ErrZeroVector
+	}
+
+	denom := float32(math.Sqrt(float64(sumA)) * math.Sqrt(float64(sumB)))
+	sim := dot / denom
+	if sim > 1 {
+		sim = 1
+	} else if sim < -1 {
+		sim = -1
+	}
+	return 1 - sim, nil
+}
+
+func normalizeInPlacePortable(v []float32) error {
+	sum := dotProductPortable(v, v)
+	if sum == 0 {
+		return ErrZeroVector
+	}
+	norm := float32(math.Sqrt(float64(sum)))
+	invNorm := 1 / norm
+
+	n := len(v)
+	vl := simd.Float32s{}.Len()
+	chunks := n - (n % vl)
+	vInv := simd.BroadcastFloat32s(invNorm)
+
+	for i := 0; i < chunks; i += vl {
+		vec := simd.LoadFloat32s(v[i:])
+		vec = vec.Mul(vInv)
+		vec.Store(v[i : i+vl])
+	}
+
 	for i := chunks; i < n; i++ {
 		v[i] *= invNorm
 	}

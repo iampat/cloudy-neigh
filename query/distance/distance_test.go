@@ -220,26 +220,37 @@ func TestParity(t *testing.T) {
 
 			l2Pure := distance.L2SquaredPure(a, b)
 			l2Acc := distance.L2SquaredAccelerated(a, b)
+			l2Port := distance.L2SquaredPortable(a, b)
 			require.InDelta(t, l2Pure, l2Acc, 1e-5)
+			require.InDelta(t, l2Pure, l2Port, 1e-5)
 
 			dotPure := distance.DotProductPure(a, b)
 			dotAcc := distance.DotProductAccelerated(a, b)
+			dotPort := distance.DotProductPortable(a, b)
 			require.InDelta(t, dotPure, dotAcc, 1e-5)
+			require.InDelta(t, dotPure, dotPort, 1e-5)
 
 			cosPure, errPure := distance.CosinePure(a, b)
 			cosAcc, errAcc := distance.CosineAccelerated(a, b)
+			cosPort, errPort := distance.CosinePortable(a, b)
 			require.NoError(t, errPure)
 			require.NoError(t, errAcc)
+			require.NoError(t, errPort)
 			require.InDelta(t, cosPure, cosAcc, 1e-5)
+			require.InDelta(t, cosPure, cosPort, 1e-5)
 
 			normPure := slices.Clone(a)
 			normAcc := slices.Clone(a)
+			normPort := slices.Clone(a)
 			errPure = distance.NormalizeInPlacePure(normPure)
 			errAcc = distance.NormalizeInPlaceAccelerated(normAcc)
+			errPort = distance.NormalizeInPlacePortable(normPort)
 			require.NoError(t, errPure)
 			require.NoError(t, errAcc)
+			require.NoError(t, errPort)
 			for i := range normPure {
 				require.InDelta(t, normPure[i], normAcc[i], 1e-5)
+				require.InDelta(t, normPure[i], normPort[i], 1e-5)
 			}
 		})
 	}
@@ -247,24 +258,91 @@ func TestParity(t *testing.T) {
 
 func BenchmarkDistance(b *testing.B) {
 	funcs := []struct {
-		name string
-		fn   func(a, b []float32) (float32, error)
+		name     string
+		pure     func(a, b []float32) (float32, error)
+		portable func(a, b []float32) (float32, error)
+		arch     func(a, b []float32) (float32, error)
 	}{
-		{"L2Squared", distance.L2Squared},
-		{"DotProduct", distance.DotProduct},
-		{"Cosine", distance.Cosine},
+		{
+			name:     "L2Squared",
+			pure:     func(a, b []float32) (float32, error) { return distance.L2SquaredPure(a, b), nil },
+			portable: func(a, b []float32) (float32, error) { return distance.L2SquaredPortable(a, b), nil },
+			arch:     func(a, b []float32) (float32, error) { return distance.L2SquaredArch(a, b), nil },
+		},
+		{
+			name:     "DotProduct",
+			pure:     func(a, b []float32) (float32, error) { return distance.DotProductPure(a, b), nil },
+			portable: func(a, b []float32) (float32, error) { return distance.DotProductPortable(a, b), nil },
+			arch:     func(a, b []float32) (float32, error) { return distance.DotProductArch(a, b), nil },
+		},
+		{
+			name:     "Cosine",
+			pure:     distance.CosinePure,
+			portable: distance.CosinePortable,
+			arch:     distance.CosineArch,
+		},
 	}
 	for _, f := range funcs {
 		for _, dim := range []int{128, 768, 1024} {
-			b.Run(f.name+"/"+strconv.Itoa(dim), func(b *testing.B) {
+			b.Run(f.name+"/pure/"+strconv.Itoa(dim), func(b *testing.B) {
 				v1 := randomVector(dim, 1)
 				v2 := randomVector(dim, 2)
 				for b.Loop() {
-					if _, err := f.fn(v1, v2); err != nil {
+					if _, err := f.pure(v1, v2); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run(f.name+"/simd-portable/"+strconv.Itoa(dim), func(b *testing.B) {
+				v1 := randomVector(dim, 1)
+				v2 := randomVector(dim, 2)
+				for b.Loop() {
+					if _, err := f.portable(v1, v2); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run(f.name+"/simd-arch/"+strconv.Itoa(dim), func(b *testing.B) {
+				v1 := randomVector(dim, 1)
+				v2 := randomVector(dim, 2)
+				for b.Loop() {
+					if _, err := f.arch(v1, v2); err != nil {
 						b.Fatal(err)
 					}
 				}
 			})
 		}
+	}
+	for _, dim := range []int{128, 768, 1024} {
+		b.Run("NormalizeInPlace/pure/"+strconv.Itoa(dim), func(b *testing.B) {
+			v := randomVector(dim, 1)
+			buf := slices.Clone(v)
+			for b.Loop() {
+				copy(buf, v)
+				if err := distance.NormalizeInPlacePure(buf); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run("NormalizeInPlace/simd-portable/"+strconv.Itoa(dim), func(b *testing.B) {
+			v := randomVector(dim, 1)
+			buf := slices.Clone(v)
+			for b.Loop() {
+				copy(buf, v)
+				if err := distance.NormalizeInPlacePortable(buf); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run("NormalizeInPlace/simd-arch/"+strconv.Itoa(dim), func(b *testing.B) {
+			v := randomVector(dim, 1)
+			buf := slices.Clone(v)
+			for b.Loop() {
+				copy(buf, v)
+				if err := distance.NormalizeInPlaceArch(buf); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
