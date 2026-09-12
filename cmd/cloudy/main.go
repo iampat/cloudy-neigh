@@ -213,8 +213,10 @@ func runIngest(ctx context.Context, args []string) error {
 }
 
 type queryConfig struct {
-	listen     string
-	maxMsgSize int
+	listen       string
+	url          string
+	maxMsgSize   int
+	syncInterval time.Duration
 }
 
 func parseQueryFlags(args []string) (queryConfig, error) {
@@ -222,7 +224,9 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 
 	var cfg queryConfig
 	fs.StringVar(&cfg.listen, "listen", ":50052", "address:port to listen on")
+	fs.StringVar(&cfg.url, "url", "file:///tmp/cloudy-demo?create_dir=true", "object storage URL")
 	fs.IntVar(&cfg.maxMsgSize, "max-msg-size", 64*1024*1024, "maximum message size in bytes")
+	fs.DurationVar(&cfg.syncInterval, "sync-interval", 2*time.Second, "background sync interval")
 
 	if err := fs.Parse(args); err != nil {
 		return queryConfig{}, err
@@ -233,32 +237,54 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 	if cfg.listen == "" {
 		return queryConfig{}, errors.New("-listen cannot be empty")
 	}
+	if cfg.url == "" {
+		return queryConfig{}, errors.New("-url cannot be empty")
+	}
 	if cfg.maxMsgSize <= 0 {
 		return queryConfig{}, errors.New("-max-msg-size must be positive")
+	}
+	if cfg.syncInterval <= 0 {
+		return queryConfig{}, errors.New("-sync-interval must be positive")
 	}
 	return cfg, nil
 }
 
 type queryServer struct {
-	lis        net.Listener
-	grpcServer *grpc.Server
+	lis         net.Listener
+	grpcServer  *grpc.Server
+	store       objectstore.Store
+	queryServer *grpcapi.QueryServer
 }
 
-func newQueryServer(cfg queryConfig) (*queryServer, error) {
-	lis, err := net.Listen("tcp", cfg.listen)
+func newQueryServer(ctx context.Context, cfg queryConfig) (*queryServer, error) {
+	store, err := objectstore.Open(ctx, cfg.url)
 	if err != nil {
-		return nil, fmt.Errorf("listen on %s: %w", cfg.listen, err)
+		return nil, fmt.Errorf("open store: %w", err)
+	}
+
+	srv, err := grpcapi.NewQueryServer(store, cfg.syncInterval)
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("create query server: %w", err)
 	}
 
 	grpcServer := grpc.NewServer(
 		grpc.MaxRecvMsgSize(cfg.maxMsgSize),
 		grpc.MaxSendMsgSize(cfg.maxMsgSize),
 	)
-	cloudyneighpb.RegisterQueryServiceServer(grpcServer, new(grpcapi.QueryServer))
+	cloudyneighpb.RegisterQueryServiceServer(grpcServer, srv)
+
+	lis, err := net.Listen("tcp", cfg.listen)
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("listen on %s: %w", cfg.listen, err)
+	}
 
 	return &queryServer{
-		lis:        lis,
-		grpcServer: grpcServer,
+		lis:         lis,
+		grpcServer:  grpcServer,
+		store:       store,
+		queryServer: srv,
 	}, nil
 }
 
@@ -266,8 +292,31 @@ func (s *queryServer) Addr() net.Addr {
 	return s.lis.Addr()
 }
 
-func (s *queryServer) Serve(ctx context.Context) error {
-	return serveGRPC(ctx, s.grpcServer, s.lis)
+func (s *queryServer) Serve(ctx context.Context) (err error) {
+	defer func() {
+		if closeErr := s.store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
+	syncCtx, cancelSync := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelSync()
+
+	var g errgroup.Group
+
+	g.Go(func() error {
+		err := serveGRPC(ctx, s.grpcServer, s.lis)
+		cancelSync()
+		return err
+	})
+
+	g.Go(func() error {
+		err := s.queryServer.Run(syncCtx)
+		s.grpcServer.Stop()
+		return err
+	})
+
+	return g.Wait()
 }
 
 func runQuery(ctx context.Context, args []string) error {
@@ -279,11 +328,11 @@ func runQuery(ctx context.Context, args []string) error {
 		return err
 	}
 
-	srv, err := newQueryServer(cfg)
+	srv, err := newQueryServer(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	slog.Info("query server listening", "addr", srv.Addr().String())
+	slog.Info("query server listening", "addr", srv.Addr().String(), "url", cfg.url)
 
 	return srv.Serve(ctx)
 }
