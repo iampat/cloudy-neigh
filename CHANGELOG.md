@@ -2,6 +2,19 @@
 
 ### Added
 
+- `grpcapi`: IngestService with Upsert and Delete WAL appends. A namespace
+  package adds Validate helpers and a Scope hierarchy.
+- `cmd/cloudyd`: CLI with `ingest` and `query` subcommands. `ingest` hosts
+  the gRPC IngestService over the logstream WAL with bounded graceful stop.
+  `query` hosts a QueryService stub.
+- `ingest.Flusher`: tails the WAL, routes mutations into per-branch
+  memtables, flushes monotonic segment blobs, and commits manifests with a
+  CAS retry.
+- `query`: in-memory columnar table and manifest loader.
+- `query/distance`: float32 distance kernels (L2 squared, dot product,
+  cosine, normalize) in three variants: pure scalar, portable simd, and
+  archsimd Neon. Portable simd is the production path on Go 1.27 with
+  GOEXPERIMENT=simd. Benchmarks live in docs/benchmarks/distance.md.
 - Bazel Python and Protobuf integration:
   - Hermetic Python 3.13 toolchain and pip package parsing via `rules_python`.
   - Python Protobuf and gRPC stubs via `rules_proto_grpc_python`.
@@ -37,12 +50,15 @@
 
 ### Changed
 
+- Migrated the wire format, ingest, and query to the protobuf Record message.
 - Replaced `scripts/requirements.txt` with root `requirements.txt`.
 - Standardized Protobuf dependencies across `grpcapi`, `kvfs`, and `segment` on generated `*_go_proto` targets.
 - `logstream`: Unified stream and prefix into a single prefix path parameter in `logstream.New`. Removed `WithPrefix` option.
 
 ### Fixed
 
+- `cloudyd ingest`: gRPC GracefulStop bounded by a 5-second timeout with a
+  hard-stop fallback. The server stops when the flusher stops.
 - `recordio.Reader`: a non-EOF read error inside a payload or footer now
   poisons the reader. Previously, the reader stayed usable and misread payloads
   as headers.
