@@ -35,11 +35,11 @@ use_repo(pip, "pip")
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.download(
     experiments = ["simd"],
-    version = "1.26.5",
+    version = "1.27.0",
 )
 go_sdk.download(
     experiments = ["simd"],
-    version = "1.27.0",
+    version = "1.26.5",
 )
 go_sdk.nogo(nogo = "//:nogo")
 
