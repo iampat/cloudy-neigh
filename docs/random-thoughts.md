@@ -14,6 +14,10 @@ Catalog of architectural patterns, third-party algorithms, and brainstorming ses
 8. [Bitset Nonzero Word Scanning](#8-bitset-nonzero-word-scanning): Scan candidate document IDs skipping empty words with hardware trailing zeros count.
 9. [Lazy Slot Stale-While-Revalidate](#9-lazy-slot-stale-while-revalidate): Cache branch manifests without blocking read queries on GCS network polls.
 
+- **Vector representations beyond float32** (2026-09-11): SQ8 first when ANN
+  starts, binary prefilter second, skip float16/bfloat16 in Go. Kernels are
+  bandwidth-bound, so size cuts convert to speed.
+
 ---
 
 ## 1. Header vs Footer Segment Index
@@ -101,3 +105,32 @@ Catalog of architectural patterns, third-party algorithms, and brainstorming ses
 * **Application:** Caching `refs/heads/<branch>` manifests on query nodes.
 * **Verdict:** Adopt when building query nodes. Eliminates 25 ms GCS network checks on hot read paths.
 * **Status:** Adopt for query engine.
+
+## 2026-09-11: Vector representations beyond float32
+
+**Topic:** The distance kernels are memory-bound. The 1024-dim L2 benchmark
+runs at 251 ns, near 16 GB/s. A smaller representation converts size into
+speed almost one to one.
+
+**Options considered:**
+
+- **int8 scalar quantization (SQ8):** 4x smaller, 16 integer lanes per
+  128-bit register against 4 float32 lanes. archsimd has ReduceSum for
+  integer shapes. Recall loss 1 to 2 percent on normalized embeddings,
+  recoverable with float32 rescoring. Industry default.
+- **Binary quantization:** 32x smaller, XOR plus popcount distance. Coarse
+  filter only, needs rescoring. RaBitQ-style variants close most of the
+  recall gap.
+- **Product quantization (PQ):** 16 to 64x compression with codebook lookup
+  tables. Strong for ANN candidate scoring, complex to build and tune.
+- **float16 / bfloat16:** 2x smaller, but Go has no native type and no simd
+  support. Conversion through uint16 costs more than it saves. Rejected.
+
+**Verdict:** Keep float32 as the stored source of truth and rescoring
+precision. Implement SQ8 for the scan path when Milestone 5 (ANN) starts.
+Add binary prefiltering only if scan throughput still binds after SQ8.
+
+**References:** docs/benchmarks/distance.md, ROADMAP.md Milestone 5, FAISS
+scalar quantizer, Lucene int8 HNSW, RaBitQ (SIGMOD 2024).
+
+**Status:** Decided, waiting on Milestone 5.
