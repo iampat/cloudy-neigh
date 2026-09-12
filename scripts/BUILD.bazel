@@ -14,7 +14,22 @@ py_binary(
 
 py_library(
     name = "scripts",
-    srcs = ["demoload.py"],
+    srcs = [
+        "demoload.py",
+        "querybench.py",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//proto/cloudyneigh/v1:cloudyneighpb_py_grpc",
+        "@pip//absl_py",
+        "@pip//grpcio",
+        "@pip//pyarrow",
+    ],
+)
+
+py_binary(
+    name = "querybench",
+    srcs = ["querybench.py"],
     visibility = ["//:__subpackages__"],
     deps = [
         "//proto/cloudyneigh/v1:cloudyneighpb_py_grpc",

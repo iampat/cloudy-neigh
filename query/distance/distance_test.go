@@ -608,3 +608,8 @@ func BenchmarkDistance(b *testing.B) {
 		})
 	}
 }
+
+func TestImplementation(t *testing.T) {
+	impl := distance.Implementation()
+	require.Contains(t, []string{"pure", "simd"}, impl)
+}

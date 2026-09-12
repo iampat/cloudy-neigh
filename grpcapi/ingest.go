@@ -3,6 +3,8 @@ package grpcapi
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"time"
 
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/namespace"
@@ -28,6 +30,7 @@ func NewIngestServer(log *logstream.Log) (*IngestServer, error) {
 }
 
 func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequest) (*cloudyneighpb.UpsertResponse, error) {
+	start := time.Now()
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: nil request")
 	}
@@ -67,6 +70,7 @@ func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequ
 		records[i] = recBytes
 	}
 
+	appendStart := time.Now()
 	if _, err := s.log.Append(ctx, records); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, status.Error(codes.Canceled, err.Error())
@@ -76,6 +80,14 @@ func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequ
 		}
 		return nil, status.Errorf(codes.Internal, "grpcapi: append wal: %v", err)
 	}
+	appendDur := time.Since(appendStart)
+
+	slog.Debug("upsert",
+		"namespace", req.Namespace,
+		"records", len(req.Records),
+		"append_dur", appendDur,
+		"total_dur", time.Since(start),
+	)
 
 	return &cloudyneighpb.UpsertResponse{
 		UpsertedCount: uint32(len(req.Records)),

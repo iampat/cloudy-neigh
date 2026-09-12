@@ -122,6 +122,7 @@ func (s *QueryServer) Run(ctx context.Context) error {
 }
 
 func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest) (*cloudyneighpb.QueryResponse, error) {
+	valStart := time.Now()
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: nil request")
 	}
@@ -147,15 +148,27 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 	if col == "" {
 		col = "default"
 	}
+	valDur := time.Since(valStart)
 
 	s.mu.RLock()
 	b, ok := s.branches[req.Namespace]
 	s.mu.RUnlock()
 	if !ok {
+		slog.Debug("query",
+			"namespace", req.Namespace,
+			"validate_dur", valDur,
+			"search_dur", time.Duration(0),
+			"scan_dur", time.Duration(0),
+			"materialize_dur", time.Duration(0),
+			"hits", 0,
+			"total_dur", time.Since(valStart),
+		)
 		return &cloudyneighpb.QueryResponse{}, nil
 	}
 
-	hits, err := b.table.Search(col, req.Vector, int(req.TopK), query.MetricCosine, req.Filter)
+	searchStart := time.Now()
+	hits, stats, err := b.table.SearchWithStats(col, req.Vector, int(req.TopK), query.MetricCosine, req.Filter)
+	searchDur := time.Since(searchStart)
 	if err != nil {
 		if errors.Is(err, query.ErrDimensionMismatch) {
 			return nil, status.Errorf(codes.InvalidArgument, "grpcapi: %v", err)
@@ -165,6 +178,16 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 		}
 		return nil, status.Errorf(codes.Internal, "grpcapi: search: %v", err)
 	}
+
+	slog.Debug("query",
+		"namespace", req.Namespace,
+		"validate_dur", valDur,
+		"search_dur", searchDur,
+		"scan_dur", stats.ScanDuration,
+		"materialize_dur", stats.MaterializeDuration,
+		"hits", len(hits),
+		"total_dur", time.Since(valStart),
+	)
 
 	return &cloudyneighpb.QueryResponse{Hits: hits}, nil
 }

@@ -2,6 +2,10 @@
 
 package distance
 
+func Implementation() string {
+	return "pure"
+}
+
 func l2Squared(a, b []float32) float32 {
 	return l2SquaredPure(a, b)
 }
