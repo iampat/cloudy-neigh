@@ -18,6 +18,7 @@ import (
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
+	"github.com/iampat/cloudy-neigh/query/distance"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
@@ -30,6 +31,7 @@ type ingestConfig struct {
 	flushDocs     int
 	flushInterval time.Duration
 	pollInterval  time.Duration
+	debug         bool
 }
 
 func parseIngestFlags(args []string) (ingestConfig, error) {
@@ -43,6 +45,7 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 	fs.IntVar(&cfg.flushDocs, "flush-docs", 10000, "memtable doc threshold for flush")
 	fs.DurationVar(&cfg.flushInterval, "flush-interval", 10*time.Second, "memtable time threshold for flush")
 	fs.DurationVar(&cfg.pollInterval, "poll-interval", 100*time.Millisecond, "WAL poll interval")
+	fs.BoolVar(&cfg.debug, "debug", false, "enable debug logging")
 
 	if err := fs.Parse(args); err != nil {
 		return ingestConfig{}, err
@@ -194,6 +197,15 @@ func serveGRPC(ctx context.Context, srv *grpc.Server, lis net.Listener) error {
 	}
 }
 
+func setupLogging(debug bool) {
+	level := slog.LevelInfo
+	if debug {
+		level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	slog.SetLogLoggerLevel(level)
+}
+
 func runIngest(ctx context.Context, args []string) error {
 	cfg, err := parseIngestFlags(args)
 	if err != nil {
@@ -202,6 +214,8 @@ func runIngest(ctx context.Context, args []string) error {
 		}
 		return err
 	}
+
+	setupLogging(cfg.debug)
 
 	srv, err := newIngestServer(ctx, cfg)
 	if err != nil {
@@ -217,6 +231,7 @@ type queryConfig struct {
 	url          string
 	maxMsgSize   int
 	syncInterval time.Duration
+	debug        bool
 }
 
 func parseQueryFlags(args []string) (queryConfig, error) {
@@ -227,6 +242,7 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 	fs.StringVar(&cfg.url, "url", "file:///tmp/cloudy-demo?create_dir=true", "object storage URL")
 	fs.IntVar(&cfg.maxMsgSize, "max-msg-size", 64*1024*1024, "maximum message size in bytes")
 	fs.DurationVar(&cfg.syncInterval, "sync-interval", 2*time.Second, "background sync interval")
+	fs.BoolVar(&cfg.debug, "debug", false, "enable debug logging")
 
 	if err := fs.Parse(args); err != nil {
 		return queryConfig{}, err
@@ -328,11 +344,13 @@ func runQuery(ctx context.Context, args []string) error {
 		return err
 	}
 
+	setupLogging(cfg.debug)
+
 	srv, err := newQueryServer(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	slog.Info("query server listening", "addr", srv.Addr().String(), "url", cfg.url)
+	slog.Info("query server listening", "addr", srv.Addr().String(), "url", cfg.url, "kernel", distance.Implementation())
 
 	return srv.Serve(ctx)
 }

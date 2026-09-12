@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query"
@@ -965,4 +966,17 @@ func TestTable_ApplyMutations_AtomicityConcurrent(t *testing.T) {
 	for err := range errCh {
 		require.NoError(t, err)
 	}
+}
+
+func TestTable_SearchWithStats(t *testing.T) {
+	tbl := query.NewTable()
+	require.NoError(t, tbl.Upsert("doc-1", map[string][]float32{
+		"default": {1.0, 0.0},
+	}, nil))
+
+	hits, stats, err := tbl.SearchWithStats("default", []float32{1.0, 0.0}, 1, query.MetricCosine, nil)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	require.GreaterOrEqual(t, stats.ScanDuration, time.Duration(0))
+	require.GreaterOrEqual(t, stats.MaterializeDuration, time.Duration(0))
 }

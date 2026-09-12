@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query/distance"
@@ -325,6 +326,11 @@ func worseDesc(a, b searchHit) bool {
 	return a.id > b.id
 }
 
+type SearchStats struct {
+	ScanDuration        time.Duration
+	MaterializeDuration time.Duration
+}
+
 func (t *Table) Search(
 	col string,
 	query []float32,
@@ -332,8 +338,19 @@ func (t *Table) Search(
 	metric Metric,
 	filter *cloudyneighpb.EqualityFilter,
 ) ([]*cloudyneighpb.ScoredRecord, error) {
+	hits, _, err := t.SearchWithStats(col, query, topK, metric, filter)
+	return hits, err
+}
+
+func (t *Table) SearchWithStats(
+	col string,
+	query []float32,
+	topK int,
+	metric Metric,
+	filter *cloudyneighpb.EqualityFilter,
+) ([]*cloudyneighpb.ScoredRecord, SearchStats, error) {
 	if topK <= 0 {
-		return nil, nil
+		return nil, SearchStats{}, nil
 	}
 
 	t.mu.RLock()
@@ -341,11 +358,11 @@ func (t *Table) Search(
 
 	vCol, ok := t.vectors[col]
 	if !ok {
-		return nil, nil
+		return nil, SearchStats{}, nil
 	}
 
 	if len(query) != vCol.dim {
-		return nil, ErrDimensionMismatch
+		return nil, SearchStats{}, ErrDimensionMismatch
 	}
 
 	switch metric {
@@ -355,11 +372,11 @@ func (t *Table) Search(
 			sum += x * x
 		}
 		if sum == 0 {
-			return nil, distance.ErrZeroVector
+			return nil, SearchStats{}, distance.ErrZeroVector
 		}
 	case MetricL2Squared, MetricDotProduct:
 	default:
-		return nil, fmt.Errorf("query: unknown metric %v", metric)
+		return nil, SearchStats{}, fmt.Errorf("query: unknown metric %v", metric)
 	}
 
 	worse := worseAsc
@@ -373,6 +390,7 @@ func (t *Table) Search(
 	}
 	h := make([]searchHit, 0, heapCap)
 
+	scanStart := time.Now()
 	for vecIdx, row := range vCol.vecToRow {
 		if t.tombstones[row] {
 			continue
@@ -396,19 +414,19 @@ func (t *Table) Search(
 				if errors.Is(err, distance.ErrZeroVector) {
 					continue
 				}
-				return nil, err
+				return nil, SearchStats{}, err
 			}
 		case MetricL2Squared:
 			var err error
 			score, err = distance.L2Squared(query, storedVec)
 			if err != nil {
-				return nil, err
+				return nil, SearchStats{}, err
 			}
 		case MetricDotProduct:
 			var err error
 			score, err = distance.DotProduct(query, storedVec)
 			if err != nil {
-				return nil, err
+				return nil, SearchStats{}, err
 			}
 		}
 
@@ -460,7 +478,9 @@ func (t *Table) Search(
 		}
 		return strings.Compare(a.id, b.id)
 	})
+	scanDur := time.Since(scanStart)
 
+	matStart := time.Now()
 	hits := make([]*cloudyneighpb.ScoredRecord, len(h))
 	for i, hit := range h {
 		hits[i] = &cloudyneighpb.ScoredRecord{
@@ -468,5 +488,10 @@ func (t *Table) Search(
 			Score:  hit.score,
 		}
 	}
-	return hits, nil
+	matDur := time.Since(matStart)
+
+	return hits, SearchStats{
+		ScanDuration:        scanDur,
+		MaterializeDuration: matDur,
+	}, nil
 }

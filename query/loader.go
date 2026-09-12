@@ -1,11 +1,14 @@
 package query
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -38,6 +41,7 @@ func NewLoader(store objectstore.Store, table *Table) (*Loader, error) {
 }
 
 func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
+	syncStart := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -65,18 +69,36 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 		loadedCount++
 	}
 	l.lastGen = gen
+
+	if loadedCount > 0 {
+		slog.Info("sync pass",
+			"branch", branch,
+			"segments", loadedCount,
+			"total_dur", time.Since(syncStart),
+		)
+	}
+
 	return loadedCount, nil
 }
 
 func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 	segKey := segment.Key(branch, segID)
+
+	fetchStart := time.Now()
 	rc, _, err := l.store.Get(ctx, segKey)
 	if err != nil {
 		return fmt.Errorf("get segment %s: %w", segKey, err)
 	}
 	defer rc.Close()
 
-	reader := segment.NewReader(rc)
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return fmt.Errorf("read segment %s: %w", segKey, err)
+	}
+	fetchDur := time.Since(fetchStart)
+
+	decodeStart := time.Now()
+	reader := segment.NewReader(bytes.NewReader(data))
 	var muts []Mutation
 	for {
 		mut, err := reader.Next()
@@ -100,9 +122,22 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 			return fmt.Errorf("unknown mutation op %v in %s", mut.Op, segKey)
 		}
 	}
+	decodeDur := time.Since(decodeStart)
 
+	applyStart := time.Now()
 	if err := l.table.ApplyMutations(muts); err != nil {
 		return fmt.Errorf("apply mutations from %s: %w", segKey, err)
 	}
+	applyDur := time.Since(applyStart)
+
+	slog.Debug("loaded segment",
+		"branch", branch,
+		"segment_id", segID,
+		"records", len(muts),
+		"fetch_dur", fetchDur,
+		"decode_dur", decodeDur,
+		"apply_dur", applyDur,
+	)
+
 	return nil
 }
