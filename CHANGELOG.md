@@ -4,7 +4,7 @@
 
 - `grpcapi`: IngestService with Upsert and Delete WAL appends. A namespace
   package adds Validate helpers and a Scope hierarchy.
-- `cmd/cloudyd`: CLI with `ingest` and `query` subcommands. `ingest` hosts
+- `cmd/cloudy`: CLI with `ingest` and `query` subcommands. `ingest` hosts
   the gRPC IngestService over the logstream WAL with bounded graceful stop.
   `query` hosts a QueryService stub.
 - `ingest.Flusher`: tails the WAL, routes mutations into per-branch
@@ -57,7 +57,7 @@
 
 ### Fixed
 
-- `cloudyd ingest`: gRPC GracefulStop bounded by a 5-second timeout with a
+- `cloudy ingest`: gRPC GracefulStop bounded by a 5-second timeout with a
   hard-stop fallback. The server stops when the flusher stops.
 - `recordio.Reader`: a non-EOF read error inside a payload or footer now
   poisons the reader. Previously, the reader stayed usable and misread payloads
