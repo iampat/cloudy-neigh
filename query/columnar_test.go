@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -799,5 +800,169 @@ func TestTable_Search_Concurrent(t *testing.T) {
 
 	for w := 0; w < workers; w++ {
 		require.NoError(t, <-errCh)
+	}
+}
+
+func TestTable_ApplyMutations_Basic(t *testing.T) {
+	table := query.NewTable()
+
+	err := table.ApplyMutations([]query.Mutation{
+		{
+			Op: query.OpUpsert,
+			Record: &cloudyneighpb.Record{
+				Id: "doc-1",
+				Vectors: map[string]*cloudyneighpb.Vector{
+					"v": {Values: []float32{1.0, 2.0}},
+				},
+				Attributes: map[string]*cloudyneighpb.AttributeValue{
+					"title": stringAttr("first"),
+				},
+			},
+		},
+		{
+			Op: query.OpUpsert,
+			Record: &cloudyneighpb.Record{
+				Id: "doc-2",
+				Vectors: map[string]*cloudyneighpb.Vector{
+					"v": {Values: []float32{3.0, 4.0}},
+				},
+			},
+		},
+		{
+			Op: query.OpDelete,
+			ID: "doc-1",
+		},
+		{
+			Op: query.OpUpsert,
+			Record: &cloudyneighpb.Record{
+				Id: "doc-3",
+				Vectors: map[string]*cloudyneighpb.Vector{
+					"v": {Values: []float32{5.0, 6.0}},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	_, ok := table.Get("doc-1")
+	require.False(t, ok)
+
+	rec2, ok := table.Get("doc-2")
+	require.True(t, ok)
+	require.Equal(t, "doc-2", rec2.Id)
+
+	rec3, ok := table.Get("doc-3")
+	require.True(t, ok)
+	require.Equal(t, "doc-3", rec3.Id)
+
+	err = table.ApplyMutations([]query.Mutation{
+		{
+			Op: query.MutationOp(999),
+		},
+	})
+	require.Error(t, err)
+}
+
+func TestTable_ApplyMutations_AtomicityConcurrent(t *testing.T) {
+	table := query.NewTable()
+
+	err := table.ApplyMutations([]query.Mutation{
+		{
+			Op: query.OpUpsert,
+			Record: &cloudyneighpb.Record{
+				Id: "doc-a",
+				Vectors: map[string]*cloudyneighpb.Vector{
+					"v": {Values: []float32{0.0}},
+				},
+				Attributes: map[string]*cloudyneighpb.AttributeValue{
+					"ver": stringAttr("0"),
+				},
+			},
+		},
+		{
+			Op: query.OpUpsert,
+			Record: &cloudyneighpb.Record{
+				Id: "doc-b",
+				Vectors: map[string]*cloudyneighpb.Vector{
+					"v": {Values: []float32{0.0}},
+				},
+				Attributes: map[string]*cloudyneighpb.AttributeValue{
+					"ver": stringAttr("0"),
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	const numReaders = 8
+	const numBatches = 300
+	done := make(chan struct{})
+	errCh := make(chan error, numReaders)
+	var wg sync.WaitGroup
+
+	for r := 0; r < numReaders; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					hits, err := table.Search("v", []float32{0.0}, 2, query.MetricL2Squared, nil)
+					if err != nil {
+						errCh <- err
+						return
+					}
+					if len(hits) == 2 {
+						vA := hits[0].Record.Attributes["ver"].GetStringValue()
+						vB := hits[1].Record.Attributes["ver"].GetStringValue()
+						if vA != vB {
+							errCh <- fmt.Errorf("torn read: doc-a ver=%s, doc-b ver=%s", vA, vB)
+							return
+						}
+					}
+				}
+			}
+		}()
+	}
+
+	for i := 1; i <= numBatches; i++ {
+		verStr := strconv.Itoa(i)
+		err := table.ApplyMutations([]query.Mutation{
+			{
+				Op: query.OpUpsert,
+				Record: &cloudyneighpb.Record{
+					Id: "doc-a",
+					Vectors: map[string]*cloudyneighpb.Vector{
+						"v": {Values: []float32{float32(i)}},
+					},
+					Attributes: map[string]*cloudyneighpb.AttributeValue{
+						"ver": stringAttr(verStr),
+					},
+				},
+			},
+			{
+				Op: query.OpUpsert,
+				Record: &cloudyneighpb.Record{
+					Id: "doc-b",
+					Vectors: map[string]*cloudyneighpb.Vector{
+						"v": {Values: []float32{float32(i)}},
+					},
+					Attributes: map[string]*cloudyneighpb.AttributeValue{
+						"ver": stringAttr(verStr),
+					},
+				},
+			},
+		})
+		require.NoError(t, err)
+	}
+
+	close(done)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		require.NoError(t, err)
 	}
 }

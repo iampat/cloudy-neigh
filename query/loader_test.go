@@ -296,3 +296,97 @@ func TestLoader_VectorDimensionMismatch(t *testing.T) {
 	_, ok := table.Get("doc-2")
 	require.False(t, ok)
 }
+
+func TestLoader_GenerationSkip(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	table := query.NewTable()
+	loader, err := query.NewLoader(store, table)
+	require.NoError(t, err)
+
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v1")}),
+	})
+	updateManifest(t, store, "main", []string{"seg-1"}, "")
+
+	loaded, err := loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	segKey := segment.Key("main", "seg-1")
+	err = store.Delete(ctx, segKey)
+	require.NoError(t, err)
+
+	loaded, err = loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 0, loaded)
+}
+
+func TestLoader_ReplayOrder(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	table := query.NewTable()
+	loader, err := query.NewLoader(store, table)
+	require.NoError(t, err)
+
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0}, map[string]*cloudyneighpb.AttributeValue{"val": stringAttr("first")}),
+		putMutation(t, "main", "doc-2", []float32{2.0}, nil),
+	})
+	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{10.0}, map[string]*cloudyneighpb.AttributeValue{"val": stringAttr("second")}),
+		deleteMutation("main", "doc-2"),
+	})
+	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, "")
+
+	loaded, err := loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 2, loaded)
+
+	rec1, ok := table.Get("doc-1")
+	require.True(t, ok)
+	require.Equal(t, []float32{10.0}, rec1.Vectors["default"].Values)
+	require.True(t, proto.Equal(stringAttr("second"), rec1.Attributes["val"]))
+
+	_, ok = table.Get("doc-2")
+	require.False(t, ok)
+}
+
+func TestLoader_ConcurrentSync(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	table := query.NewTable()
+	loader, err := query.NewLoader(store, table)
+	require.NoError(t, err)
+
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0}, nil),
+	})
+	updateManifest(t, store, "main", []string{"seg-1"}, "")
+
+	const goroutines = 8
+	errCh := make(chan error, goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			_, err := loader.Sync(ctx, "main")
+			errCh <- err
+		}()
+	}
+
+	for g := 0; g < goroutines; g++ {
+		require.NoError(t, <-errCh)
+	}
+
+	rec, ok := table.Get("doc-1")
+	require.True(t, ok)
+	require.Equal(t, "doc-1", rec.Id)
+}

@@ -23,6 +23,19 @@ const (
 	MetricDotProduct
 )
 
+type MutationOp int
+
+const (
+	OpUpsert MutationOp = iota
+	OpDelete
+)
+
+type Mutation struct {
+	Op     MutationOp
+	Record *cloudyneighpb.Record
+	ID     string
+}
+
 type packedVectorCol struct {
 	dim      int
 	data     []float32
@@ -47,13 +60,10 @@ func NewTable() *Table {
 	}
 }
 
-func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
+func (t *Table) upsertLocked(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
 	if id == "" {
 		return errors.New("query: empty doc id")
 	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	if t.index == nil {
 		t.index = make(map[string]int)
@@ -154,7 +164,13 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 	return nil
 }
 
-func (t *Table) UpsertRecord(rec *cloudyneighpb.Record) error {
+func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.upsertLocked(id, vectors, attrs)
+}
+
+func (t *Table) upsertRecordLocked(rec *cloudyneighpb.Record) error {
 	if rec == nil {
 		return errors.New("query: nil record")
 	}
@@ -168,19 +184,47 @@ func (t *Table) UpsertRecord(rec *cloudyneighpb.Record) error {
 			vectors[name] = vec.Values
 		}
 	}
-	return t.Upsert(rec.Id, vectors, rec.Attributes)
+	return t.upsertLocked(rec.Id, vectors, rec.Attributes)
 }
 
-func (t *Table) Delete(id string) bool {
+func (t *Table) UpsertRecord(rec *cloudyneighpb.Record) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	return t.upsertRecordLocked(rec)
+}
 
+func (t *Table) deleteLocked(id string) bool {
 	row, ok := t.index[id]
 	if !ok || t.tombstones[row] {
 		return false
 	}
 	t.tombstones[row] = true
 	return true
+}
+
+func (t *Table) Delete(id string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.deleteLocked(id)
+}
+
+func (t *Table) ApplyMutations(mutations []Mutation) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for _, m := range mutations {
+		switch m.Op {
+		case OpUpsert:
+			if err := t.upsertRecordLocked(m.Record); err != nil {
+				return err
+			}
+		case OpDelete:
+			t.deleteLocked(m.ID)
+		default:
+			return fmt.Errorf("query: unknown mutation op %v", m.Op)
+		}
+	}
+	return nil
 }
 
 func (t *Table) recordAt(row int, id string) *cloudyneighpb.Record {

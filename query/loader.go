@@ -16,10 +16,11 @@ import (
 )
 
 type Loader struct {
-	store  objectstore.Store
-	table  *Table
-	mu     sync.Mutex
-	loaded map[string]bool
+	store   objectstore.Store
+	table   *Table
+	mu      sync.Mutex
+	loaded  map[string]bool
+	lastGen string
 }
 
 func NewLoader(store objectstore.Store, table *Table) (*Loader, error) {
@@ -37,7 +38,10 @@ func NewLoader(store objectstore.Store, table *Table) (*Loader, error) {
 }
 
 func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
-	manifest, _, err := kvfs.ResolveBranch(ctx, l.store, branch)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	manifest, gen, err := kvfs.ResolveBranch(ctx, l.store, branch)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
 			return 0, nil
@@ -45,22 +49,22 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 		return 0, fmt.Errorf("sync branch %s: %w", branch, err)
 	}
 
+	if gen != "" && gen == l.lastGen {
+		return 0, nil
+	}
+
 	loadedCount := 0
 	for _, seg := range manifest.Segments {
-		l.mu.Lock()
-		loaded := l.loaded[seg.SegmentId]
-		l.mu.Unlock()
-		if loaded {
+		if l.loaded[seg.SegmentId] {
 			continue
 		}
 		if err := l.loadSegment(ctx, branch, seg.SegmentId); err != nil {
 			return loadedCount, err
 		}
-		l.mu.Lock()
 		l.loaded[seg.SegmentId] = true
-		l.mu.Unlock()
 		loadedCount++
 	}
+	l.lastGen = gen
 	return loadedCount, nil
 }
 
@@ -73,6 +77,7 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 	defer rc.Close()
 
 	reader := segment.NewReader(rc)
+	var muts []Mutation
 	for {
 		mut, err := reader.Next()
 		if err != nil {
@@ -88,14 +93,16 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 			if err := proto.Unmarshal(mut.Payload, &rec); err != nil {
 				return fmt.Errorf("unmarshal record from %s: %w", segKey, err)
 			}
-			if err := l.table.UpsertRecord(&rec); err != nil {
-				return fmt.Errorf("upsert record %s from %s: %w", rec.Id, segKey, err)
-			}
+			muts = append(muts, Mutation{Op: OpUpsert, Record: &rec})
 		case storagepb.MutationOp_DELETE:
-			l.table.Delete(mut.DocId)
+			muts = append(muts, Mutation{Op: OpDelete, ID: mut.DocId})
 		default:
 			return fmt.Errorf("unknown mutation op %v in %s", mut.Op, segKey)
 		}
+	}
+
+	if err := l.table.ApplyMutations(muts); err != nil {
+		return fmt.Errorf("apply mutations from %s: %w", segKey, err)
 	}
 	return nil
 }
