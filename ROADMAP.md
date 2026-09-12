@@ -117,9 +117,9 @@ Establish the minimal functional search engine. A user can run a single node, in
 - **Object storage abstraction (Done)**: Layer 0 `objectstore.Store` with GCS, local disk, and in-memory backends.
 - **Write-ahead log (Done)**: Layer 1 `logstream` append-only WAL over `recordio` and `objectstore`.
 - **Branching key-value engine (In progress)**: Layer 2 `kvfs` CAS blob storage, protobuf schemas, and manifest snapshots.
-- **Memtable and flush**: In-memory write buffer with background flush of immutable segments to object storage.
-- **gRPC service**: Implement basic `Write` and `Query` RPC endpoints.
-- **Exact k-NN search**: Brute-force vector distance computation for Cosine, Dot Product, and Euclidean (L2) metrics.
+- **Memtable and flush (Done)**: In-memory write buffer with background flush of immutable segments to object storage.
+- **gRPC service (In progress)**: Implement basic `Write` and `Query` RPC endpoints.
+- **Exact k-NN search (In progress)**: Brute-force vector distance computation for Cosine, Dot Product, and Euclidean (L2) metrics.
 - **Attribute filtering**: Exact match and numerical range predicates on scalar document attributes.
 
 **User Value**: A runnable single-node engine that persists and queries vector data over local disk, AWS S3, or Google Cloud Storage.

@@ -39,6 +39,7 @@ into the smallest hook the library offers, such as the `As` escape hatch in
   addition that had no agreement, test-only ones included.
 - Prefer the standard library. `github.com/stretchr/testify` is pre-agreed for
   tests. Use it when it makes an assertion more readable than the stdlib form.
+- New code uses math/rand/v2, never math/rand.
 - Never take a dependency to avoid five lines of code.
 - Domain packages live at the bottom of the dependency graph. An API or ingest package must not import a storage subsystem package to validate user inputs.
 

@@ -17,3 +17,5 @@ allowed-tools: Bash
   and update the description in the same turn. Do not wait to be asked.
 - Never include files under `docs/reviews/` in a pull request. Remove review
   transcripts before opening or updating a PR.
+- Never include a "Generated with Claude Code" footer or a Claude session
+  link in a PR description.
