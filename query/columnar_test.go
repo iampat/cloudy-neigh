@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -102,16 +103,17 @@ func TestTable_Upsert(t *testing.T) {
 		},
 	}
 
-	table := query.NewTable()
+	b := query.NewBuilder()
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := table.UpsertRecord(tc.rec)
+			err := b.UpsertRecord(tc.rec)
 			if tc.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
 
+			table := b.Build()
 			rec, ok := table.Get(tc.rec.Id)
 			require.True(t, ok)
 			require.Equal(t, tc.rec.Id, rec.Id)
@@ -127,9 +129,11 @@ func TestTable_Upsert(t *testing.T) {
 				_, ok := table.Vector(tc.rec.Id, "default")
 				require.False(t, ok)
 			}
+			b = table.Builder()
 		})
 	}
 
+	table := b.Build()
 	t.Run("mutation isolation on read", func(t *testing.T) {
 		rec, ok := table.Get("doc-1")
 		require.True(t, ok)
@@ -178,16 +182,17 @@ func TestTable_MultiVector(t *testing.T) {
 		},
 	}
 
-	table := query.NewTable()
+	b := query.NewBuilder()
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := table.Upsert(tc.id, tc.vectors, tc.attrs)
+			err := b.Upsert(tc.id, tc.vectors, tc.attrs)
 			if tc.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
 
+			table := b.Build()
 			rec, ok := table.Get(tc.id)
 			require.True(t, ok)
 			for col, expected := range tc.vectors {
@@ -196,9 +201,11 @@ func TestTable_MultiVector(t *testing.T) {
 				require.True(t, ok)
 				require.Equal(t, expected, vec)
 			}
+			b = table.Builder()
 		})
 	}
 
+	table := b.Build()
 	vec, ok := table.Vector("doc-mv-2", "body_emb")
 	require.False(t, ok)
 	require.Nil(t, vec)
@@ -209,8 +216,8 @@ func TestTable_MultiVector(t *testing.T) {
 }
 
 func TestTable_PartialUpdate(t *testing.T) {
-	table := query.NewTable()
-	err := table.Upsert("doc-p", map[string][]float32{
+	b := query.NewBuilder()
+	err := b.Upsert("doc-p", map[string][]float32{
 		"vec": {1.0, 2.0},
 	}, map[string]*cloudyneighpb.AttributeValue{
 		"a": stringAttr("initial-a"),
@@ -270,29 +277,31 @@ func TestTable_PartialUpdate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := table.Upsert("doc-p", tc.vectors, tc.attrs)
+			err := b.Upsert("doc-p", tc.vectors, tc.attrs)
 			require.NoError(t, err)
 
+			table := b.Build()
 			rec, ok := table.Get("doc-p")
 			require.True(t, ok)
 			require.Equal(t, tc.wantVec, rec.Vectors["vec"].Values)
 			assertAttrsEqual(t, tc.wantAttr, rec.Attributes)
+			b = table.Builder()
 		})
 	}
 }
 
 func TestTable_FlatStorage(t *testing.T) {
-	table := query.NewTable()
-
+	b := query.NewBuilder()
 	for i := 0; i < 8; i++ {
 		id := string(rune('a' + i))
-		err := table.Upsert(id, map[string][]float32{
+		err := b.Upsert(id, map[string][]float32{
 			"v": {float32(i)},
 		}, map[string]*cloudyneighpb.AttributeValue{
 			"idx": stringAttr(string(rune('0' + i))),
 		})
 		require.NoError(t, err)
 	}
+	table := b.Build()
 
 	tests := []struct {
 		id      string
@@ -327,8 +336,10 @@ func TestTable_FlatStorage(t *testing.T) {
 	_, ok = table.Get("e")
 	require.True(t, ok)
 
-	err := table.Upsert("h", nil, map[string]*cloudyneighpb.AttributeValue{"idx": stringAttr("updated")})
+	b = table.Builder()
+	err := b.Upsert("h", nil, map[string]*cloudyneighpb.AttributeValue{"idx": stringAttr("updated")})
 	require.NoError(t, err)
+	table = b.Build()
 	attr, ok := table.Attribute("h", "idx")
 	require.True(t, ok)
 	require.True(t, proto.Equal(stringAttr("updated"), attr))
@@ -340,14 +351,16 @@ func TestTable_ZeroValue(t *testing.T) {
 	_, ok := table.Get("nonexistent")
 	require.False(t, ok)
 
-	err := table.Upsert("doc-1", map[string][]float32{
+	b := table.Builder()
+	err := b.Upsert("doc-1", map[string][]float32{
 		"vec": {1.0, 2.0},
 	}, map[string]*cloudyneighpb.AttributeValue{
 		"title": stringAttr("zero-value-test"),
 	})
 	require.NoError(t, err)
 
-	rec, ok := table.Get("doc-1")
+	tablePtr := b.Build()
+	rec, ok := tablePtr.Get("doc-1")
 	require.True(t, ok)
 	require.Equal(t, "doc-1", rec.Id)
 	require.True(t, proto.Equal(stringAttr("zero-value-test"), rec.Attributes["title"]))
@@ -355,19 +368,19 @@ func TestTable_ZeroValue(t *testing.T) {
 }
 
 func TestTable_SparseVectors(t *testing.T) {
-	table := query.NewTable()
-
+	b := query.NewBuilder()
 	for i := 0; i < 50; i++ {
-		err := table.Upsert("doc-"+strconv.Itoa(i), nil, map[string]*cloudyneighpb.AttributeValue{
+		err := b.Upsert("doc-"+strconv.Itoa(i), nil, map[string]*cloudyneighpb.AttributeValue{
 			"k": stringAttr("v"),
 		})
 		require.NoError(t, err)
 	}
 
-	err := table.Upsert("doc-50", map[string][]float32{
+	err := b.Upsert("doc-50", map[string][]float32{
 		"v": {1.0, 2.0, 3.0, 4.0},
 	}, nil)
 	require.NoError(t, err)
+	table := b.Build()
 
 	for i := 0; i < 50; i++ {
 		id := "doc-" + strconv.Itoa(i)
@@ -389,27 +402,31 @@ func TestTable_SparseVectors(t *testing.T) {
 }
 
 func TestTable_Delete(t *testing.T) {
-	table := query.NewTable()
-	err := table.Upsert("doc-1", map[string][]float32{
+	b := query.NewBuilder()
+	err := b.Upsert("doc-1", map[string][]float32{
 		"vec": {1.0, 2.0},
 	}, map[string]*cloudyneighpb.AttributeValue{
 		"title": stringAttr("test"),
 	})
 	require.NoError(t, err)
 
+	table := b.Build()
 	_, ok := table.Get("doc-1")
 	require.True(t, ok)
 
-	require.True(t, table.Delete("doc-1"))
-	_, ok = table.Get("doc-1")
+	b = table.Builder()
+	require.True(t, b.Delete("doc-1"))
+	deletedTable := b.Build()
+	_, ok = deletedTable.Get("doc-1")
 	require.False(t, ok)
 
-	require.False(t, table.Delete("doc-1"))
-	require.False(t, table.Delete("nonexistent"))
+	b2 := deletedTable.Builder()
+	require.False(t, b2.Delete("doc-1"))
+	require.False(t, b2.Delete("nonexistent"))
 }
 
 func TestTable_Search_Metrics(t *testing.T) {
-	table := query.NewTable()
+	b := query.NewBuilder()
 	docs := []struct {
 		id  string
 		vec []float32
@@ -420,31 +437,32 @@ func TestTable_Search_Metrics(t *testing.T) {
 		{"doc-4", []float32{0.6, 0.8}},
 	}
 	for _, d := range docs {
-		err := table.Upsert(d.id, map[string][]float32{"v": d.vec}, nil)
+		err := b.Upsert(d.id, map[string][]float32{"v": d.vec}, nil)
 		require.NoError(t, err)
 	}
+	table := b.Build()
 
 	tests := []struct {
 		name      string
-		metric    query.Metric
+		metric    cloudyneighpb.DistanceMetric
 		wantIDs   []string
 		wantScore []float32
 	}{
 		{
 			name:      "cosine distance ascending",
-			metric:    query.MetricCosine,
+			metric:    cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE,
 			wantIDs:   []string{"doc-1", "doc-4", "doc-2", "doc-3"},
 			wantScore: []float32{0.0, 0.4, 1.0, 2.0},
 		},
 		{
 			name:      "l2 squared distance ascending",
-			metric:    query.MetricL2Squared,
+			metric:    cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED,
 			wantIDs:   []string{"doc-1", "doc-4", "doc-2", "doc-3"},
 			wantScore: []float32{0.0, 0.8, 2.0, 4.0},
 		},
 		{
 			name:      "dot product descending",
-			metric:    query.MetricDotProduct,
+			metric:    cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT,
 			wantIDs:   []string{"doc-1", "doc-4", "doc-2", "doc-3"},
 			wantScore: []float32{1.0, 0.6, 0.0, -1.0},
 		},
@@ -465,13 +483,14 @@ func TestTable_Search_Metrics(t *testing.T) {
 }
 
 func TestTable_Search_TopKBounds(t *testing.T) {
-	table := query.NewTable()
+	b := query.NewBuilder()
 	for i := 1; i <= 5; i++ {
-		err := table.Upsert("doc-"+strconv.Itoa(i), map[string][]float32{
+		err := b.Upsert("doc-"+strconv.Itoa(i), map[string][]float32{
 			"v": {float32(i), 0.0},
 		}, nil)
 		require.NoError(t, err)
 	}
+	table := b.Build()
 
 	tests := []struct {
 		name    string
@@ -507,7 +526,7 @@ func TestTable_Search_TopKBounds(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			hits, err := table.Search("v", []float32{0.0, 0.0}, tc.topK, query.MetricL2Squared, nil)
+			hits, err := table.Search("v", []float32{0.0, 0.0}, tc.topK, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
 			require.NoError(t, err)
 			if len(tc.wantIDs) == 0 {
 				require.Empty(t, hits)
@@ -522,37 +541,38 @@ func TestTable_Search_TopKBounds(t *testing.T) {
 }
 
 func TestTable_Search_Ties(t *testing.T) {
-	table := query.NewTable()
+	b := query.NewBuilder()
 	docs := []string{"doc-c", "doc-a", "doc-d", "doc-b"}
 	for _, id := range docs {
-		err := table.Upsert(id, map[string][]float32{
+		err := b.Upsert(id, map[string][]float32{
 			"v": {1.0, 0.0},
 		}, nil)
 		require.NoError(t, err)
 	}
+	table := b.Build()
 
 	tests := []struct {
 		name    string
 		topK    int
-		metric  query.Metric
+		metric  cloudyneighpb.DistanceMetric
 		wantIDs []string
 	}{
 		{
 			name:    "cosine ties broken by document ID ascending with k less than N",
 			topK:    2,
-			metric:  query.MetricCosine,
+			metric:  cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE,
 			wantIDs: []string{"doc-a", "doc-b"},
 		},
 		{
 			name:    "dot product ties broken by document ID ascending with k less than N",
 			topK:    3,
-			metric:  query.MetricDotProduct,
+			metric:  cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT,
 			wantIDs: []string{"doc-a", "doc-b", "doc-c"},
 		},
 		{
 			name:    "ties with k equal to N sorted completely by document ID",
 			topK:    4,
-			metric:  query.MetricL2Squared,
+			metric:  cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED,
 			wantIDs: []string{"doc-a", "doc-b", "doc-c", "doc-d"},
 		},
 	}
@@ -570,7 +590,7 @@ func TestTable_Search_Ties(t *testing.T) {
 }
 
 func TestTable_Search_Filters(t *testing.T) {
-	table := query.NewTable()
+	b := query.NewBuilder()
 	records := []struct {
 		id    string
 		vec   []float32
@@ -598,9 +618,10 @@ func TestTable_Search_Filters(t *testing.T) {
 		},
 	}
 	for _, r := range records {
-		err := table.Upsert(r.id, map[string][]float32{"v": r.vec}, r.attrs)
+		err := b.Upsert(r.id, map[string][]float32{"v": r.vec}, r.attrs)
 		require.NoError(t, err)
 	}
+	table := b.Build()
 
 	tests := []struct {
 		name    string
@@ -640,7 +661,7 @@ func TestTable_Search_Filters(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			hits, err := table.Search("v", []float32{1.0, 0.0}, 10, query.MetricCosine, tc.filter)
+			hits, err := table.Search("v", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, tc.filter)
 			require.NoError(t, err)
 			if len(tc.wantIDs) == 0 {
 				require.Empty(t, hits)
@@ -655,33 +676,35 @@ func TestTable_Search_Filters(t *testing.T) {
 }
 
 func TestTable_Search_Skips(t *testing.T) {
-	table := query.NewTable()
+	b := query.NewBuilder()
 
-	err := table.Upsert("doc-live", map[string][]float32{"v": {1.0, 0.0}}, nil)
+	err := b.Upsert("doc-live", map[string][]float32{"v": {1.0, 0.0}}, nil)
 	require.NoError(t, err)
 
-	err = table.Upsert("doc-tombstoned", map[string][]float32{"v": {1.0, 0.0}}, nil)
+	err = b.Upsert("doc-tombstoned", map[string][]float32{"v": {1.0, 0.0}}, nil)
 	require.NoError(t, err)
-	require.True(t, table.Delete("doc-tombstoned"))
+	require.True(t, b.Delete("doc-tombstoned"))
 
-	err = table.Upsert("doc-other-col", map[string][]float32{"other": {1.0, 0.0}}, nil)
-	require.NoError(t, err)
-
-	err = table.Upsert("doc-no-vec", nil, map[string]*cloudyneighpb.AttributeValue{"a": stringAttr("b")})
+	err = b.Upsert("doc-other-col", map[string][]float32{"other": {1.0, 0.0}}, nil)
 	require.NoError(t, err)
 
-	err = table.Upsert("doc-zero-vec", map[string][]float32{"v": {0.0, 0.0}}, nil)
+	err = b.Upsert("doc-no-vec", nil, map[string]*cloudyneighpb.AttributeValue{"a": stringAttr("b")})
 	require.NoError(t, err)
+
+	err = b.Upsert("doc-zero-vec", map[string][]float32{"v": {0.0, 0.0}}, nil)
+	require.NoError(t, err)
+
+	table := b.Build()
 
 	t.Run("cosine skips tombstones missing vectors and zero stored vectors", func(t *testing.T) {
-		hits, err := table.Search("v", []float32{1.0, 0.0}, 10, query.MetricCosine, nil)
+		hits, err := table.Search("v", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
 		require.NoError(t, err)
 		require.Len(t, hits, 1)
 		require.Equal(t, "doc-live", hits[0].Record.Id)
 	})
 
 	t.Run("l2 squared includes zero stored vector", func(t *testing.T) {
-		hits, err := table.Search("v", []float32{1.0, 0.0}, 10, query.MetricL2Squared, nil)
+		hits, err := table.Search("v", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
 		require.NoError(t, err)
 		require.Len(t, hits, 2)
 		require.Equal(t, "doc-live", hits[0].Record.Id)
@@ -690,15 +713,16 @@ func TestTable_Search_Skips(t *testing.T) {
 }
 
 func TestTable_Search_Errors(t *testing.T) {
-	table := query.NewTable()
-	err := table.Upsert("doc-1", map[string][]float32{"v": {1.0, 2.0, 3.0}}, nil)
+	b := query.NewBuilder()
+	err := b.Upsert("doc-1", map[string][]float32{"v": {1.0, 2.0, 3.0}}, nil)
 	require.NoError(t, err)
+	table := b.Build()
 
 	tests := []struct {
 		name      string
 		col       string
 		query     []float32
-		metric    query.Metric
+		metric    cloudyneighpb.DistanceMetric
 		wantErrIs error
 		wantEmpty bool
 	}{
@@ -706,35 +730,35 @@ func TestTable_Search_Errors(t *testing.T) {
 			name:      "missing column returns empty slice without error",
 			col:       "missing",
 			query:     []float32{1.0, 2.0, 3.0},
-			metric:    query.MetricCosine,
+			metric:    cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE,
 			wantEmpty: true,
 		},
 		{
 			name:      "dimension mismatch returns ErrDimensionMismatch",
 			col:       "v",
 			query:     []float32{1.0, 2.0},
-			metric:    query.MetricCosine,
+			metric:    cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE,
 			wantErrIs: query.ErrDimensionMismatch,
 		},
 		{
 			name:      "zero query vector under cosine returns ErrZeroVector",
 			col:       "v",
 			query:     []float32{0.0, 0.0, 0.0},
-			metric:    query.MetricCosine,
+			metric:    cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE,
 			wantErrIs: distance.ErrZeroVector,
 		},
 		{
 			name:      "zero query vector under l2 squared is allowed",
 			col:       "v",
 			query:     []float32{0.0, 0.0, 0.0},
-			metric:    query.MetricL2Squared,
+			metric:    cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED,
 			wantErrIs: nil,
 		},
 		{
 			name:      "zero query vector under dot product is allowed",
 			col:       "v",
 			query:     []float32{0.0, 0.0, 0.0},
-			metric:    query.MetricDotProduct,
+			metric:    cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT,
 			wantErrIs: nil,
 		},
 	}
@@ -755,16 +779,21 @@ func TestTable_Search_Errors(t *testing.T) {
 		})
 	}
 
+	t.Run("unspecified metric returns error", func(t *testing.T) {
+		_, err := table.Search("v", []float32{1.0, 2.0, 3.0}, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_UNSPECIFIED, nil)
+		require.Error(t, err)
+	})
+
 	t.Run("unknown metric returns error", func(t *testing.T) {
-		_, err := table.Search("v", []float32{1.0, 2.0, 3.0}, 5, query.Metric(999), nil)
+		_, err := table.Search("v", []float32{1.0, 2.0, 3.0}, 5, cloudyneighpb.DistanceMetric(999), nil)
 		require.Error(t, err)
 	})
 }
 
 func TestTable_Search_Concurrent(t *testing.T) {
-	table := query.NewTable()
+	b := query.NewBuilder()
 	for i := 0; i < 20; i++ {
-		err := table.Upsert("doc-"+strconv.Itoa(i), map[string][]float32{
+		err := b.Upsert("doc-"+strconv.Itoa(i), map[string][]float32{
 			"v": {float32(i), float32(i * 2)},
 		}, map[string]*cloudyneighpb.AttributeValue{
 			"tag": stringAttr("num"),
@@ -772,24 +801,33 @@ func TestTable_Search_Concurrent(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	const workers = 8
-	const iters = 50
-	errCh := make(chan error, workers)
+	var current atomic.Pointer[query.Table]
+	current.Store(b.Build())
 
-	for w := 0; w < workers; w++ {
+	oldSnap := current.Load()
+
+	const readers = 4
+	const iters = 50
+	errCh := make(chan error, readers+1)
+
+	for r := 0; r < readers; r++ {
 		go func() {
 			for i := 0; i < iters; i++ {
-				hits, err := table.Search("v", []float32{1.0, 2.0}, 5, query.MetricL2Squared, nil)
+				hits, err := oldSnap.Search("v", []float32{1.0, 2.0}, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
 				if err != nil {
 					errCh <- err
 					return
 				}
 				if len(hits) != 5 {
-					errCh <- fmt.Errorf("expected 5 hits, got %d", len(hits))
+					errCh <- fmt.Errorf("expected 5 hits on old snapshot, got %d", len(hits))
 					return
 				}
-				if _, ok := table.Get("doc-1"); !ok {
-					errCh <- errors.New("doc-1 not found")
+				if _, ok := oldSnap.Get("doc-1"); !ok {
+					errCh <- errors.New("doc-1 not found on old snapshot")
+					return
+				}
+				if _, ok := oldSnap.Get("doc-new"); ok {
+					errCh <- errors.New("doc-new should not be visible on old snapshot")
 					return
 				}
 			}
@@ -797,7 +835,32 @@ func TestTable_Search_Concurrent(t *testing.T) {
 		}()
 	}
 
-	for w := 0; w < workers; w++ {
+	go func() {
+		for i := 0; i < iters; i++ {
+			prev := current.Load()
+			wb := prev.Builder()
+			if err := wb.Upsert("doc-new", map[string][]float32{"v": {100.0, 200.0}}, nil); err != nil {
+				errCh <- err
+				return
+			}
+			wb.Delete("doc-1")
+			current.Store(wb.Build())
+		}
+		errCh <- nil
+	}()
+
+	for i := 0; i < readers+1; i++ {
 		require.NoError(t, <-errCh)
 	}
+
+	newSnap := current.Load()
+	require.NotEqual(t, oldSnap, newSnap)
+	_, ok := oldSnap.Get("doc-1")
+	require.True(t, ok)
+	_, ok = oldSnap.Get("doc-new")
+	require.False(t, ok)
+	_, ok = newSnap.Get("doc-1")
+	require.False(t, ok)
+	_, ok = newSnap.Get("doc-new")
+	require.True(t, ok)
 }

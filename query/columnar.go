@@ -2,11 +2,11 @@ package query
 
 import (
 	"cmp"
+	"container/heap"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query/distance"
@@ -14,14 +14,6 @@ import (
 )
 
 var ErrDimensionMismatch = errors.New("query: vector dimension mismatch")
-
-type Metric int
-
-const (
-	MetricCosine Metric = iota
-	MetricL2Squared
-	MetricDotProduct
-)
 
 type packedVectorCol struct {
 	dim      int
@@ -31,7 +23,6 @@ type packedVectorCol struct {
 }
 
 type Table struct {
-	mu         sync.RWMutex
 	docIDs     []string
 	index      map[string]int
 	tombstones []bool
@@ -39,33 +30,68 @@ type Table struct {
 	attrs      map[string][]*cloudyneighpb.AttributeValue
 }
 
-func NewTable() *Table {
-	return &Table{
+type Builder struct {
+	docIDs     []string
+	index      map[string]int
+	tombstones []bool
+	vectors    map[string]*packedVectorCol
+	attrs      map[string][]*cloudyneighpb.AttributeValue
+}
+
+func NewBuilder() *Builder {
+	return &Builder{
 		index:   make(map[string]int),
 		vectors: make(map[string]*packedVectorCol),
 		attrs:   make(map[string][]*cloudyneighpb.AttributeValue),
 	}
 }
 
-func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
+func (t *Table) Builder() *Builder {
+	if t == nil {
+		return NewBuilder()
+	}
+	index := make(map[string]int, len(t.index))
+	for k, v := range t.index {
+		index[k] = v
+	}
+	vectors := make(map[string]*packedVectorCol, len(t.vectors))
+	for col, vCol := range t.vectors {
+		vectors[col] = &packedVectorCol{
+			dim:      vCol.dim,
+			data:     slices.Clone(vCol.data),
+			rowToVec: slices.Clone(vCol.rowToVec),
+			vecToRow: slices.Clone(vCol.vecToRow),
+		}
+	}
+	attrs := make(map[string][]*cloudyneighpb.AttributeValue, len(t.attrs))
+	for k, col := range t.attrs {
+		attrs[k] = slices.Clone(col)
+	}
+	return &Builder{
+		docIDs:     slices.Clone(t.docIDs),
+		index:      index,
+		tombstones: slices.Clone(t.tombstones),
+		vectors:    vectors,
+		attrs:      attrs,
+	}
+}
+
+func (b *Builder) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
 	if id == "" {
 		return errors.New("query: empty doc id")
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if t.index == nil {
-		t.index = make(map[string]int)
-		t.vectors = make(map[string]*packedVectorCol)
-		t.attrs = make(map[string][]*cloudyneighpb.AttributeValue)
+	if b.index == nil {
+		b.index = make(map[string]int)
+		b.vectors = make(map[string]*packedVectorCol)
+		b.attrs = make(map[string][]*cloudyneighpb.AttributeValue)
 	}
 
 	for col, vec := range vectors {
 		if len(vec) == 0 {
 			continue
 		}
-		if vCol, ok := t.vectors[col]; ok {
+		if vCol, ok := b.vectors[col]; ok {
 			if len(vec) != vCol.dim {
 				return fmt.Errorf("%w: column %q has dimension %d, got %d", ErrDimensionMismatch, col, vCol.dim, len(vec))
 			}
@@ -76,15 +102,15 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 		if len(vec) == 0 {
 			continue
 		}
-		if _, ok := t.vectors[col]; !ok {
+		if _, ok := b.vectors[col]; !ok {
 			vCol := &packedVectorCol{
 				dim:      len(vec),
-				rowToVec: make([]int, len(t.docIDs)),
+				rowToVec: make([]int, len(b.docIDs)),
 			}
 			for i := range vCol.rowToVec {
 				vCol.rowToVec[i] = -1
 			}
-			t.vectors[col] = vCol
+			b.vectors[col] = vCol
 		}
 	}
 
@@ -92,21 +118,21 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 		if v == nil {
 			continue
 		}
-		if _, ok := t.attrs[k]; !ok {
-			t.attrs[k] = make([]*cloudyneighpb.AttributeValue, len(t.docIDs))
+		if _, ok := b.attrs[k]; !ok {
+			b.attrs[k] = make([]*cloudyneighpb.AttributeValue, len(b.docIDs))
 		}
 	}
 
-	if row, exists := t.index[id]; exists {
-		if t.tombstones[row] {
-			t.tombstones[row] = false
+	if row, exists := b.index[id]; exists {
+		if b.tombstones[row] {
+			b.tombstones[row] = false
 		}
 
 		for col, vec := range vectors {
 			if len(vec) == 0 {
 				continue
 			}
-			vCol := t.vectors[col]
+			vCol := b.vectors[col]
 			vecIdx := vCol.rowToVec[row]
 			if vecIdx >= 0 {
 				offset := vecIdx * vCol.dim
@@ -123,17 +149,17 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 			if v == nil {
 				continue
 			}
-			t.attrs[k][row] = proto.Clone(v).(*cloudyneighpb.AttributeValue)
+			b.attrs[k][row] = proto.Clone(v).(*cloudyneighpb.AttributeValue)
 		}
 		return nil
 	}
 
-	row := len(t.docIDs)
-	t.docIDs = append(t.docIDs, id)
-	t.tombstones = append(t.tombstones, false)
-	t.index[id] = row
+	row := len(b.docIDs)
+	b.docIDs = append(b.docIDs, id)
+	b.tombstones = append(b.tombstones, false)
+	b.index[id] = row
 
-	for col, vCol := range t.vectors {
+	for col, vCol := range b.vectors {
 		if vec, ok := vectors[col]; ok && len(vec) > 0 {
 			vecIdx := len(vCol.vecToRow)
 			vCol.data = append(vCol.data, vec...)
@@ -144,17 +170,17 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 		}
 	}
 
-	for k, col := range t.attrs {
+	for k, col := range b.attrs {
 		if v, ok := attrs[k]; ok && v != nil {
-			t.attrs[k] = append(col, proto.Clone(v).(*cloudyneighpb.AttributeValue))
+			b.attrs[k] = append(col, proto.Clone(v).(*cloudyneighpb.AttributeValue))
 		} else {
-			t.attrs[k] = append(col, nil)
+			b.attrs[k] = append(col, nil)
 		}
 	}
 	return nil
 }
 
-func (t *Table) UpsertRecord(rec *cloudyneighpb.Record) error {
+func (b *Builder) UpsertRecord(rec *cloudyneighpb.Record) error {
 	if rec == nil {
 		return errors.New("query: nil record")
 	}
@@ -168,19 +194,36 @@ func (t *Table) UpsertRecord(rec *cloudyneighpb.Record) error {
 			vectors[name] = vec.Values
 		}
 	}
-	return t.Upsert(rec.Id, vectors, rec.Attributes)
+	return b.Upsert(rec.Id, vectors, rec.Attributes)
 }
 
-func (t *Table) Delete(id string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	row, ok := t.index[id]
-	if !ok || t.tombstones[row] {
+func (b *Builder) Delete(id string) bool {
+	row, ok := b.index[id]
+	if !ok || b.tombstones[row] {
 		return false
 	}
-	t.tombstones[row] = true
+	b.tombstones[row] = true
 	return true
+}
+
+func (b *Builder) Build() *Table {
+	t := &Table{
+		docIDs:     b.docIDs,
+		index:      b.index,
+		tombstones: b.tombstones,
+		vectors:    b.vectors,
+		attrs:      b.attrs,
+	}
+	b.docIDs = nil
+	b.index = nil
+	b.tombstones = nil
+	b.vectors = nil
+	b.attrs = nil
+	return t
+}
+
+func NewTable() *Table {
+	return NewBuilder().Build()
 }
 
 func (t *Table) recordAt(row int, id string) *cloudyneighpb.Record {
@@ -212,9 +255,6 @@ func (t *Table) recordAt(row int, id string) *cloudyneighpb.Record {
 }
 
 func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
 	row, ok := t.index[id]
 	if !ok || t.tombstones[row] {
 		return nil, false
@@ -223,9 +263,6 @@ func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
 }
 
 func (t *Table) Vector(id, col string) ([]float32, bool) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
 	row, ok := t.index[id]
 	if !ok || t.tombstones[row] {
 		return nil, false
@@ -243,9 +280,6 @@ func (t *Table) Vector(id, col string) ([]float32, bool) {
 }
 
 func (t *Table) Attribute(id, key string) (*cloudyneighpb.AttributeValue, bool) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
 	row, ok := t.index[id]
 	if !ok || t.tombstones[row] {
 		return nil, false
@@ -267,33 +301,46 @@ type searchHit struct {
 	score float32
 }
 
-func worseAsc(a, b searchHit) bool {
+func cmpAsc(a, b searchHit) int {
 	if a.score != b.score {
-		return a.score > b.score
+		return cmp.Compare(a.score, b.score)
 	}
-	return a.id > b.id
+	return strings.Compare(a.id, b.id)
 }
 
-func worseDesc(a, b searchHit) bool {
+func cmpDesc(a, b searchHit) int {
 	if a.score != b.score {
-		return a.score < b.score
+		return cmp.Compare(b.score, a.score)
 	}
-	return a.id > b.id
+	return strings.Compare(a.id, b.id)
+}
+
+type hitHeap struct {
+	hits []searchHit
+	cmp  func(a, b searchHit) int
+}
+
+func (h *hitHeap) Len() int           { return len(h.hits) }
+func (h *hitHeap) Less(i, j int) bool { return h.cmp(h.hits[i], h.hits[j]) > 0 }
+func (h *hitHeap) Swap(i, j int)      { h.hits[i], h.hits[j] = h.hits[j], h.hits[i] }
+func (h *hitHeap) Push(x any)         { h.hits = append(h.hits, x.(searchHit)) }
+func (h *hitHeap) Pop() any {
+	n := len(h.hits)
+	x := h.hits[n-1]
+	h.hits = h.hits[:n-1]
+	return x
 }
 
 func (t *Table) Search(
 	col string,
 	query []float32,
 	topK int,
-	metric Metric,
+	metric cloudyneighpb.DistanceMetric,
 	filter *cloudyneighpb.EqualityFilter,
 ) ([]*cloudyneighpb.ScoredRecord, error) {
 	if topK <= 0 {
 		return nil, nil
 	}
-
-	t.mu.RLock()
-	defer t.mu.RUnlock()
 
 	vCol, ok := t.vectors[col]
 	if !ok {
@@ -304,30 +351,33 @@ func (t *Table) Search(
 		return nil, ErrDimensionMismatch
 	}
 
+	var cmpFunc func(a, b searchHit) int
 	switch metric {
-	case MetricCosine:
-		var sum float32
-		for _, x := range query {
-			sum += x * x
+	case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE:
+		normSq, err := distance.DotProduct(query, query)
+		if err != nil {
+			return nil, err
 		}
-		if sum == 0 {
+		if normSq == 0 {
 			return nil, distance.ErrZeroVector
 		}
-	case MetricL2Squared, MetricDotProduct:
+		cmpFunc = cmpAsc
+	case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED:
+		cmpFunc = cmpAsc
+	case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT:
+		cmpFunc = cmpDesc
 	default:
 		return nil, fmt.Errorf("query: unknown metric %v", metric)
-	}
-
-	worse := worseAsc
-	if metric == MetricDotProduct {
-		worse = worseDesc
 	}
 
 	heapCap := topK
 	if len(vCol.vecToRow) < heapCap {
 		heapCap = len(vCol.vecToRow)
 	}
-	h := make([]searchHit, 0, heapCap)
+	h := hitHeap{
+		hits: make([]searchHit, 0, heapCap),
+		cmp:  cmpFunc,
+	}
 
 	for vecIdx, row := range vCol.vecToRow {
 		if t.tombstones[row] {
@@ -345,7 +395,7 @@ func (t *Table) Search(
 
 		var score float32
 		switch metric {
-		case MetricCosine:
+		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE:
 			var err error
 			score, err = distance.Cosine(query, storedVec)
 			if err != nil {
@@ -354,13 +404,13 @@ func (t *Table) Search(
 				}
 				return nil, err
 			}
-		case MetricL2Squared:
+		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED:
 			var err error
 			score, err = distance.L2Squared(query, storedVec)
 			if err != nil {
 				return nil, err
 			}
-		case MetricDotProduct:
+		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT:
 			var err error
 			score, err = distance.DotProduct(query, storedVec)
 			if err != nil {
@@ -374,51 +424,18 @@ func (t *Table) Search(
 			score: score,
 		}
 
-		if len(h) < topK {
-			h = append(h, cand)
-			i := len(h) - 1
-			for i > 0 {
-				p := (i - 1) / 2
-				if !worse(h[i], h[p]) {
-					break
-				}
-				h[i], h[p] = h[p], h[i]
-				i = p
-			}
-		} else if worse(h[0], cand) {
-			h[0] = cand
-			i := 0
-			for {
-				worst := i
-				left := 2*i + 1
-				right := 2*i + 2
-				if left < len(h) && worse(h[left], h[worst]) {
-					worst = left
-				}
-				if right < len(h) && worse(h[right], h[worst]) {
-					worst = right
-				}
-				if worst == i {
-					break
-				}
-				h[i], h[worst] = h[worst], h[i]
-				i = worst
-			}
+		if h.Len() < topK {
+			heap.Push(&h, cand)
+		} else if h.cmp(cand, h.hits[0]) < 0 {
+			h.hits[0] = cand
+			heap.Fix(&h, 0)
 		}
 	}
 
-	slices.SortFunc(h, func(a, b searchHit) int {
-		if a.score != b.score {
-			if metric == MetricDotProduct {
-				return cmp.Compare(b.score, a.score)
-			}
-			return cmp.Compare(a.score, b.score)
-		}
-		return strings.Compare(a.id, b.id)
-	})
+	slices.SortFunc(h.hits, h.cmp)
 
-	hits := make([]*cloudyneighpb.ScoredRecord, len(h))
-	for i, hit := range h {
+	hits := make([]*cloudyneighpb.ScoredRecord, len(h.hits))
+	for i, hit := range h.hits {
 		hits[i] = &cloudyneighpb.ScoredRecord{
 			Record: t.recordAt(hit.row, hit.id),
 			Score:  hit.score,
