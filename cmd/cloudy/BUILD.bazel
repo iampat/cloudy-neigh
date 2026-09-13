@@ -11,6 +11,7 @@ go_library(
         "//logstream",
         "//objectstore",
         "//proto/cloudyneigh/v1:cloudyneigh",
+        "//query/distance",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_x_sync//errgroup",
     ],
