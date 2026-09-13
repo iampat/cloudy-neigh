@@ -15,34 +15,105 @@ import (
 
 var ErrDimensionMismatch = errors.New("query: vector dimension mismatch")
 
+const (
+	chunkSize  = 1024
+	chunkMask  = chunkSize - 1
+	chunkShift = 10
+)
+
+func chunkIndex(i int) (int, int) {
+	return i >> chunkShift, i & chunkMask
+}
+
 type packedVectorCol struct {
 	dim      int
-	data     []float32
-	rowToVec []int
-	vecToRow []int
+	numVecs  int
+	chunks   [][]float32
+	vecToRow [][]int
+	rowToVec [][]int
 }
 
 type Table struct {
-	docIDs     []string
-	index      map[string]int
-	tombstones []bool
+	numRows    int
+	docIDs     [][]string
+	index      []map[string]int
+	tombstones [][]bool
 	vectors    map[string]*packedVectorCol
-	attrs      map[string][]*cloudyneighpb.AttributeValue
+	attrs      map[string][][]*cloudyneighpb.AttributeValue
+}
+
+type builderVectorCol struct {
+	dim         int
+	numVecs     int
+	chunks      [][]float32
+	chunkShared []bool
+	vecToRow    [][]int
+	vecShared   []bool
+	rowToVec    [][]int
+	rowShared   []bool
+}
+
+type builderAttrCol struct {
+	chunks      [][]*cloudyneighpb.AttributeValue
+	chunkShared []bool
 }
 
 type Builder struct {
-	docIDs     []string
-	index      map[string]int
-	tombstones []bool
-	vectors    map[string]*packedVectorCol
-	attrs      map[string][]*cloudyneighpb.AttributeValue
+	numRows    int
+	docIDs     [][]string
+	docShared  []bool
+	tombstones [][]bool
+	tombShared []bool
+	baseIndex  []map[string]int
+	deltaIndex map[string]int
+	vectors    map[string]*builderVectorCol
+	attrs      map[string]*builderAttrCol
+}
+
+func newBuilderVectorCol(dim, numRows int) *builderVectorCol {
+	numChunks := (numRows + chunkSize - 1) / chunkSize
+	rowToVec := make([][]int, numChunks)
+	rowShared := make([]bool, numChunks)
+	for c := 0; c < numChunks; c++ {
+		count := chunkSize
+		if (c+1)*chunkSize > numRows {
+			count = numRows - c*chunkSize
+		}
+		chunk := make([]int, count, chunkSize)
+		for i := range chunk {
+			chunk[i] = -1
+		}
+		rowToVec[c] = chunk
+	}
+	return &builderVectorCol{
+		dim:       dim,
+		rowToVec:  rowToVec,
+		rowShared: rowShared,
+	}
+}
+
+func newBuilderAttrCol(numRows int) *builderAttrCol {
+	numChunks := (numRows + chunkSize - 1) / chunkSize
+	chunks := make([][]*cloudyneighpb.AttributeValue, numChunks)
+	chunkShared := make([]bool, numChunks)
+	for c := 0; c < numChunks; c++ {
+		count := chunkSize
+		if (c+1)*chunkSize > numRows {
+			count = numRows - c*chunkSize
+		}
+		chunks[c] = make([]*cloudyneighpb.AttributeValue, count, chunkSize)
+	}
+	return &builderAttrCol{
+		chunks:      chunks,
+		chunkShared: chunkShared,
+	}
 }
 
 func NewBuilder() *Builder {
 	return &Builder{
-		index:   make(map[string]int),
-		vectors: make(map[string]*packedVectorCol),
-		attrs:   make(map[string][]*cloudyneighpb.AttributeValue),
+		deltaIndex: make(map[string]int),
+		vectors:    make(map[string]*builderVectorCol),
+		attrs:      make(map[string]*builderAttrCol),
 	}
 }
 
@@ -50,30 +121,86 @@ func (t *Table) Builder() *Builder {
 	if t == nil {
 		return NewBuilder()
 	}
-	index := make(map[string]int, len(t.index))
-	for k, v := range t.index {
-		index[k] = v
+	docIDs := slices.Clone(t.docIDs)
+	docShared := make([]bool, len(docIDs))
+	for i := range docShared {
+		docShared[i] = true
 	}
-	vectors := make(map[string]*packedVectorCol, len(t.vectors))
+
+	tombstones := slices.Clone(t.tombstones)
+	tombShared := make([]bool, len(tombstones))
+	for i := range tombShared {
+		tombShared[i] = true
+	}
+
+	vectors := make(map[string]*builderVectorCol, len(t.vectors))
 	for col, vCol := range t.vectors {
-		vectors[col] = &packedVectorCol{
-			dim:      vCol.dim,
-			data:     slices.Clone(vCol.data),
-			rowToVec: slices.Clone(vCol.rowToVec),
-			vecToRow: slices.Clone(vCol.vecToRow),
+		chunks := slices.Clone(vCol.chunks)
+		chunkShared := make([]bool, len(chunks))
+		for i := range chunkShared {
+			chunkShared[i] = true
+		}
+
+		vecToRow := slices.Clone(vCol.vecToRow)
+		vecShared := make([]bool, len(vecToRow))
+		for i := range vecShared {
+			vecShared[i] = true
+		}
+
+		rowToVec := slices.Clone(vCol.rowToVec)
+		rowShared := make([]bool, len(rowToVec))
+		for i := range rowShared {
+			rowShared[i] = true
+		}
+
+		vectors[col] = &builderVectorCol{
+			dim:         vCol.dim,
+			numVecs:     vCol.numVecs,
+			chunks:      chunks,
+			chunkShared: chunkShared,
+			vecToRow:    vecToRow,
+			vecShared:   vecShared,
+			rowToVec:    rowToVec,
+			rowShared:   rowShared,
 		}
 	}
-	attrs := make(map[string][]*cloudyneighpb.AttributeValue, len(t.attrs))
+
+	attrs := make(map[string]*builderAttrCol, len(t.attrs))
 	for k, col := range t.attrs {
-		attrs[k] = slices.Clone(col)
+		chunks := slices.Clone(col)
+		chunkShared := make([]bool, len(chunks))
+		for i := range chunkShared {
+			chunkShared[i] = true
+		}
+		attrs[k] = &builderAttrCol{
+			chunks:      chunks,
+			chunkShared: chunkShared,
+		}
 	}
+
 	return &Builder{
-		docIDs:     slices.Clone(t.docIDs),
-		index:      index,
-		tombstones: slices.Clone(t.tombstones),
+		numRows:    t.numRows,
+		docIDs:     docIDs,
+		docShared:  docShared,
+		tombstones: tombstones,
+		tombShared: tombShared,
+		baseIndex:  t.index,
+		deltaIndex: make(map[string]int),
 		vectors:    vectors,
 		attrs:      attrs,
 	}
+}
+
+func (b *Builder) rowOf(id string) (int, bool) {
+	if row, ok := b.deltaIndex[id]; ok {
+		return row, true
+	}
+	for i := len(b.baseIndex) - 1; i >= 0; i-- {
+		if row, ok := b.baseIndex[i][id]; ok {
+			return row, true
+		}
+	}
+	return -1, false
 }
 
 func (b *Builder) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
@@ -81,10 +208,10 @@ func (b *Builder) Upsert(id string, vectors map[string][]float32, attrs map[stri
 		return errors.New("query: empty doc id")
 	}
 
-	if b.index == nil {
-		b.index = make(map[string]int)
-		b.vectors = make(map[string]*packedVectorCol)
-		b.attrs = make(map[string][]*cloudyneighpb.AttributeValue)
+	if b.deltaIndex == nil {
+		b.deltaIndex = make(map[string]int)
+		b.vectors = make(map[string]*builderVectorCol)
+		b.attrs = make(map[string]*builderAttrCol)
 	}
 
 	for col, vec := range vectors {
@@ -103,14 +230,7 @@ func (b *Builder) Upsert(id string, vectors map[string][]float32, attrs map[stri
 			continue
 		}
 		if _, ok := b.vectors[col]; !ok {
-			vCol := &packedVectorCol{
-				dim:      len(vec),
-				rowToVec: make([]int, len(b.docIDs)),
-			}
-			for i := range vCol.rowToVec {
-				vCol.rowToVec[i] = -1
-			}
-			b.vectors[col] = vCol
+			b.vectors[col] = newBuilderVectorCol(len(vec), b.numRows)
 		}
 	}
 
@@ -119,13 +239,18 @@ func (b *Builder) Upsert(id string, vectors map[string][]float32, attrs map[stri
 			continue
 		}
 		if _, ok := b.attrs[k]; !ok {
-			b.attrs[k] = make([]*cloudyneighpb.AttributeValue, len(b.docIDs))
+			b.attrs[k] = newBuilderAttrCol(b.numRows)
 		}
 	}
 
-	if row, exists := b.index[id]; exists {
-		if b.tombstones[row] {
-			b.tombstones[row] = false
+	if row, exists := b.rowOf(id); exists {
+		rc, rs := chunkIndex(row)
+		if b.tombstones[rc][rs] {
+			if b.tombShared[rc] {
+				b.tombstones[rc] = slices.Clone(b.tombstones[rc])
+				b.tombShared[rc] = false
+			}
+			b.tombstones[rc][rs] = false
 		}
 
 		for col, vec := range vectors {
@@ -133,15 +258,42 @@ func (b *Builder) Upsert(id string, vectors map[string][]float32, attrs map[stri
 				continue
 			}
 			vCol := b.vectors[col]
-			vecIdx := vCol.rowToVec[row]
+			vecIdx := vCol.rowToVec[rc][rs]
 			if vecIdx >= 0 {
-				offset := vecIdx * vCol.dim
-				copy(vCol.data[offset:offset+vCol.dim], vec)
+				vc, vs := chunkIndex(vecIdx)
+				if vCol.chunkShared[vc] {
+					vCol.chunks[vc] = slices.Clone(vCol.chunks[vc])
+					vCol.chunkShared[vc] = false
+				}
+				offset := vs * vCol.dim
+				copy(vCol.chunks[vc][offset:offset+vCol.dim], vec)
 			} else {
-				vecIdx = len(vCol.vecToRow)
-				vCol.data = append(vCol.data, vec...)
-				vCol.vecToRow = append(vCol.vecToRow, row)
-				vCol.rowToVec[row] = vecIdx
+				vecIdx = vCol.numVecs
+				vc, _ := chunkIndex(vecIdx)
+				if vc == len(vCol.chunks) {
+					vCol.chunks = append(vCol.chunks, make([]float32, 0, chunkSize*vCol.dim))
+					vCol.chunkShared = append(vCol.chunkShared, false)
+					vCol.vecToRow = append(vCol.vecToRow, make([]int, 0, chunkSize))
+					vCol.vecShared = append(vCol.vecShared, false)
+				} else {
+					if vCol.chunkShared[vc] {
+						vCol.chunks[vc] = slices.Clone(vCol.chunks[vc])
+						vCol.chunkShared[vc] = false
+					}
+					if vCol.vecShared[vc] {
+						vCol.vecToRow[vc] = slices.Clone(vCol.vecToRow[vc])
+						vCol.vecShared[vc] = false
+					}
+				}
+				vCol.chunks[vc] = append(vCol.chunks[vc], vec...)
+				vCol.vecToRow[vc] = append(vCol.vecToRow[vc], row)
+				vCol.numVecs++
+
+				if vCol.rowShared[rc] {
+					vCol.rowToVec[rc] = slices.Clone(vCol.rowToVec[rc])
+					vCol.rowShared[rc] = false
+				}
+				vCol.rowToVec[rc][rs] = vecIdx
 			}
 		}
 
@@ -149,34 +301,91 @@ func (b *Builder) Upsert(id string, vectors map[string][]float32, attrs map[stri
 			if v == nil {
 				continue
 			}
-			b.attrs[k][row] = proto.Clone(v).(*cloudyneighpb.AttributeValue)
+			aCol := b.attrs[k]
+			if aCol.chunkShared[rc] {
+				aCol.chunks[rc] = slices.Clone(aCol.chunks[rc])
+				aCol.chunkShared[rc] = false
+			}
+			aCol.chunks[rc][rs] = proto.Clone(v).(*cloudyneighpb.AttributeValue)
 		}
 		return nil
 	}
 
-	row := len(b.docIDs)
-	b.docIDs = append(b.docIDs, id)
-	b.tombstones = append(b.tombstones, false)
-	b.index[id] = row
+	row := b.numRows
+	rc, _ := chunkIndex(row)
+
+	if rc == len(b.docIDs) {
+		b.docIDs = append(b.docIDs, make([]string, 0, chunkSize))
+		b.docShared = append(b.docShared, false)
+	} else if b.docShared[rc] {
+		b.docIDs[rc] = slices.Clone(b.docIDs[rc])
+		b.docShared[rc] = false
+	}
+	b.docIDs[rc] = append(b.docIDs[rc], id)
+
+	if rc == len(b.tombstones) {
+		b.tombstones = append(b.tombstones, make([]bool, 0, chunkSize))
+		b.tombShared = append(b.tombShared, false)
+	} else if b.tombShared[rc] {
+		b.tombstones[rc] = slices.Clone(b.tombstones[rc])
+		b.tombShared[rc] = false
+	}
+	b.tombstones[rc] = append(b.tombstones[rc], false)
+
+	b.deltaIndex[id] = row
 
 	for col, vCol := range b.vectors {
+		if rc == len(vCol.rowToVec) {
+			vCol.rowToVec = append(vCol.rowToVec, make([]int, 0, chunkSize))
+			vCol.rowShared = append(vCol.rowShared, false)
+		} else if vCol.rowShared[rc] {
+			vCol.rowToVec[rc] = slices.Clone(vCol.rowToVec[rc])
+			vCol.rowShared[rc] = false
+		}
+
 		if vec, ok := vectors[col]; ok && len(vec) > 0 {
-			vecIdx := len(vCol.vecToRow)
-			vCol.data = append(vCol.data, vec...)
-			vCol.vecToRow = append(vCol.vecToRow, row)
-			vCol.rowToVec = append(vCol.rowToVec, vecIdx)
+			vecIdx := vCol.numVecs
+			vc, _ := chunkIndex(vecIdx)
+			if vc == len(vCol.chunks) {
+				vCol.chunks = append(vCol.chunks, make([]float32, 0, chunkSize*vCol.dim))
+				vCol.chunkShared = append(vCol.chunkShared, false)
+				vCol.vecToRow = append(vCol.vecToRow, make([]int, 0, chunkSize))
+				vCol.vecShared = append(vCol.vecShared, false)
+			} else {
+				if vCol.chunkShared[vc] {
+					vCol.chunks[vc] = slices.Clone(vCol.chunks[vc])
+					vCol.chunkShared[vc] = false
+				}
+				if vCol.vecShared[vc] {
+					vCol.vecToRow[vc] = slices.Clone(vCol.vecToRow[vc])
+					vCol.vecShared[vc] = false
+				}
+			}
+			vCol.chunks[vc] = append(vCol.chunks[vc], vec...)
+			vCol.vecToRow[vc] = append(vCol.vecToRow[vc], row)
+			vCol.numVecs++
+			vCol.rowToVec[rc] = append(vCol.rowToVec[rc], vecIdx)
 		} else {
-			vCol.rowToVec = append(vCol.rowToVec, -1)
+			vCol.rowToVec[rc] = append(vCol.rowToVec[rc], -1)
 		}
 	}
 
-	for k, col := range b.attrs {
+	for k, aCol := range b.attrs {
+		if rc == len(aCol.chunks) {
+			aCol.chunks = append(aCol.chunks, make([]*cloudyneighpb.AttributeValue, 0, chunkSize))
+			aCol.chunkShared = append(aCol.chunkShared, false)
+		} else if aCol.chunkShared[rc] {
+			aCol.chunks[rc] = slices.Clone(aCol.chunks[rc])
+			aCol.chunkShared[rc] = false
+		}
 		if v, ok := attrs[k]; ok && v != nil {
-			b.attrs[k] = append(col, proto.Clone(v).(*cloudyneighpb.AttributeValue))
+			aCol.chunks[rc] = append(aCol.chunks[rc], proto.Clone(v).(*cloudyneighpb.AttributeValue))
 		} else {
-			b.attrs[k] = append(col, nil)
+			aCol.chunks[rc] = append(aCol.chunks[rc], nil)
 		}
 	}
+
+	b.numRows++
 	return nil
 }
 
@@ -198,25 +407,80 @@ func (b *Builder) UpsertRecord(rec *cloudyneighpb.Record) error {
 }
 
 func (b *Builder) Delete(id string) bool {
-	row, ok := b.index[id]
-	if !ok || b.tombstones[row] {
+	row, ok := b.rowOf(id)
+	if !ok {
 		return false
 	}
-	b.tombstones[row] = true
+	rc, rs := chunkIndex(row)
+	if b.tombstones[rc][rs] {
+		return false
+	}
+	if b.tombShared[rc] {
+		b.tombstones[rc] = slices.Clone(b.tombstones[rc])
+		b.tombShared[rc] = false
+	}
+	b.tombstones[rc][rs] = true
 	return true
 }
 
 func (b *Builder) Build() *Table {
-	t := &Table{
-		docIDs:     b.docIDs,
-		index:      b.index,
-		tombstones: b.tombstones,
-		vectors:    b.vectors,
-		attrs:      b.attrs,
+	var index []map[string]int
+	if len(b.deltaIndex) > 0 {
+		if len(b.baseIndex) >= 16 {
+			total := len(b.deltaIndex)
+			for _, m := range b.baseIndex {
+				total += len(m)
+			}
+			merged := make(map[string]int, total)
+			for _, m := range b.baseIndex {
+				for k, v := range m {
+					merged[k] = v
+				}
+			}
+			for k, v := range b.deltaIndex {
+				merged[k] = v
+			}
+			index = []map[string]int{merged}
+		} else {
+			index = make([]map[string]int, len(b.baseIndex)+1)
+			copy(index, b.baseIndex)
+			index[len(b.baseIndex)] = b.deltaIndex
+		}
+	} else {
+		index = b.baseIndex
 	}
+
+	vectors := make(map[string]*packedVectorCol, len(b.vectors))
+	for col, bCol := range b.vectors {
+		vectors[col] = &packedVectorCol{
+			dim:      bCol.dim,
+			numVecs:  bCol.numVecs,
+			chunks:   bCol.chunks,
+			vecToRow: bCol.vecToRow,
+			rowToVec: bCol.rowToVec,
+		}
+	}
+
+	attrs := make(map[string][][]*cloudyneighpb.AttributeValue, len(b.attrs))
+	for k, aCol := range b.attrs {
+		attrs[k] = aCol.chunks
+	}
+
+	t := &Table{
+		numRows:    b.numRows,
+		docIDs:     b.docIDs,
+		index:      index,
+		tombstones: b.tombstones,
+		vectors:    vectors,
+		attrs:      attrs,
+	}
+
 	b.docIDs = nil
-	b.index = nil
+	b.docShared = nil
 	b.tombstones = nil
+	b.tombShared = nil
+	b.baseIndex = nil
+	b.deltaIndex = nil
 	b.vectors = nil
 	b.attrs = nil
 	return t
@@ -226,6 +490,15 @@ func NewTable() *Table {
 	return NewBuilder().Build()
 }
 
+func (t *Table) rowOf(id string) (int, bool) {
+	for i := len(t.index) - 1; i >= 0; i-- {
+		if row, ok := t.index[i][id]; ok {
+			return row, true
+		}
+	}
+	return -1, false
+}
+
 func (t *Table) recordAt(row int, id string) *cloudyneighpb.Record {
 	rec := &cloudyneighpb.Record{
 		Id:         id,
@@ -233,21 +506,25 @@ func (t *Table) recordAt(row int, id string) *cloudyneighpb.Record {
 		Attributes: make(map[string]*cloudyneighpb.AttributeValue, len(t.attrs)),
 	}
 
+	rc, rs := chunkIndex(row)
 	for col, vCol := range t.vectors {
-		if row < len(vCol.rowToVec) {
-			vecIdx := vCol.rowToVec[row]
+		if rc < len(vCol.rowToVec) && rs < len(vCol.rowToVec[rc]) {
+			vecIdx := vCol.rowToVec[rc][rs]
 			if vecIdx >= 0 {
-				offset := vecIdx * vCol.dim
+				vc, vs := chunkIndex(vecIdx)
+				offset := vs * vCol.dim
 				rec.Vectors[col] = &cloudyneighpb.Vector{
-					Values: slices.Clone(vCol.data[offset : offset+vCol.dim]),
+					Values: slices.Clone(vCol.chunks[vc][offset : offset+vCol.dim]),
 				}
 			}
 		}
 	}
 
 	for k, col := range t.attrs {
-		if val := col[row]; val != nil {
-			rec.Attributes[k] = proto.Clone(val).(*cloudyneighpb.AttributeValue)
+		if rc < len(col) && rs < len(col[rc]) {
+			if val := col[rc][rs]; val != nil {
+				rec.Attributes[k] = proto.Clone(val).(*cloudyneighpb.AttributeValue)
+			}
 		}
 	}
 
@@ -255,40 +532,53 @@ func (t *Table) recordAt(row int, id string) *cloudyneighpb.Record {
 }
 
 func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
-	row, ok := t.index[id]
-	if !ok || t.tombstones[row] {
+	row, ok := t.rowOf(id)
+	if !ok {
+		return nil, false
+	}
+	rc, rs := chunkIndex(row)
+	if t.tombstones[rc][rs] {
 		return nil, false
 	}
 	return t.recordAt(row, id), true
 }
 
 func (t *Table) Vector(id, col string) ([]float32, bool) {
-	row, ok := t.index[id]
-	if !ok || t.tombstones[row] {
-		return nil, false
-	}
-	vCol, ok := t.vectors[col]
-	if !ok || row >= len(vCol.rowToVec) {
-		return nil, false
-	}
-	vecIdx := vCol.rowToVec[row]
-	if vecIdx < 0 {
-		return nil, false
-	}
-	offset := vecIdx * vCol.dim
-	return slices.Clone(vCol.data[offset : offset+vCol.dim]), true
-}
-
-func (t *Table) Attribute(id, key string) (*cloudyneighpb.AttributeValue, bool) {
-	row, ok := t.index[id]
-	if !ok || t.tombstones[row] {
-		return nil, false
-	}
-	col, ok := t.attrs[key]
+	row, ok := t.rowOf(id)
 	if !ok {
 		return nil, false
 	}
-	val := col[row]
+	rc, rs := chunkIndex(row)
+	if t.tombstones[rc][rs] {
+		return nil, false
+	}
+	vCol, ok := t.vectors[col]
+	if !ok || rc >= len(vCol.rowToVec) || rs >= len(vCol.rowToVec[rc]) {
+		return nil, false
+	}
+	vecIdx := vCol.rowToVec[rc][rs]
+	if vecIdx < 0 {
+		return nil, false
+	}
+	vc, vs := chunkIndex(vecIdx)
+	offset := vs * vCol.dim
+	return slices.Clone(vCol.chunks[vc][offset : offset+vCol.dim]), true
+}
+
+func (t *Table) Attribute(id, key string) (*cloudyneighpb.AttributeValue, bool) {
+	row, ok := t.rowOf(id)
+	if !ok {
+		return nil, false
+	}
+	rc, rs := chunkIndex(row)
+	if t.tombstones[rc][rs] {
+		return nil, false
+	}
+	col, ok := t.attrs[key]
+	if !ok || rc >= len(col) || rs >= len(col[rc]) {
+		return nil, false
+	}
+	val := col[rc][rs]
 	if val == nil {
 		return nil, false
 	}
@@ -343,7 +633,7 @@ func (t *Table) Search(
 	}
 
 	vCol, ok := t.vectors[col]
-	if !ok {
+	if !ok || vCol.numVecs == 0 {
 		return nil, nil
 	}
 
@@ -371,64 +661,68 @@ func (t *Table) Search(
 	}
 
 	heapCap := topK
-	if len(vCol.vecToRow) < heapCap {
-		heapCap = len(vCol.vecToRow)
+	if vCol.numVecs < heapCap {
+		heapCap = vCol.numVecs
 	}
 	h := hitHeap{
 		hits: make([]searchHit, 0, heapCap),
 		cmp:  cmpFunc,
 	}
 
-	for vecIdx, row := range vCol.vecToRow {
-		if t.tombstones[row] {
-			continue
-		}
-		if filter != nil {
-			attrCol, ok := t.attrs[filter.Field]
-			if !ok || attrCol[row] == nil || !proto.Equal(attrCol[row], filter.Value) {
+	for chunkIdx, chunk := range vCol.chunks {
+		vecToRowChunk := vCol.vecToRow[chunkIdx]
+		for vs, row := range vecToRowChunk {
+			rc, rs := chunkIndex(row)
+			if t.tombstones[rc][rs] {
 				continue
 			}
-		}
-
-		offset := vecIdx * vCol.dim
-		storedVec := vCol.data[offset : offset+vCol.dim]
-
-		var score float32
-		switch metric {
-		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE:
-			var err error
-			score, err = distance.Cosine(query, storedVec)
-			if err != nil {
-				if errors.Is(err, distance.ErrZeroVector) {
+			if filter != nil {
+				attrChunks, ok := t.attrs[filter.Field]
+				if !ok || rc >= len(attrChunks) || rs >= len(attrChunks[rc]) || attrChunks[rc][rs] == nil || !proto.Equal(attrChunks[rc][rs], filter.Value) {
 					continue
 				}
-				return nil, err
 			}
-		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED:
-			var err error
-			score, err = distance.L2Squared(query, storedVec)
-			if err != nil {
-				return nil, err
-			}
-		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT:
-			var err error
-			score, err = distance.DotProduct(query, storedVec)
-			if err != nil {
-				return nil, err
-			}
-		}
 
-		cand := searchHit{
-			row:   row,
-			id:    t.docIDs[row],
-			score: score,
-		}
+			offset := vs * vCol.dim
+			storedVec := chunk[offset : offset+vCol.dim]
 
-		if h.Len() < topK {
-			heap.Push(&h, cand)
-		} else if h.cmp(cand, h.hits[0]) < 0 {
-			h.hits[0] = cand
-			heap.Fix(&h, 0)
+			var score float32
+			switch metric {
+			case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE:
+				var err error
+				score, err = distance.Cosine(query, storedVec)
+				if err != nil {
+					if errors.Is(err, distance.ErrZeroVector) {
+						continue
+					}
+					return nil, err
+				}
+			case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED:
+				var err error
+				score, err = distance.L2Squared(query, storedVec)
+				if err != nil {
+					return nil, err
+				}
+			case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT:
+				var err error
+				score, err = distance.DotProduct(query, storedVec)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			cand := searchHit{
+				row:   row,
+				id:    t.docIDs[rc][rs],
+				score: score,
+			}
+
+			if h.Len() < topK {
+				heap.Push(&h, cand)
+			} else if h.cmp(cand, h.hits[0]) < 0 {
+				h.hits[0] = cand
+				heap.Fix(&h, 0)
+			}
 		}
 	}
 
