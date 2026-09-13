@@ -88,7 +88,6 @@
 - [ ] Try multi-accumulator unrolling in the simd kernels.
 - [ ] Fix the double expansion of `--config=race`. `.bazelrc` sets it by default, so an explicit `--config=race` expands it twice.
 - [ ] Drop `--test_output=streamed` from `test:fuzz`. It disables sharding and serializes the test run.
-- [ ] Stop the analysis-cache discard when switching `--config=go1.26` and `--config=go1.27`. Give each SDK its own output base or trim the config.
 - [ ] Build fuzz targets with coverage instrumentation. Without it, fuzzing runs without coverage guidance.
 
 ## Done
