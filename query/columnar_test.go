@@ -3,6 +3,7 @@ package query_test
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -863,4 +864,169 @@ func TestTable_Search_Concurrent(t *testing.T) {
 	require.False(t, ok)
 	_, ok = newSnap.Get("doc-new")
 	require.True(t, ok)
+}
+
+func TestTable_ChunkBoundary(t *testing.T) {
+	b := query.NewBuilder()
+	const count = 2500
+	for i := 0; i < count; i++ {
+		id := fmt.Sprintf("doc-%04d", i)
+		err := b.Upsert(id, map[string][]float32{
+			"v": {float32(i), float32(i + 1)},
+		}, map[string]*cloudyneighpb.AttributeValue{
+			"idx": stringAttr(strconv.Itoa(i)),
+		})
+		require.NoError(t, err)
+	}
+	table := b.Build()
+
+	for i := 0; i < count; i += 250 {
+		id := fmt.Sprintf("doc-%04d", i)
+		rec, ok := table.Get(id)
+		require.True(t, ok)
+		require.Equal(t, id, rec.Id)
+		vec, ok := table.Vector(id, "v")
+		require.True(t, ok)
+		require.Equal(t, []float32{float32(i), float32(i + 1)}, vec)
+	}
+
+	hits, err := table.Search("v", []float32{1000.0, 1001.0}, 3, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
+	require.NoError(t, err)
+	require.Len(t, hits, 3)
+	require.Equal(t, "doc-1000", hits[0].Record.Id)
+	require.Equal(t, float32(0.0), hits[0].Score)
+}
+
+func TestTable_SnapshotIsolation_Delta(t *testing.T) {
+	b := query.NewBuilder()
+	for i := 0; i < 50; i++ {
+		id := fmt.Sprintf("doc-%02d", i)
+		err := b.Upsert(id, map[string][]float32{
+			"v": {float32(i), float32(i * 2)},
+		}, map[string]*cloudyneighpb.AttributeValue{
+			"tag": stringAttr("initial"),
+		})
+		require.NoError(t, err)
+	}
+	snap1 := b.Build()
+
+	wb := snap1.Builder()
+	err := wb.Upsert("doc-delta", map[string][]float32{
+		"v": {500.0, 1000.0},
+	}, map[string]*cloudyneighpb.AttributeValue{
+		"tag": stringAttr("delta"),
+	})
+	require.NoError(t, err)
+
+	err = wb.Upsert("doc-05", map[string][]float32{
+		"v": {999.0, 999.0},
+	}, map[string]*cloudyneighpb.AttributeValue{
+		"tag": stringAttr("updated"),
+	})
+	require.NoError(t, err)
+
+	deleted := wb.Delete("doc-10")
+	require.True(t, deleted)
+
+	snap2 := wb.Build()
+
+	_, ok := snap1.Get("doc-delta")
+	require.False(t, ok)
+
+	rec5Old, ok := snap1.Get("doc-05")
+	require.True(t, ok)
+	require.Equal(t, []float32{5.0, 10.0}, rec5Old.Vectors["v"].Values)
+	require.True(t, proto.Equal(stringAttr("initial"), rec5Old.Attributes["tag"]))
+
+	rec10Old, ok := snap1.Get("doc-10")
+	require.True(t, ok)
+	require.Equal(t, "doc-10", rec10Old.Id)
+
+	hitsOld, err := snap1.Search("v", []float32{999.0, 999.0}, 1, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, hitsOld)
+	require.NotEqual(t, float32(0.0), hitsOld[0].Score)
+
+	recDelta, ok := snap2.Get("doc-delta")
+	require.True(t, ok)
+	require.Equal(t, "doc-delta", recDelta.Id)
+
+	rec5New, ok := snap2.Get("doc-05")
+	require.True(t, ok)
+	require.Equal(t, []float32{999.0, 999.0}, rec5New.Vectors["v"].Values)
+	require.True(t, proto.Equal(stringAttr("updated"), rec5New.Attributes["tag"]))
+
+	_, ok = snap2.Get("doc-10")
+	require.False(t, ok)
+
+	hitsNew, err := snap2.Search("v", []float32{999.0, 999.0}, 1, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
+	require.NoError(t, err)
+	require.Len(t, hitsNew, 1)
+	require.Equal(t, "doc-05", hitsNew[0].Record.Id)
+	require.Equal(t, float32(0.0), hitsNew[0].Score)
+}
+
+func TestTable_DeltaApply_ODeltaCost(t *testing.T) {
+	b := query.NewBuilder()
+	const baseCount = 20000
+	vec := make([]float32, 128)
+	for i := range vec {
+		vec[i] = float32(i)
+	}
+
+	for i := 0; i < baseCount; i++ {
+		id := strconv.Itoa(i)
+		err := b.Upsert(id, map[string][]float32{"v": vec}, nil)
+		require.NoError(t, err)
+	}
+	baseSnap := b.Build()
+
+	runtime.GC()
+	var m1, m2 runtime.MemStats
+	runtime.ReadMemStats(&m1)
+
+	wb := baseSnap.Builder()
+	const deltaCount = 100
+	for i := 0; i < deltaCount; i++ {
+		id := strconv.Itoa(baseCount + i)
+		err := wb.Upsert(id, map[string][]float32{"v": vec}, nil)
+		require.NoError(t, err)
+	}
+	deltaSnap := wb.Build()
+
+	runtime.ReadMemStats(&m2)
+	allocBytes := m2.TotalAlloc - m1.TotalAlloc
+
+	// 20,000 vectors of 128 float32s is 10.24 MB.
+	// Applying 100 vectors copies at most one partial chunk (< 512 KB),
+	// allocating far less than the 10+ MB base table.
+	require.Less(t, allocBytes, uint64(1500*1024))
+
+	_, ok := deltaSnap.Get(strconv.Itoa(baseCount))
+	require.True(t, ok)
+	_, ok = baseSnap.Get(strconv.Itoa(baseCount))
+	require.False(t, ok)
+}
+
+func BenchmarkTable_ApplyDelta(b *testing.B) {
+	tb := query.NewBuilder()
+	const baseCount = 5000
+	vec := make([]float32, 128)
+	for i := range vec {
+		vec[i] = float32(i)
+	}
+	for i := 0; i < baseCount; i++ {
+		_ = tb.Upsert(strconv.Itoa(i), map[string][]float32{"v": vec}, nil)
+	}
+	snap := tb.Build()
+
+	const deltaCount = 50
+
+	for b.Loop() {
+		wb := snap.Builder()
+		for i := 0; i < deltaCount; i++ {
+			_ = wb.Upsert(strconv.Itoa(baseCount+i), map[string][]float32{"v": vec}, nil)
+		}
+		_ = wb.Build()
+	}
 }
