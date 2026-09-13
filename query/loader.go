@@ -17,10 +17,11 @@ import (
 )
 
 type Loader struct {
-	store  objectstore.Store
-	table  *atomic.Pointer[Table]
-	mu     sync.Mutex
-	loaded map[string]bool
+	store   objectstore.Store
+	table   *atomic.Pointer[Table]
+	mu      sync.Mutex
+	loaded  map[string]bool
+	lastGen string
 }
 
 func NewLoader(store objectstore.Store, table *atomic.Pointer[Table]) (*Loader, error) {
@@ -38,7 +39,10 @@ func NewLoader(store objectstore.Store, table *atomic.Pointer[Table]) (*Loader, 
 }
 
 func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
-	manifest, _, err := kvfs.ResolveBranch(ctx, l.store, branch)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	manifest, gen, err := kvfs.ResolveBranch(ctx, l.store, branch)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
 			return 0, nil
@@ -46,22 +50,22 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 		return 0, fmt.Errorf("sync branch %s: %w", branch, err)
 	}
 
+	if gen != "" && gen == l.lastGen {
+		return 0, nil
+	}
+
 	loadedCount := 0
 	for _, seg := range manifest.Segments {
-		l.mu.Lock()
-		loaded := l.loaded[seg.SegmentId]
-		l.mu.Unlock()
-		if loaded {
+		if l.loaded[seg.SegmentId] {
 			continue
 		}
 		if err := l.loadSegment(ctx, branch, seg.SegmentId); err != nil {
 			return loadedCount, err
 		}
-		l.mu.Lock()
 		l.loaded[seg.SegmentId] = true
-		l.mu.Unlock()
 		loadedCount++
 	}
+	l.lastGen = gen
 	return loadedCount, nil
 }
 
