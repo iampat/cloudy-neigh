@@ -3,6 +3,7 @@ package query_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 
@@ -302,4 +303,239 @@ func TestLoader_VectorDimensionMismatch(t *testing.T) {
 
 	_, ok := table.Load().Get("doc-2")
 	require.False(t, ok)
+}
+
+func TestLoader_GenerationSkip(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
+	require.NoError(t, err)
+
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v1")}),
+	})
+	updateManifest(t, store, "main", []string{"seg-1"}, "")
+
+	loaded, err := loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	segKey := segment.Key("main", "seg-1")
+	err = store.Delete(ctx, segKey)
+	require.NoError(t, err)
+
+	loaded, err = loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 0, loaded)
+}
+
+func TestLoader_GenerationAdvancesOnlyOnCleanPass(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
+	require.NoError(t, err)
+
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0}, nil),
+	})
+	segBadKey := segment.Key("main", "seg-bad")
+	var buf bytes.Buffer
+	w := segment.NewWriter(&buf)
+	require.NoError(t, w.Write(&storagepb.DocumentMutation{
+		Branch:  "main",
+		DocId:   "doc-bad",
+		Op:      storagepb.MutationOp_PUT,
+		Payload: []byte("not-a-proto"),
+	}))
+	require.NoError(t, w.Close())
+	_, err = store.Put(ctx, segBadKey, bytes.NewReader(buf.Bytes()), objectstore.Condition{Absent: true})
+	require.NoError(t, err)
+
+	_ = updateManifest(t, store, "main", []string{"seg-1", "seg-bad"}, "")
+
+	loaded, err := loader.Sync(ctx, "main")
+	require.Error(t, err)
+	require.Equal(t, 1, loaded)
+
+	err = store.Delete(ctx, segBadKey)
+	require.NoError(t, err)
+	writeSegment(t, store, "main", "seg-bad", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-bad", []float32{2.0}, nil),
+	})
+
+	loaded, err = loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	rec, ok := table.Load().Get("doc-bad")
+	require.True(t, ok)
+	require.Equal(t, "doc-bad", rec.Id)
+}
+
+func TestLoader_ReplayOrder(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
+	require.NoError(t, err)
+
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0}, map[string]*cloudyneighpb.AttributeValue{"val": stringAttr("first")}),
+		putMutation(t, "main", "doc-2", []float32{2.0}, nil),
+	})
+	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{10.0}, map[string]*cloudyneighpb.AttributeValue{"val": stringAttr("second")}),
+		deleteMutation("main", "doc-2"),
+	})
+	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, "")
+
+	loaded, err := loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 2, loaded)
+
+	rec1, ok := table.Load().Get("doc-1")
+	require.True(t, ok)
+	require.Equal(t, []float32{10.0}, rec1.Vectors["default"].Values)
+	require.True(t, proto.Equal(stringAttr("second"), rec1.Attributes["val"]))
+
+	_, ok = table.Load().Get("doc-2")
+	require.False(t, ok)
+}
+
+func TestLoader_ConcurrentSync(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
+	require.NoError(t, err)
+
+	var segIDs []string
+	for i := 1; i <= 6; i++ {
+		segID := fmt.Sprintf("seg-%d", i)
+		segIDs = append(segIDs, segID)
+		writeSegment(t, store, "main", segID, []*storagepb.DocumentMutation{
+			putMutation(t, "main", fmt.Sprintf("doc-%d", i), []float32{float32(i)}, nil),
+		})
+	}
+	updateManifest(t, store, "main", segIDs, "")
+
+	const goroutines = 8
+	errCh := make(chan error, goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			_, err := loader.Sync(ctx, "main")
+			errCh <- err
+		}()
+	}
+
+	for g := 0; g < goroutines; g++ {
+		require.NoError(t, <-errCh)
+	}
+
+	for i := 1; i <= 6; i++ {
+		rec, ok := table.Load().Get(fmt.Sprintf("doc-%d", i))
+		require.True(t, ok)
+		require.Equal(t, fmt.Sprintf("doc-%d", i), rec.Id)
+	}
+}
+
+func TestLoader_SnapshotIsolationAcrossSync(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
+	require.NoError(t, err)
+
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0, 2.0}, map[string]*cloudyneighpb.AttributeValue{"v": stringAttr("initial")}),
+		putMutation(t, "main", "doc-2", []float32{3.0, 4.0}, nil),
+	})
+	gen := updateManifest(t, store, "main", []string{"seg-1"}, "")
+
+	loaded, err := loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	oldSnap := table.Load()
+
+	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{10.0, 20.0}, map[string]*cloudyneighpb.AttributeValue{"v": stringAttr("updated")}),
+		deleteMutation("main", "doc-2"),
+		putMutation(t, "main", "doc-3", []float32{5.0, 6.0}, nil),
+	})
+	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, gen)
+
+	const readers = 4
+	const iters = 50
+	errCh := make(chan error, readers+1)
+
+	for r := 0; r < readers; r++ {
+		go func() {
+			for i := 0; i < iters; i++ {
+				rec1, ok := oldSnap.Get("doc-1")
+				if !ok || rec1.Attributes["v"].GetStringValue() != "initial" {
+					errCh <- fmt.Errorf("doc-1 corrupted on old snapshot")
+					return
+				}
+				if rec1.Vectors["default"].Values[0] != 1.0 {
+					errCh <- fmt.Errorf("doc-1 vector corrupted on old snapshot")
+					return
+				}
+				if _, ok := oldSnap.Get("doc-2"); !ok {
+					errCh <- fmt.Errorf("doc-2 should still exist on old snapshot")
+					return
+				}
+				if _, ok := oldSnap.Get("doc-3"); ok {
+					errCh <- fmt.Errorf("doc-3 should not be visible on old snapshot")
+					return
+				}
+			}
+			errCh <- nil
+		}()
+	}
+
+	go func() {
+		_, err := loader.Sync(ctx, "main")
+		errCh <- err
+	}()
+
+	for i := 0; i < readers+1; i++ {
+		require.NoError(t, <-errCh)
+	}
+
+	newSnap := table.Load()
+	require.NotEqual(t, oldSnap, newSnap)
+
+	rec1, ok := newSnap.Get("doc-1")
+	require.True(t, ok)
+	require.Equal(t, "updated", rec1.Attributes["v"].GetStringValue())
+	require.Equal(t, float32(10.0), rec1.Vectors["default"].Values[0])
+
+	_, ok = newSnap.Get("doc-2")
+	require.False(t, ok)
+
+	_, ok = newSnap.Get("doc-3")
+	require.True(t, ok)
 }
