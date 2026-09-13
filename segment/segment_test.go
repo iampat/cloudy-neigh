@@ -322,3 +322,35 @@ func TestKey(t *testing.T) {
 		t.Fatalf("segment.Key() = %q, want %q", got, want)
 	}
 }
+
+func TestRefKey(t *testing.T) {
+	t.Run("explicit key", func(t *testing.T) {
+		ref := &storagepb.SegmentRef{
+			SegmentId: "seg-1",
+			Key:       "segments/main/seg-1.recordio",
+		}
+		got := segment.RefKey("staging", ref)
+		want := "segments/main/seg-1.recordio"
+		if got != want {
+			t.Fatalf("segment.RefKey() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("fallback key", func(t *testing.T) {
+		ref := &storagepb.SegmentRef{
+			SegmentId: "seg-2",
+		}
+		got := segment.RefKey("main", ref)
+		want := "segments/main/seg-2.recordio"
+		if got != want {
+			t.Fatalf("segment.RefKey() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("nil ref", func(t *testing.T) {
+		got := segment.RefKey("main", nil)
+		if got != "" {
+			t.Fatalf("segment.RefKey() = %q, want empty", got)
+		}
+	})
+}

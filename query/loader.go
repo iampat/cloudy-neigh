@@ -63,7 +63,7 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 		if l.loaded[seg.SegmentId] {
 			continue
 		}
-		if err := l.loadSegment(ctx, branch, seg.SegmentId); err != nil {
+		if err := l.loadSegment(ctx, branch, seg); err != nil {
 			return loadedCount, err
 		}
 		l.loaded[seg.SegmentId] = true
@@ -82,8 +82,8 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 	return loadedCount, nil
 }
 
-func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
-	segKey := segment.Key(branch, segID)
+func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.SegmentRef) error {
+	segKey := segment.RefKey(branch, seg)
 
 	fetchStart := time.Now()
 	rc, _, err := l.store.Get(ctx, segKey)
@@ -136,7 +136,7 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 
 	slog.Debug("loaded segment",
 		"branch", branch,
-		"segment_id", segID,
+		"segment_id", seg.SegmentId,
 		"records", len(muts),
 		"fetch_dur", fetchDur,
 		"decode_dur", decodeDur,

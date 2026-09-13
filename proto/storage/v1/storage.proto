@@ -44,6 +44,7 @@ message SegmentRef {
   int64 vectors_size = 6;
   int64 postings_size = 7;
   int64 docs_size = 8;
+  string key = 9;
 }
 
 message BranchManifest {
