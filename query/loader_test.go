@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/iampat/cloudy-neigh/ingest"
 	"github.com/iampat/cloudy-neigh/kvfs"
+	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -538,4 +541,200 @@ func TestLoader_SnapshotIsolationAcrossSync(t *testing.T) {
 
 	_, ok = newSnap.Get("doc-3")
 	require.True(t, ok)
+}
+
+func appendWALRecord(t *testing.T, ctx context.Context, log *logstream.Log, branch, docID string, vec []float32, attrs map[string]*cloudyneighpb.AttributeValue) {
+	t.Helper()
+	var vectors map[string]*cloudyneighpb.Vector
+	if len(vec) > 0 {
+		vectors = map[string]*cloudyneighpb.Vector{
+			"default": {Values: vec},
+		}
+	}
+	rec := &cloudyneighpb.Record{
+		Id:         docID,
+		Vectors:    vectors,
+		Attributes: attrs,
+	}
+	payload, err := proto.Marshal(rec)
+	require.NoError(t, err)
+
+	walRec := &storagepb.WalRecord{
+		Record: &storagepb.WalRecord_Mutation{
+			Mutation: &storagepb.DocumentMutation{
+				Branch:  branch,
+				DocId:   docID,
+				Op:      storagepb.MutationOp_PUT,
+				Payload: payload,
+			},
+		},
+	}
+	recBytes, err := proto.Marshal(walRec)
+	require.NoError(t, err)
+
+	_, err = log.Append(ctx, []logstream.Record{recBytes})
+	require.NoError(t, err)
+}
+
+func flushBranch(t *testing.T, ctx context.Context, store objectstore.Store, log *logstream.Log, branch string, expectedSegCount int) {
+	t.Helper()
+	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+		DocThreshold:  1,
+		TimeThreshold: 10 * time.Minute,
+		PollInterval:  10 * time.Millisecond,
+	})
+	require.NoError(t, err)
+
+	flushCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- flusher.Run(flushCtx)
+	}()
+
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.After(5 * time.Second)
+
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context canceled waiting for branch %s: %v", branch, ctx.Err())
+		case <-timeout:
+			t.Fatalf("timed out waiting for branch %s manifest", branch)
+		case <-ticker.C:
+			m, _, err := kvfs.ResolveBranch(ctx, store, branch)
+			if err == nil && len(m.Segments) >= expectedSegCount {
+				cancel()
+				require.NoError(t, <-errCh)
+				return
+			}
+		}
+	}
+}
+
+func TestLoader_ForkBranch_Inheritance(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	log, err := logstream.New(store, "wal")
+	require.NoError(t, err)
+
+	appendWALRecord(t, ctx, log, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
+	appendWALRecord(t, ctx, log, "main", "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
+
+	flushBranch(t, ctx, store, log, "main", 2)
+
+	_, _, err = kvfs.CreateBranch(ctx, store, "staging", "main")
+	require.NoError(t, err)
+
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
+	require.NoError(t, err)
+
+	loaded, err := loader.Sync(ctx, "staging")
+	require.NoError(t, err)
+	require.Equal(t, 2, loaded)
+
+	snap := table.Load()
+	rec1, ok := snap.Get("doc-1")
+	require.True(t, ok)
+	require.True(t, proto.Equal(stringAttr("doc1"), rec1.Attributes["title"]))
+
+	rec2, ok := snap.Get("doc-2")
+	require.True(t, ok)
+	require.True(t, proto.Equal(stringAttr("doc2"), rec2.Attributes["title"]))
+
+	hits, err := snap.Search("default", []float32{1.0, 0.0}, 2, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	require.Equal(t, "doc-1", hits[0].Record.Id)
+}
+
+func TestLoader_ForkBranch_Divergence(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	log, err := logstream.New(store, "wal")
+	require.NoError(t, err)
+
+	appendWALRecord(t, ctx, log, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
+	flushBranch(t, ctx, store, log, "main", 1)
+
+	_, _, err = kvfs.CreateBranch(ctx, store, "staging", "main")
+	require.NoError(t, err)
+
+	appendWALRecord(t, ctx, log, "staging", "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
+	flushBranch(t, ctx, store, log, "staging", 2)
+
+	var stagingTable atomic.Pointer[query.Table]
+	stagingTable.Store(query.NewTable())
+	stagingLoader, err := query.NewLoader(store, &stagingTable)
+	require.NoError(t, err)
+
+	loaded, err := stagingLoader.Sync(ctx, "staging")
+	require.NoError(t, err)
+	require.Equal(t, 2, loaded)
+
+	stagingSnap := stagingTable.Load()
+	_, ok1 := stagingSnap.Get("doc-1")
+	require.True(t, ok1)
+	_, ok2 := stagingSnap.Get("doc-2")
+	require.True(t, ok2)
+
+	var mainTable atomic.Pointer[query.Table]
+	mainTable.Store(query.NewTable())
+	mainLoader, err := query.NewLoader(store, &mainTable)
+	require.NoError(t, err)
+
+	loadedMain, err := mainLoader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 1, loadedMain)
+
+	mainSnap := mainTable.Load()
+	_, okMain1 := mainSnap.Get("doc-1")
+	require.True(t, okMain1)
+	_, okMain2 := mainSnap.Get("doc-2")
+	require.False(t, okMain2)
+}
+
+func TestLoader_ManifestWithoutKeyFallback(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	writeSegment(t, store, "main", "seg-legacy", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-legacy", []float32{1.0, 2.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("legacy")}),
+	})
+
+	m := &storagepb.BranchManifest{
+		SchemaVersion: 1,
+		Segments: []*storagepb.SegmentRef{
+			{
+				SegmentId: "seg-legacy",
+				Key:       "",
+			},
+		},
+	}
+	_, err = kvfs.UpdateBranch(ctx, store, "main", m, "")
+	require.NoError(t, err)
+
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
+	require.NoError(t, err)
+
+	loaded, err := loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	rec, ok := table.Load().Get("doc-legacy")
+	require.True(t, ok)
+	require.True(t, proto.Equal(stringAttr("legacy"), rec.Attributes["title"]))
 }

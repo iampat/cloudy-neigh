@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query/distance"
@@ -621,6 +622,11 @@ func (h *hitHeap) Pop() any {
 	return x
 }
 
+type SearchStats struct {
+	ScanDuration        time.Duration
+	MaterializeDuration time.Duration
+}
+
 func (t *Table) Search(
 	col string,
 	query []float32,
@@ -628,17 +634,28 @@ func (t *Table) Search(
 	metric cloudyneighpb.DistanceMetric,
 	filter *cloudyneighpb.EqualityFilter,
 ) ([]*cloudyneighpb.ScoredRecord, error) {
+	hits, _, err := t.SearchWithStats(col, query, topK, metric, filter)
+	return hits, err
+}
+
+func (t *Table) SearchWithStats(
+	col string,
+	query []float32,
+	topK int,
+	metric cloudyneighpb.DistanceMetric,
+	filter *cloudyneighpb.EqualityFilter,
+) ([]*cloudyneighpb.ScoredRecord, SearchStats, error) {
 	if topK <= 0 {
-		return nil, nil
+		return nil, SearchStats{}, nil
 	}
 
 	vCol, ok := t.vectors[col]
 	if !ok || vCol.numVecs == 0 {
-		return nil, nil
+		return nil, SearchStats{}, nil
 	}
 
 	if len(query) != vCol.dim {
-		return nil, ErrDimensionMismatch
+		return nil, SearchStats{}, ErrDimensionMismatch
 	}
 
 	var cmpFunc func(a, b searchHit) int
@@ -646,10 +663,10 @@ func (t *Table) Search(
 	case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE:
 		normSq, err := distance.DotProduct(query, query)
 		if err != nil {
-			return nil, err
+			return nil, SearchStats{}, err
 		}
 		if normSq == 0 {
-			return nil, distance.ErrZeroVector
+			return nil, SearchStats{}, distance.ErrZeroVector
 		}
 		cmpFunc = cmpAsc
 	case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED:
@@ -657,7 +674,7 @@ func (t *Table) Search(
 	case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT:
 		cmpFunc = cmpDesc
 	default:
-		return nil, fmt.Errorf("query: unknown metric %v", metric)
+		return nil, SearchStats{}, fmt.Errorf("query: unknown metric %v", metric)
 	}
 
 	heapCap := topK
@@ -669,6 +686,7 @@ func (t *Table) Search(
 		cmp:  cmpFunc,
 	}
 
+	scanStart := time.Now()
 	for chunkIdx, chunk := range vCol.chunks {
 		vecToRowChunk := vCol.vecToRow[chunkIdx]
 		for vs, row := range vecToRowChunk {
@@ -695,19 +713,19 @@ func (t *Table) Search(
 					if errors.Is(err, distance.ErrZeroVector) {
 						continue
 					}
-					return nil, err
+					return nil, SearchStats{}, err
 				}
 			case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED:
 				var err error
 				score, err = distance.L2Squared(query, storedVec)
 				if err != nil {
-					return nil, err
+					return nil, SearchStats{}, err
 				}
 			case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT:
 				var err error
 				score, err = distance.DotProduct(query, storedVec)
 				if err != nil {
-					return nil, err
+					return nil, SearchStats{}, err
 				}
 			}
 
@@ -727,7 +745,9 @@ func (t *Table) Search(
 	}
 
 	slices.SortFunc(h.hits, h.cmp)
+	scanDur := time.Since(scanStart)
 
+	matStart := time.Now()
 	hits := make([]*cloudyneighpb.ScoredRecord, len(h.hits))
 	for i, hit := range h.hits {
 		hits[i] = &cloudyneighpb.ScoredRecord{
@@ -735,5 +755,10 @@ func (t *Table) Search(
 			Score:  hit.score,
 		}
 	}
-	return hits, nil
+	matDur := time.Since(matStart)
+
+	return hits, SearchStats{
+		ScanDuration:        scanDur,
+		MaterializeDuration: matDur,
+	}, nil
 }
