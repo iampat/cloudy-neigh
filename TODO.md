@@ -43,9 +43,7 @@
       cache that directory or make the tool a Bazel target.
 - [ ] Restore `govulncheck` in the `quality` workflow.
       The check was removed because `govulncheck ./...` cannot import generated
-      protobuf packages from `bazel-bin`. Stage the generated `.pb.go` files
-      into `proto/` before running the tool, or run `govulncheck` through a
-      Bazel aspect.
+      protobuf packages from `bazel-bin`. Write a Bazel rule to fix this issue
 - [ ] Add fuzz tests. A table test covers the cases we thought of. A fuzzer
       finds the frame that no case names.
   - [ ] Fuzz the RecordIO reader and the scanner with arbitrary bytes. Every
