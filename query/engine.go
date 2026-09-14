@@ -104,7 +104,6 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	ticker := time.NewTicker(e.syncInterval)
-	defer ticker.Stop()
 
 	for {
 		select {
