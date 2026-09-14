@@ -83,8 +83,8 @@ into the smallest hook the library offers, such as the `As` escape hatch in
 Concurrency is where a storage engine breaks. Spend the most care here, in
 writing and in review.
 
-- Default to `sync.Mutex`. Use `RWMutex` only when reads vastly outnumber
-  writes or readers hold the lock a long time.
+- Default to `sync.Mutex`. Use `RWMutex` only for measured contention on a
+  hot path, not from the shape of the code.
 - No I/O under a lock.
 - Clone before you release a lock if the caller may mutate the value. Do not
   return a pointer that aliases lock-protected state.
