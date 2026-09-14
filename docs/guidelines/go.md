@@ -102,6 +102,8 @@ writing and in review.
   meaning for.
 - Flag an API that needs a nil pointer to express the default when the zero
   value of the type can carry it.
+- Protobuf getters are nil-safe. Call `GetX()` on a message that can be nil
+  instead of a nil check plus a field access.
 
 ## Logging
 
