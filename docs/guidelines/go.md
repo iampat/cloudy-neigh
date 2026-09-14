@@ -4,7 +4,7 @@ These rules bind all Go code in this repository. Read them before the first
 Go edit in a task. Review Go changes against them. The comment rules in
 `.claude/CLAUDE.md` also apply.
 
-Write to Go 1.26 semantics. the code must not need a feature or a runtime behavior from a later version.
+Write to Go 1.27 semantics. the code must not need a feature or a runtime behavior from a later version.
 
 ## Less code
 
