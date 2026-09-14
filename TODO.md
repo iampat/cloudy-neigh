@@ -69,8 +69,8 @@
       jump probes, uploads, and elapsed time. `walbench -debuglog` writes these
       records to measure write amplification.
 - [ ] Remove the `golang.org/x/tools` override in `MODULE.bazel`. rules_go
-      0.62.0 pins v0.34.0, which reads export data version 2 at most. Drop the
-      override when rules_go pins v0.44.0 or later.
+      0.63.0 still pins v0.34.0, which reads export data version 2 at most.
+      Drop the override when rules_go pins v0.44.0 or later.
 - [X] Replace custom cancellable sleeps across the codebase with `xtime.Sleep`.
       `walbench` now uses `xtime.Sleep`.
 - [ ] Hedged sequence discovery: probe candidate sequence numbers concurrently in LogStream.
