@@ -10,8 +10,8 @@ bazel_dep(name = "protobuf", version = "36.1.bcr.1")
 bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.4", dev_dependency = True)
 bazel_dep(name = "aspect_rules_lint", version = "2.9.0", dev_dependency = True)
 
-bazel_dep(name = "rules_cc", version = "0.2.18")
-bazel_dep(name = "grpc", version = "1.83.0")
+# bazel_dep(name = "rules_cc", version = "0.2.22")
+bazel_dep(name = "grpc", version = "1.84.0")
 bazel_dep(name = "rules_python", version = "2.3.3")
 bazel_dep(name = "rules_python_gazelle_plugin", version = "2.3.3")
 bazel_dep(name = "rules_proto_grpc_python", version = "5.8.0")
@@ -47,8 +47,8 @@ go_deps.from_file(go_mod = "//:go.mod")
 # Remove this override when rules_go pins v0.44.0 or later.
 go_deps.module(
     path = "golang.org/x/tools",
-    sum = "h1:3NI7VXzL9+1WZD52Dx2ttoPwD5DWrFGpl9mFZDlmisI=",
-    version = "v0.49.0",
+    sum = "h1:c2ifzfcuY7L90lZ2aKd8S4K2NpASF08SZx9ZuJkHmSU=",
+    version = "v0.50.0",
 )
 use_repo(
     go_deps,
