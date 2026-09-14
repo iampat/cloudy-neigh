@@ -27,7 +27,9 @@ go_test(
     ],
     deps = [
         ":query",
+        "//ingest",
         "//kvfs",
+        "//logstream",
         "//objectstore",
         "//proto/cloudyneigh/v1:cloudyneigh",
         "//proto/storage/v1:storage",

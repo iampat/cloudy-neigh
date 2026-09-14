@@ -321,6 +321,7 @@ func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
 		SegmentId: segID,
 		DocCount:  uint64(len(mt.mutations)),
 		DocsSize:  int64(len(data)),
+		Key:       segKey,
 	}
 
 	endSeq := mt.lastSeq
