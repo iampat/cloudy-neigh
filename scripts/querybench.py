@@ -73,16 +73,24 @@ def run_queries(
 
 
 def report(label: str, latencies: list[float]) -> None:
+    if not latencies:
+        logger.warning("%s: no completed queries", label)
+        return
     ms = sorted(x * 1000 for x in latencies)
     n = len(ms)
+    p50 = ms[max(0, min(n - 1, n // 2))]
+    p90 = ms[max(0, min(n - 1, int(n * 0.90) - 1))]
+    p95 = ms[max(0, min(n - 1, int(n * 0.95) - 1))]
+    p99 = ms[max(0, min(n - 1, int(n * 0.99) - 1))]
     logger.info(
-        "%s: n=%d mean=%.2fms p50=%.2fms p95=%.2fms p99=%.2fms max=%.2fms",
+        "%s: n=%d mean=%.2fms p50=%.2fms p90=%.2fms p95=%.2fms p99=%.2fms max=%.2fms",
         label,
         n,
         statistics.fmean(ms),
-        ms[n // 2],
-        ms[int(n * 0.95) - 1],
-        ms[int(n * 0.99) - 1],
+        p50,
+        p90,
+        p95,
+        p99,
         ms[-1],
     )
 
@@ -90,7 +98,18 @@ def report(label: str, latencies: list[float]) -> None:
 def main(argv: list[str]) -> None:
     del argv  # Unused.
     random.seed(7)
-    path = f"{FLAGS.data_dir}/{FLAGS.parquet}"
+    base = os.environ.get("BUILD_WORKING_DIRECTORY", ".")
+    if os.path.isabs(FLAGS.parquet):
+        path = FLAGS.parquet
+    elif os.path.isfile(os.path.join(base, FLAGS.parquet)):
+        path = os.path.join(base, FLAGS.parquet)
+    else:
+        data_dir = (
+            FLAGS.data_dir
+            if os.path.isabs(FLAGS.data_dir)
+            else os.path.join(base, FLAGS.data_dir)
+        )
+        path = os.path.join(data_dir, FLAGS.parquet)
     vectors = load_query_vectors(path, max(FLAGS.queries, FLAGS.warmup))
     logger.info("Loaded %d query vectors from %s", len(vectors), path)
 

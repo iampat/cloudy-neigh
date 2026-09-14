@@ -1045,3 +1045,74 @@ func TestTable_SearchWithStats(t *testing.T) {
 	require.GreaterOrEqual(t, stats.ScanDuration, time.Duration(0))
 	require.GreaterOrEqual(t, stats.MaterializeDuration, time.Duration(0))
 }
+
+func TestTable_ReupsertDeletedDocClearsPreviousAttributes(t *testing.T) {
+	b := query.NewBuilder()
+	err := b.Upsert("doc-1", map[string][]float32{
+		"vec": {1.0, 2.0},
+	}, map[string]*cloudyneighpb.AttributeValue{
+		"title": stringAttr("initial"),
+		"tag":   stringAttr("old"),
+	})
+	require.NoError(t, err)
+
+	table := b.Build()
+	rec, ok := table.Get("doc-1")
+	require.True(t, ok)
+	require.NotNil(t, rec.Attributes["title"])
+	require.NotNil(t, rec.Attributes["tag"])
+
+	b = table.Builder()
+	require.True(t, b.Delete("doc-1"))
+	table = b.Build()
+	_, ok = table.Get("doc-1")
+	require.False(t, ok)
+
+	b = table.Builder()
+	err = b.Upsert("doc-1", map[string][]float32{
+		"vec": {3.0, 4.0},
+	}, map[string]*cloudyneighpb.AttributeValue{
+		"tag": stringAttr("new"),
+	})
+	require.NoError(t, err)
+
+	table = b.Build()
+	rec, ok = table.Get("doc-1")
+	require.True(t, ok)
+	require.Nil(t, rec.Attributes["title"])
+	require.True(t, proto.Equal(stringAttr("new"), rec.Attributes["tag"]))
+	require.Equal(t, []float32{3.0, 4.0}, rec.Vectors["vec"].Values)
+}
+
+func TestTable_ReupsertDeletedDocClearsOmittedVectors(t *testing.T) {
+	b := query.NewBuilder()
+	err := b.Upsert("doc-1", map[string][]float32{
+		"vec1": {1.0, 2.0},
+		"vec2": {5.0, 6.0},
+	}, nil)
+	require.NoError(t, err)
+
+	table := b.Build()
+	v, ok := table.Vector("doc-1", "vec1")
+	require.True(t, ok)
+	require.Equal(t, []float32{1.0, 2.0}, v)
+
+	b = table.Builder()
+	require.True(t, b.Delete("doc-1"))
+	table = b.Build()
+
+	b = table.Builder()
+	err = b.Upsert("doc-1", map[string][]float32{
+		"vec1": {3.0, 4.0},
+		"vec2": {},
+	}, nil)
+	require.NoError(t, err)
+
+	table = b.Build()
+	v, ok = table.Vector("doc-1", "vec1")
+	require.True(t, ok)
+	require.Equal(t, []float32{3.0, 4.0}, v)
+
+	_, ok = table.Vector("doc-1", "vec2")
+	require.False(t, ok)
+}

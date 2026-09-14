@@ -8,6 +8,7 @@ Python edit in a task. Review Python changes against them.
 - Always use a virtual environment (`.venv`). Never install packages globally.
 - Use Astral tooling: `uv` for package management and `ruff` for formatting and linting.
 - Format with `ruff format`. Check with `ruff check`.
+- Prefer jq over Python scripts when analysing JSON files.
 
 ## Dependencies
 

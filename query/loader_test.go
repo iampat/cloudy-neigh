@@ -258,7 +258,7 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	rec1, ok = table.Load().Get("doc-1")
 	require.True(t, ok)
 	require.Equal(t, []float32{10.0}, rec1.Vectors["default"].Values)
-	require.True(t, proto.Equal(stringAttr("v1"), rec1.Attributes["k"]))
+	require.Nil(t, rec1.Attributes["k"])
 	require.True(t, proto.Equal(stringAttr("e"), rec1.Attributes["extra"]))
 
 	writeSegment(t, store, "main", "seg-4", []*storagepb.DocumentMutation{
@@ -737,4 +737,58 @@ func TestLoader_ManifestWithoutKeyFallback(t *testing.T) {
 	rec, ok := table.Load().Get("doc-legacy")
 	require.True(t, ok)
 	require.True(t, proto.Equal(stringAttr("legacy"), rec.Attributes["title"]))
+}
+
+func TestLoader_BatchSegmentLoading(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
+	require.NoError(t, err)
+
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")}),
+		putMutation(t, "main", "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")}),
+	})
+	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-3", []float32{0.6, 0.8}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc3")}),
+		putMutation(t, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1-v2"), "tag": stringAttr("updated")}),
+	})
+	writeSegment(t, store, "main", "seg-3", []*storagepb.DocumentMutation{
+		deleteMutation("main", "doc-2"),
+		putMutation(t, "main", "doc-4", []float32{0.0, -1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc4")}),
+	})
+
+	updateManifest(t, store, "main", []string{"seg-1", "seg-2", "seg-3"}, "")
+
+	loaded, err := loader.Sync(ctx, "main")
+	require.NoError(t, err)
+	require.Equal(t, 3, loaded)
+
+	snap := table.Load()
+
+	rec1, ok := snap.Get("doc-1")
+	require.True(t, ok)
+	require.True(t, proto.Equal(stringAttr("doc1-v2"), rec1.Attributes["title"]))
+	require.True(t, proto.Equal(stringAttr("updated"), rec1.Attributes["tag"]))
+
+	_, ok = snap.Get("doc-2")
+	require.False(t, ok)
+
+	rec3, ok := snap.Get("doc-3")
+	require.True(t, ok)
+	require.True(t, proto.Equal(stringAttr("doc3"), rec3.Attributes["title"]))
+
+	rec4, ok := snap.Get("doc-4")
+	require.True(t, ok)
+	require.True(t, proto.Equal(stringAttr("doc4"), rec4.Attributes["title"]))
+
+	hits, err := snap.Search("default", []float32{1.0, 0.0}, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+	require.NoError(t, err)
+	require.Len(t, hits, 3)
+	require.Equal(t, "doc-1", hits[0].Record.Id)
 }

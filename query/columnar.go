@@ -246,12 +246,34 @@ func (b *Builder) Upsert(id string, vectors map[string][]float32, attrs map[stri
 
 	if row, exists := b.rowOf(id); exists {
 		rc, rs := chunkIndex(row)
-		if b.tombstones[rc][rs] {
+		wasDeleted := b.tombstones[rc][rs]
+		if wasDeleted {
 			if b.tombShared[rc] {
 				b.tombstones[rc] = slices.Clone(b.tombstones[rc])
 				b.tombShared[rc] = false
 			}
 			b.tombstones[rc][rs] = false
+
+			for _, aCol := range b.attrs {
+				if rc < len(aCol.chunks) && rs < len(aCol.chunks[rc]) && aCol.chunks[rc][rs] != nil {
+					if aCol.chunkShared[rc] {
+						aCol.chunks[rc] = slices.Clone(aCol.chunks[rc])
+						aCol.chunkShared[rc] = false
+					}
+					aCol.chunks[rc][rs] = nil
+				}
+			}
+			for col, vCol := range b.vectors {
+				if vec, ok := vectors[col]; !ok || len(vec) == 0 {
+					if rc < len(vCol.rowToVec) && rs < len(vCol.rowToVec[rc]) && vCol.rowToVec[rc][rs] >= 0 {
+						if vCol.rowShared[rc] {
+							vCol.rowToVec[rc] = slices.Clone(vCol.rowToVec[rc])
+							vCol.rowShared[rc] = false
+						}
+						vCol.rowToVec[rc][rs] = -1
+					}
+				}
+			}
 		}
 
 		for col, vec := range vectors {
@@ -692,6 +714,9 @@ func (t *Table) SearchWithStats(
 		for vs, row := range vecToRowChunk {
 			rc, rs := chunkIndex(row)
 			if t.tombstones[rc][rs] {
+				continue
+			}
+			if rc >= len(vCol.rowToVec) || rs >= len(vCol.rowToVec[rc]) || vCol.rowToVec[rc][rs] != (chunkIdx<<chunkShift)|vs {
 				continue
 			}
 			if filter != nil {
