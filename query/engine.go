@@ -32,7 +32,7 @@ type branchState struct {
 type Engine struct {
 	store        objectstore.Store
 	syncInterval time.Duration
-	mu           sync.RWMutex
+	mu           sync.Mutex
 	branches     map[string]*branchState
 }
 
@@ -51,20 +51,13 @@ func NewEngine(store objectstore.Store, syncInterval time.Duration) (*Engine, er
 }
 
 func (e *Engine) getOrCreateBranch(branch string) (*branchState, error) {
-	e.mu.RLock()
-	b, ok := e.branches[branch]
-	e.mu.RUnlock()
-	if ok {
-		return b, nil
-	}
-
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if b, ok := e.branches[branch]; ok {
 		return b, nil
 	}
 
-	b = new(branchState)
+	b := &branchState{}
 	b.table.Store(NewTable())
 	loader, err := NewLoader(e.store, &b.table)
 	if err != nil {
@@ -131,9 +124,9 @@ func (e *Engine) Query(ctx context.Context, req Request) ([]*cloudyneighpb.Score
 		col = "default"
 	}
 
-	e.mu.RLock()
+	e.mu.Lock()
 	b, ok := e.branches[req.Namespace]
-	e.mu.RUnlock()
+	e.mu.Unlock()
 	if !ok {
 		return nil, nil
 	}
