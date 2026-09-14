@@ -91,7 +91,7 @@ func TestEngine_Query_UnknownBranch(t *testing.T) {
 	eng, err := query.NewEngine(store, time.Second)
 	require.NoError(t, err)
 
-	hits, err := eng.Query(ctx, query.Request{
+	hits, _, err := eng.Query(ctx, query.Request{
 		Namespace: "nonexistent",
 		Vector:    []float32{1.0, 2.0},
 		TopK:      10,
@@ -129,7 +129,7 @@ func TestEngine_Query_SuccessAndDefaultColumn(t *testing.T) {
 
 	require.NoError(t, eng.SyncOnce(ctx))
 
-	hits, err := eng.Query(ctx, query.Request{
+	hits, _, err := eng.Query(ctx, query.Request{
 		Namespace: "main",
 		Vector:    []float32{1.0, 0.0},
 		TopK:      10,

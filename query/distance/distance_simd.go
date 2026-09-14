@@ -14,6 +14,10 @@ import (
 
 var _ bridge.ZeroSized
 
+func Implementation() string {
+	return "simd"
+}
+
 func l2Squared(a, b []float32) float32 {
 	return l2SquaredPortable(a, b)
 }

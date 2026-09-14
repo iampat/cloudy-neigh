@@ -17,6 +17,17 @@ func Key(branch, segID string) string {
 	return fmt.Sprintf(KeyPattern, branch, segID)
 }
 
+func RefKey(branch string, ref *storagepb.SegmentRef) string {
+	switch {
+	case ref.GetKey() != "":
+		return ref.GetKey()
+	case ref.GetSegmentId() != "":
+		return Key(branch, ref.GetSegmentId())
+	default:
+		return ""
+	}
+}
+
 var ErrNilMutation = errors.New("segment: nil mutation")
 
 type Writer struct {

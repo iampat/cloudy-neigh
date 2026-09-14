@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query"
@@ -1029,4 +1030,18 @@ func BenchmarkTable_ApplyDelta(b *testing.B) {
 		}
 		_ = wb.Build()
 	}
+}
+
+func TestTable_SearchWithStats(t *testing.T) {
+	b := query.NewBuilder()
+	require.NoError(t, b.Upsert("doc-1", map[string][]float32{
+		"default": {1.0, 0.0},
+	}, nil))
+	tbl := b.Build()
+
+	hits, stats, err := tbl.SearchWithStats("default", []float32{1.0, 0.0}, 1, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	require.GreaterOrEqual(t, stats.ScanDuration, time.Duration(0))
+	require.GreaterOrEqual(t, stats.MaterializeDuration, time.Duration(0))
 }
