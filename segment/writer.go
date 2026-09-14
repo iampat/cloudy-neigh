@@ -18,13 +18,14 @@ func Key(branch, segID string) string {
 }
 
 func RefKey(branch string, ref *storagepb.SegmentRef) string {
-	if ref == nil {
+	switch {
+	case ref.GetKey() != "":
+		return ref.GetKey()
+	case ref.GetSegmentId() != "":
+		return Key(branch, ref.GetSegmentId())
+	default:
 		return ""
 	}
-	if ref.Key != "" {
-		return ref.Key
-	}
-	return Key(branch, ref.SegmentId)
 }
 
 var ErrNilMutation = errors.New("segment: nil mutation")
