@@ -43,9 +43,6 @@ func NewLoader(store objectstore.Store, table *atomic.Pointer[Table]) (*Loader, 
 
 func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 	syncStart := time.Now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	manifest, gen, err := kvfs.ResolveBranch(ctx, l.store, branch)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
@@ -54,20 +51,33 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 		return 0, fmt.Errorf("sync branch %s: %w", branch, err)
 	}
 
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	if gen != "" && gen == l.lastGen {
 		return 0, nil
 	}
 
+	var b *Builder
 	loadedCount := 0
 	for _, seg := range manifest.Segments {
 		if l.loaded[seg.SegmentId] {
 			continue
 		}
-		if err := l.loadSegment(ctx, branch, seg); err != nil {
+		if b == nil {
+			b = l.table.Load().Builder()
+		}
+		if err := l.loadSegment(ctx, branch, seg, b); err != nil {
+			if loadedCount > 0 {
+				l.table.Store(b.Build())
+			}
 			return loadedCount, err
 		}
 		l.loaded[seg.SegmentId] = true
 		loadedCount++
+	}
+	if b != nil {
+		l.table.Store(b.Build())
 	}
 	l.lastGen = gen
 
@@ -82,7 +92,7 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 	return loadedCount, nil
 }
 
-func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.SegmentRef) error {
+func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.SegmentRef, b *Builder) error {
 	segKey := segment.RefKey(branch, seg)
 
 	fetchStart := time.Now()
@@ -111,10 +121,12 @@ func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.
 		}
 		muts = append(muts, mut)
 	}
-	decodeDur := time.Since(decodeStart)
-
-	applyStart := time.Now()
-	b := l.table.Load().Builder()
+	type decodedMut struct {
+		op    storagepb.MutationOp
+		docID string
+		rec   *cloudyneighpb.Record
+	}
+	decoded := make([]decodedMut, 0, len(muts))
 	for _, mut := range muts {
 		switch mut.Op {
 		case storagepb.MutationOp_PUT:
@@ -122,16 +134,26 @@ func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.
 			if err := proto.Unmarshal(mut.Payload, &rec); err != nil {
 				return fmt.Errorf("unmarshal record from %s: %w", segKey, err)
 			}
-			if err := b.UpsertRecord(&rec); err != nil {
-				return fmt.Errorf("upsert record %s from %s: %w", rec.Id, segKey, err)
-			}
+			decoded = append(decoded, decodedMut{op: mut.Op, docID: mut.DocId, rec: &rec})
 		case storagepb.MutationOp_DELETE:
-			b.Delete(mut.DocId)
+			decoded = append(decoded, decodedMut{op: mut.Op, docID: mut.DocId})
 		default:
 			return fmt.Errorf("unknown mutation op %v in %s", mut.Op, segKey)
 		}
 	}
-	l.table.Store(b.Build())
+	decodeDur := time.Since(decodeStart)
+
+	applyStart := time.Now()
+	for _, d := range decoded {
+		switch d.op {
+		case storagepb.MutationOp_PUT:
+			if err := b.UpsertRecord(d.rec); err != nil {
+				return fmt.Errorf("upsert record %s from %s: %w", d.rec.Id, segKey, err)
+			}
+		case storagepb.MutationOp_DELETE:
+			b.Delete(d.docID)
+		}
+	}
 	applyDur := time.Since(applyStart)
 
 	slog.Debug("loaded segment",

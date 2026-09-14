@@ -56,14 +56,21 @@ def load_dataset(
     namespace: str = "main",
 ) -> None:
     """Read Parquet files from data_dir and stream batches to the target service."""
-    pattern = os.path.join(data_dir, "**", "*.parquet")
-    files = sorted(glob.glob(pattern, recursive=True))
+    base = os.environ.get("BUILD_WORKING_DIRECTORY", ".")
+    resolved_dir = data_dir if os.path.isabs(data_dir) else os.path.join(base, data_dir)
+
+    if os.path.isfile(resolved_dir):
+        files = [resolved_dir]
+    else:
+        pattern = os.path.join(resolved_dir, "**", "*.parquet")
+        files = sorted(glob.glob(pattern, recursive=True))
+        files.sort(key=lambda p: (0 if parse_lang_from_path(p) == "en" else 1, p))
 
     if not files:
         logger.error("No Parquet files found in %s", data_dir)
         sys.exit(1)
 
-    logger.info("Found %d Parquet file(s) in %s", len(files), data_dir)
+    logger.info("Found %d Parquet file(s) in %s", len(files), resolved_dir)
     total = 0
     total_batches = 0
     start_time = time.time()

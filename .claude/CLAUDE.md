@@ -115,6 +115,7 @@ not trust memory over the help output.
 
 ## Gotchas & conventions
 
+- Prefer jq over Python scripts when analysing JSON files.
 - Generated code is not ours. Protoc output lives in `bazel-bin` and never
   reaches the repository. It stays outside review, outside lint, and outside the
   comment rules.

@@ -71,6 +71,9 @@ func (e *Engine) getOrCreateBranch(branch string) (*branchState, error) {
 func (e *Engine) SyncOnce(ctx context.Context) error {
 	var startAfter string
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		branches, err := kvfs.ListBranches(ctx, e.store, startAfter, listLimit)
 		if err != nil {
 			return fmt.Errorf("list branches: %w", err)
@@ -80,6 +83,9 @@ func (e *Engine) SyncOnce(ctx context.Context) error {
 		}
 
 		for _, branch := range branches {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			b, err := e.getOrCreateBranch(branch)
 			if err != nil {
 				slog.Error("create loader failed", "branch", branch, "err", err)
@@ -100,10 +106,14 @@ func (e *Engine) SyncOnce(ctx context.Context) error {
 
 func (e *Engine) Run(ctx context.Context) error {
 	if err := e.SyncOnce(ctx); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		slog.Error("initial sync failed", "err", err)
 	}
 
 	ticker := time.NewTicker(e.syncInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -111,6 +121,9 @@ func (e *Engine) Run(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			if err := e.SyncOnce(ctx); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				slog.Error("sync failed", "err", err)
 			}
 		}
@@ -118,6 +131,9 @@ func (e *Engine) Run(ctx context.Context) error {
 }
 
 func (e *Engine) Query(ctx context.Context, req Request) ([]*cloudyneighpb.ScoredRecord, SearchStats, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, SearchStats{}, err
+	}
 	col := req.VectorColumn
 	if col == "" {
 		col = "default"
