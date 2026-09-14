@@ -47,6 +47,13 @@ message EqualityFilter {
   AttributeValue value = 2;
 }
 
+enum DistanceMetric {
+  DISTANCE_METRIC_UNSPECIFIED = 0;
+  DISTANCE_METRIC_COSINE = 1;
+  DISTANCE_METRIC_EUCLIDEAN_SQUARED = 2;
+  DISTANCE_METRIC_DOT_PRODUCT = 3;
+}
+
 message QueryRequest {
   string namespace = 1;
   repeated float vector = 2;

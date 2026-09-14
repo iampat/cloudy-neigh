@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -17,12 +18,12 @@ import (
 
 type Loader struct {
 	store  objectstore.Store
-	table  *Table
+	table  *atomic.Pointer[Table]
 	mu     sync.Mutex
 	loaded map[string]bool
 }
 
-func NewLoader(store objectstore.Store, table *Table) (*Loader, error) {
+func NewLoader(store objectstore.Store, table *atomic.Pointer[Table]) (*Loader, error) {
 	if store == nil {
 		return nil, errors.New("query: nil store")
 	}
@@ -73,6 +74,7 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 	defer rc.Close()
 
 	reader := segment.NewReader(rc)
+	b := l.table.Load().Builder()
 	for {
 		mut, err := reader.Next()
 		if err != nil {
@@ -88,14 +90,15 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 			if err := proto.Unmarshal(mut.Payload, &rec); err != nil {
 				return fmt.Errorf("unmarshal record from %s: %w", segKey, err)
 			}
-			if err := l.table.UpsertRecord(&rec); err != nil {
+			if err := b.UpsertRecord(&rec); err != nil {
 				return fmt.Errorf("upsert record %s from %s: %w", rec.Id, segKey, err)
 			}
 		case storagepb.MutationOp_DELETE:
-			l.table.delete(mut.DocId)
+			b.Delete(mut.DocId)
 		default:
 			return fmt.Errorf("unknown mutation op %v in %s", mut.Op, segKey)
 		}
 	}
+	l.table.Store(b.Build())
 	return nil
 }

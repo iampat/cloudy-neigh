@@ -3,6 +3,7 @@ package query_test
 import (
 	"bytes"
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
@@ -82,8 +83,9 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable()
-	loader, err := query.NewLoader(store, table)
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
 	require.NoError(t, err)
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
@@ -96,7 +98,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
-	rec1, ok := table.Get("doc-1")
+	rec1, ok := table.Load().Get("doc-1")
 	require.True(t, ok)
 	require.True(t, proto.Equal(stringAttr("doc1"), rec1.Attributes["title"]))
 	require.Equal(t, []float32{1.0, 2.0}, rec1.Vectors["default"].Values)
@@ -116,16 +118,16 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
-	rec1, ok = table.Get("doc-1")
+	rec1, ok = table.Load().Get("doc-1")
 	require.True(t, ok)
 	require.True(t, proto.Equal(stringAttr("doc1"), rec1.Attributes["title"]))
 	require.True(t, proto.Equal(stringAttr("tech"), rec1.Attributes["category"]))
 	require.Equal(t, []float32{1.0, 2.0}, rec1.Vectors["default"].Values)
 
-	_, ok = table.Get("doc-2")
+	_, ok = table.Load().Get("doc-2")
 	require.False(t, ok)
 
-	rec3, ok := table.Get("doc-3")
+	rec3, ok := table.Load().Get("doc-3")
 	require.True(t, ok)
 	require.True(t, proto.Equal(stringAttr("doc3"), rec3.Attributes["title"]))
 
@@ -140,8 +142,9 @@ func TestLoader_UnknownMutationOp(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable()
-	loader, err := query.NewLoader(store, table)
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
 	require.NoError(t, err)
 
 	writeSegment(t, store, "main", "seg-unknown", []*storagepb.DocumentMutation{
@@ -164,8 +167,9 @@ func TestLoader_EmptyBranch(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable()
-	loader, err := query.NewLoader(store, table)
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
 	require.NoError(t, err)
 
 	loaded, err := loader.Sync(ctx, "nonexistent")
@@ -179,15 +183,16 @@ func TestLoader_Validation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable()
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
 
-	_, err = query.NewLoader(nil, table)
+	_, err = query.NewLoader(nil, &table)
 	require.Error(t, err)
 
 	_, err = query.NewLoader(store, nil)
 	require.Error(t, err)
 
-	loader, err := query.NewLoader(store, table)
+	loader, err := query.NewLoader(store, &table)
 	require.NoError(t, err)
 
 	_, err = loader.Sync(ctx, "invalid/branch/name")
@@ -200,8 +205,9 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable()
-	loader, err := query.NewLoader(store, table)
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
 	require.NoError(t, err)
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
@@ -214,7 +220,7 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
-	rec1, ok := table.Get("doc-1")
+	rec1, ok := table.Load().Get("doc-1")
 	require.True(t, ok)
 	require.Equal(t, "doc-1", rec1.Id)
 
@@ -229,10 +235,10 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
-	_, ok = table.Get("doc-1")
+	_, ok = table.Load().Get("doc-1")
 	require.False(t, ok)
 
-	rec2, ok := table.Get("doc-2")
+	rec2, ok := table.Load().Get("doc-2")
 	require.True(t, ok)
 	require.Equal(t, "doc-2", rec2.Id)
 
@@ -245,7 +251,7 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
-	rec1, ok = table.Get("doc-1")
+	rec1, ok = table.Load().Get("doc-1")
 	require.True(t, ok)
 	require.Equal(t, []float32{10.0}, rec1.Vectors["default"].Values)
 	require.True(t, proto.Equal(stringAttr("v1"), rec1.Attributes["k"]))
@@ -260,7 +266,7 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
-	_, ok = table.Get("doc-1")
+	_, ok = table.Load().Get("doc-1")
 	require.False(t, ok)
 }
 
@@ -270,8 +276,9 @@ func TestLoader_VectorDimensionMismatch(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	table := query.NewTable()
-	loader, err := query.NewLoader(store, table)
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable())
+	loader, err := query.NewLoader(store, &table)
 	require.NoError(t, err)
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
@@ -293,6 +300,6 @@ func TestLoader_VectorDimensionMismatch(t *testing.T) {
 	require.ErrorIs(t, err, query.ErrDimensionMismatch)
 	require.Equal(t, 0, loaded)
 
-	_, ok := table.Get("doc-2")
+	_, ok := table.Load().Get("doc-2")
 	require.False(t, ok)
 }
