@@ -40,7 +40,7 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: top_k must be positive")
 	}
 
-	hits, err := s.engine.Query(ctx, query.QueryRequest{
+	hits, err := s.engine.Query(ctx, query.Request{
 		Namespace:    req.Namespace,
 		VectorColumn: req.VectorColumn,
 		Vector:       req.Vector,

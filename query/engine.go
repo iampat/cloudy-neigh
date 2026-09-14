@@ -16,7 +16,7 @@ import (
 
 const listLimit = 1000
 
-type QueryRequest struct {
+type Request struct {
 	Namespace    string
 	VectorColumn string
 	Vector       []float32
@@ -125,7 +125,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 }
 
-func (e *Engine) Query(ctx context.Context, req QueryRequest) ([]*cloudyneighpb.ScoredRecord, error) {
+func (e *Engine) Query(ctx context.Context, req Request) ([]*cloudyneighpb.ScoredRecord, error) {
 	col := req.VectorColumn
 	if col == "" {
 		col = "default"
