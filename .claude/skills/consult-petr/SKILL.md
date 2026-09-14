@@ -50,6 +50,10 @@ Name the files Petr must read.
 State the constraint, not the solution you prefer. Your framing steers the
 approach, and the approach is what you came for.
 
+Keep the prompt short. Do not restate a repo rule: comment rules, style,
+CONSIDER markers, guideline files. Petr reads those files in the repository.
+Carry only what the repository does not hold.
+
 When the user invoked the skill, pass the user's problem statement verbatim.
 Add the bounds under it, marked as your own addition.
 
