@@ -117,7 +117,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 }
 
-func (e *Engine) Query(ctx context.Context, req Request) ([]*cloudyneighpb.ScoredRecord, error) {
+func (e *Engine) Query(ctx context.Context, req Request) ([]*cloudyneighpb.ScoredRecord, SearchStats, error) {
 	col := req.VectorColumn
 	if col == "" {
 		col = "default"
@@ -127,9 +127,9 @@ func (e *Engine) Query(ctx context.Context, req Request) ([]*cloudyneighpb.Score
 	b, ok := e.branches[req.Namespace]
 	e.mu.Unlock()
 	if !ok {
-		return nil, nil
+		return nil, SearchStats{}, nil
 	}
 
 	table := b.table.Load()
-	return table.Search(col, req.Vector, req.TopK, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, req.Filter)
+	return table.SearchWithStats(col, req.Vector, req.TopK, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, req.Filter)
 }

@@ -119,6 +119,7 @@ func TestDocThresholdFlush(t *testing.T) {
 	assert.Equal(t, uint64(3), manifest.CheckpointSeq)
 	require.Len(t, manifest.Segments, 1)
 	assert.Equal(t, uint64(3), manifest.Segments[0].DocCount)
+	assert.Equal(t, segment.Key("main", manifest.Segments[0].SegmentId), manifest.Segments[0].Key)
 
 	mutations := readSegmentMutations(t, ctx, store, "main", manifest.Segments[0].SegmentId)
 	require.Len(t, mutations, 3)

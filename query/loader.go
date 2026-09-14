@@ -1,12 +1,15 @@
 package query
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -39,6 +42,7 @@ func NewLoader(store objectstore.Store, table *atomic.Pointer[Table]) (*Loader, 
 }
 
 func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
+	syncStart := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -59,26 +63,44 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 		if l.loaded[seg.SegmentId] {
 			continue
 		}
-		if err := l.loadSegment(ctx, branch, seg.SegmentId); err != nil {
+		if err := l.loadSegment(ctx, branch, seg); err != nil {
 			return loadedCount, err
 		}
 		l.loaded[seg.SegmentId] = true
 		loadedCount++
 	}
 	l.lastGen = gen
+
+	if loadedCount > 0 {
+		slog.Info("sync pass",
+			"branch", branch,
+			"segments", loadedCount,
+			"total_dur", time.Since(syncStart),
+		)
+	}
+
 	return loadedCount, nil
 }
 
-func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
-	segKey := segment.Key(branch, segID)
+func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.SegmentRef) error {
+	segKey := segment.RefKey(branch, seg)
+
+	fetchStart := time.Now()
 	rc, _, err := l.store.Get(ctx, segKey)
 	if err != nil {
 		return fmt.Errorf("get segment %s: %w", segKey, err)
 	}
 	defer rc.Close()
 
-	reader := segment.NewReader(rc)
-	b := l.table.Load().Builder()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return fmt.Errorf("read segment %s: %w", segKey, err)
+	}
+	fetchDur := time.Since(fetchStart)
+
+	decodeStart := time.Now()
+	reader := segment.NewReader(bytes.NewReader(data))
+	var muts []*storagepb.DocumentMutation
 	for {
 		mut, err := reader.Next()
 		if err != nil {
@@ -87,7 +109,13 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 			}
 			return fmt.Errorf("read mutation from %s: %w", segKey, err)
 		}
+		muts = append(muts, mut)
+	}
+	decodeDur := time.Since(decodeStart)
 
+	applyStart := time.Now()
+	b := l.table.Load().Builder()
+	for _, mut := range muts {
 		switch mut.Op {
 		case storagepb.MutationOp_PUT:
 			var rec cloudyneighpb.Record
@@ -104,5 +132,16 @@ func (l *Loader) loadSegment(ctx context.Context, branch, segID string) error {
 		}
 	}
 	l.table.Store(b.Build())
+	applyDur := time.Since(applyStart)
+
+	slog.Debug("loaded segment",
+		"branch", branch,
+		"segment_id", seg.SegmentId,
+		"records", len(muts),
+		"fetch_dur", fetchDur,
+		"decode_dur", decodeDur,
+		"apply_dur", applyDur,
+	)
+
 	return nil
 }
