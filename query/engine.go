@@ -1,0 +1,143 @@
+package query
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/iampat/cloudy-neigh/kvfs"
+	"github.com/iampat/cloudy-neigh/objectstore"
+	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
+)
+
+const listLimit = 1000
+
+type QueryRequest struct {
+	Namespace    string
+	VectorColumn string
+	Vector       []float32
+	TopK         int
+	Filter       *cloudyneighpb.EqualityFilter
+}
+
+type branchState struct {
+	table  atomic.Pointer[Table]
+	loader *Loader
+}
+
+type Engine struct {
+	store        objectstore.Store
+	syncInterval time.Duration
+	mu           sync.RWMutex
+	branches     map[string]*branchState
+}
+
+func NewEngine(store objectstore.Store, syncInterval time.Duration) (*Engine, error) {
+	if store == nil {
+		return nil, errors.New("query: nil store")
+	}
+	if syncInterval <= 0 {
+		return nil, errors.New("query: non-positive sync interval")
+	}
+	return &Engine{
+		store:        store,
+		syncInterval: syncInterval,
+		branches:     make(map[string]*branchState),
+	}, nil
+}
+
+func (e *Engine) getOrCreateBranch(branch string) (*branchState, error) {
+	e.mu.RLock()
+	b, ok := e.branches[branch]
+	e.mu.RUnlock()
+	if ok {
+		return b, nil
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if b, ok := e.branches[branch]; ok {
+		return b, nil
+	}
+
+	b = new(branchState)
+	b.table.Store(NewTable())
+	loader, err := NewLoader(e.store, &b.table)
+	if err != nil {
+		return nil, fmt.Errorf("create loader: %w", err)
+	}
+	b.loader = loader
+	e.branches[branch] = b
+	return b, nil
+}
+
+func (e *Engine) SyncOnce(ctx context.Context) error {
+	var startAfter string
+	for {
+		branches, err := kvfs.ListBranches(ctx, e.store, startAfter, listLimit)
+		if err != nil {
+			return fmt.Errorf("list branches: %w", err)
+		}
+		if len(branches) == 0 {
+			break
+		}
+
+		for _, branch := range branches {
+			b, err := e.getOrCreateBranch(branch)
+			if err != nil {
+				slog.Error("create loader failed", "branch", branch, "err", err)
+				continue
+			}
+			if _, err := b.loader.Sync(ctx, branch); err != nil {
+				slog.Error("sync branch failed", "branch", branch, "err", err)
+			}
+		}
+
+		if len(branches) < listLimit {
+			break
+		}
+		startAfter = branches[len(branches)-1]
+	}
+	return nil
+}
+
+func (e *Engine) Run(ctx context.Context) error {
+	if err := e.SyncOnce(ctx); err != nil {
+		slog.Error("initial sync failed", "err", err)
+	}
+
+	ticker := time.NewTicker(e.syncInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := e.SyncOnce(ctx); err != nil {
+				slog.Error("sync failed", "err", err)
+			}
+		}
+	}
+}
+
+func (e *Engine) Query(ctx context.Context, req QueryRequest) ([]*cloudyneighpb.ScoredRecord, error) {
+	col := req.VectorColumn
+	if col == "" {
+		col = "default"
+	}
+
+	e.mu.RLock()
+	b, ok := e.branches[req.Namespace]
+	e.mu.RUnlock()
+	if !ok {
+		return nil, nil
+	}
+
+	table := b.table.Load()
+	return table.Search(col, req.Vector, req.TopK, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, req.Filter)
+}

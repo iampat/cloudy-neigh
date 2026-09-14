@@ -16,6 +16,7 @@ import (
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
+	"github.com/iampat/cloudy-neigh/query"
 	"github.com/iampat/cloudy-neigh/segment"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,9 +58,12 @@ func updateManifest(t *testing.T, ctx context.Context, store objectstore.Store, 
 	return gen
 }
 
-func setupQueryTestEnv(t *testing.T, store objectstore.Store) (cloudyneighpb.QueryServiceClient, *grpcapi.QueryServer) {
+func setupQueryTestEnv(t *testing.T, store objectstore.Store) (cloudyneighpb.QueryServiceClient, *query.Engine) {
 	t.Helper()
-	srv, err := grpcapi.NewQueryServer(store, 20*time.Millisecond)
+	eng, err := query.NewEngine(store, 20*time.Millisecond)
+	require.NoError(t, err)
+
+	srv, err := grpcapi.NewQueryServer(eng)
 	require.NoError(t, err)
 
 	lis := bufconn.Listen(1024 * 1024)
@@ -84,22 +88,11 @@ func setupQueryTestEnv(t *testing.T, store objectstore.Store) (cloudyneighpb.Que
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 
-	return cloudyneighpb.NewQueryServiceClient(conn), srv
+	return cloudyneighpb.NewQueryServiceClient(conn), eng
 }
 
 func TestQuery_NewQueryServer_Validation(t *testing.T) {
-	ctx := context.Background()
-	store, err := objectstore.Open(ctx, "mem://")
-	require.NoError(t, err)
-	t.Cleanup(func() { store.Close() })
-
-	_, err = grpcapi.NewQueryServer(nil, time.Second)
-	require.Error(t, err)
-
-	_, err = grpcapi.NewQueryServer(store, 0)
-	require.Error(t, err)
-
-	_, err = grpcapi.NewQueryServer(store, -time.Second)
+	_, err := grpcapi.NewQueryServer(nil)
 	require.Error(t, err)
 }
 
@@ -109,7 +102,11 @@ func TestQuery_NilRequest(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	_, srv := setupQueryTestEnv(t, store)
+	eng, err := query.NewEngine(store, 20*time.Millisecond)
+	require.NoError(t, err)
+	srv, err := grpcapi.NewQueryServer(eng)
+	require.NoError(t, err)
+
 	_, err = srv.Query(ctx, nil)
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -141,7 +138,7 @@ func TestQuery_Validation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	client, querySrv := setupQueryTestEnv(t, store)
+	client, eng := setupQueryTestEnv(t, store)
 
 	writeSegment(t, ctx, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		{
@@ -160,7 +157,7 @@ func TestQuery_Validation(t *testing.T) {
 		},
 	})
 	updateManifest(t, ctx, store, "main", []string{"seg-1"}, "")
-	require.NoError(t, querySrv.SyncOnce(ctx))
+	require.NoError(t, eng.SyncOnce(ctx))
 
 	tests := []struct {
 		name string
@@ -290,9 +287,9 @@ func TestQuery_EndToEnd(t *testing.T) {
 	cancelFlusher()
 	require.NoError(t, flusher.Run(flusherCtx))
 
-	client, querySrv := setupQueryTestEnv(t, store)
+	client, eng := setupQueryTestEnv(t, store)
 
-	require.NoError(t, querySrv.SyncOnce(ctx))
+	require.NoError(t, eng.SyncOnce(ctx))
 
 	resp, err := client.Query(ctx, &cloudyneighpb.QueryRequest{
 		Namespace: "main",
@@ -327,7 +324,7 @@ func TestQuery_EndToEnd(t *testing.T) {
 	cancelFlusher2()
 	require.NoError(t, flusher.Run(flusherCtx2))
 
-	require.NoError(t, querySrv.SyncOnce(ctx))
+	require.NoError(t, eng.SyncOnce(ctx))
 
 	resp, err = client.Query(ctx, &cloudyneighpb.QueryRequest{
 		Namespace: "main",
@@ -348,11 +345,11 @@ func TestQuery_ConcurrentSyncAndQuery(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	client, querySrv := setupQueryTestEnv(t, store)
+	client, eng := setupQueryTestEnv(t, store)
 
 	runErrCh := make(chan error, 1)
 	go func() {
-		runErrCh <- querySrv.Run(ctx)
+		runErrCh <- eng.Run(ctx)
 	}()
 
 	const numBatches = 50
@@ -417,7 +414,7 @@ func TestQuery_ConcurrentSyncAndQuery(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	require.NoError(t, querySrv.SyncOnce(ctx))
+	require.NoError(t, eng.SyncOnce(ctx))
 
 	resp, err := client.Query(ctx, &cloudyneighpb.QueryRequest{
 		Namespace: "main",
