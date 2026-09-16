@@ -1,6 +1,7 @@
 """Query latency benchmark for the cloudy-neigh demo."""
 
 import logging
+import os
 import random
 import statistics
 import time

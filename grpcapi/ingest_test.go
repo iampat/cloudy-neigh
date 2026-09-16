@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
+	"github.com/iampat/cloudy-neigh/ingest"
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -32,7 +33,14 @@ func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *logstream.L
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	srv, err := grpcapi.NewIngestServer(log)
+	ingester, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+		MaxDocs:     1,
+		MaxInterval: 0,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { ingester.Close() })
+
+	srv, err := grpcapi.NewIngestServer(ingester)
 	require.NoError(t, err)
 
 	lis := bufconn.Listen(1024 * 1024)
@@ -60,9 +68,9 @@ func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *logstream.L
 	return cloudyneighpb.NewIngestServiceClient(conn), log
 }
 
-func TestNewIngestServer_NilLog(t *testing.T) {
+func TestNewIngestServer_NilIngester(t *testing.T) {
 	_, err := grpcapi.NewIngestServer(nil)
-	assert.ErrorIs(t, err, grpcapi.ErrNilLog)
+	assert.ErrorIs(t, err, grpcapi.ErrNilIngester)
 }
 
 func stringAttr(s string) *cloudyneighpb.AttributeValue {
@@ -315,7 +323,14 @@ func TestLocalFSBackend(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	srv, err := grpcapi.NewIngestServer(log)
+	ingester, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+		MaxDocs:     1,
+		MaxInterval: 0,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { ingester.Close() })
+
+	srv, err := grpcapi.NewIngestServer(ingester)
 	require.NoError(t, err)
 
 	lis := bufconn.Listen(1024 * 1024)

@@ -1,0 +1,126 @@
+package ingest_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/iampat/cloudy-neigh/ingest"
+	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/objectstore"
+	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
+	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/protobuf/proto"
+)
+
+func TestNewBatchIngester_NilLog(t *testing.T) {
+	_, err := ingest.NewBatchIngester(nil, ingest.BatchConfig{})
+	assert.ErrorIs(t, err, ingest.ErrNilLog)
+}
+
+func TestBatchIngester_BatchDocThreshold(t *testing.T) {
+	store, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	log, err := logstream.New(store, "wal")
+	require.NoError(t, err)
+
+	b, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+		MaxDocs:     10,
+		MaxInterval: 1 * time.Second,
+	})
+	require.NoError(t, err)
+	defer b.Close()
+
+	ctx := context.Background()
+	var g errgroup.Group
+
+	for i := 0; i < 5; i++ {
+		docID := string(rune('a' + i))
+		g.Go(func() error {
+			return b.Upsert(ctx, "main", []*cloudyneighpb.Record{
+				{Id: docID + "1"},
+				{Id: docID + "2"},
+			})
+		})
+	}
+
+	require.NoError(t, g.Wait())
+
+	tail, err := log.Tail(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), tail)
+
+	records, err := log.Read(ctx, 1)
+	require.NoError(t, err)
+	assert.Len(t, records, 10)
+}
+
+func TestBatchIngester_BatchTimeThreshold(t *testing.T) {
+	store, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	log, err := logstream.New(store, "wal")
+	require.NoError(t, err)
+
+	b, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+		MaxDocs:     1000,
+		MaxInterval: 20 * time.Millisecond,
+	})
+	require.NoError(t, err)
+	defer b.Close()
+
+	ctx := context.Background()
+	start := time.Now()
+	err = b.Upsert(ctx, "main", []*cloudyneighpb.Record{
+		{Id: "doc-1"},
+	})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, time.Since(start), 15*time.Millisecond)
+
+	tail, err := log.Tail(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), tail)
+
+	records, err := log.Read(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	var walRec storagepb.WalRecord
+	require.NoError(t, proto.Unmarshal(records[0], &walRec))
+	assert.Equal(t, "doc-1", walRec.GetMutation().DocId)
+}
+
+func TestBatchIngester_Delete(t *testing.T) {
+	store, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	log, err := logstream.New(store, "wal")
+	require.NoError(t, err)
+
+	b, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+		MaxDocs:     2,
+		MaxInterval: 1 * time.Second,
+	})
+	require.NoError(t, err)
+	defer b.Close()
+
+	ctx := context.Background()
+	err = b.Delete(ctx, "main", []string{"doc-1", "doc-2"})
+	require.NoError(t, err)
+
+	records, err := log.Read(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+
+	var walRec storagepb.WalRecord
+	require.NoError(t, proto.Unmarshal(records[0], &walRec))
+	assert.Equal(t, storagepb.MutationOp_DELETE, walRec.GetMutation().Op)
+	assert.Equal(t, "doc-1", walRec.GetMutation().DocId)
+}

@@ -2,13 +2,17 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "ingest",
-    srcs = ["flusher.go"],
+    srcs = [
+        "flusher.go",
+        "ingester.go",
+    ],
     importpath = "github.com/iampat/cloudy-neigh/ingest",
     visibility = ["//visibility:public"],
     deps = [
         "//kvfs",
         "//logstream",
         "//objectstore",
+        "//proto/cloudyneigh/v1:cloudyneigh",
         "//proto/storage/v1:storage",
         "//segment",
         "@org_golang_google_protobuf//proto",
@@ -17,16 +21,21 @@ go_library(
 
 go_test(
     name = "ingest_test",
-    srcs = ["flusher_test.go"],
+    srcs = [
+        "flusher_test.go",
+        "ingester_test.go",
+    ],
     deps = [
         ":ingest",
         "//kvfs",
         "//logstream",
         "//objectstore",
+        "//proto/cloudyneigh/v1:cloudyneigh",
         "//proto/storage/v1:storage",
         "//segment",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_protobuf//proto",
+        "@org_golang_x_sync//errgroup",
     ],
 )

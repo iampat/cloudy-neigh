@@ -241,7 +241,14 @@ func TestQuery_EndToEnd(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	ingestSrv, err := grpcapi.NewIngestServer(log)
+	ingester, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+		MaxDocs:     1,
+		MaxInterval: 0,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { ingester.Close() })
+
+	ingestSrv, err := grpcapi.NewIngestServer(ingester)
 	require.NoError(t, err)
 
 	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
