@@ -36,25 +36,11 @@ type Table struct {
 var _ QueryExecutor = (*Table)(nil)
 
 func NewTable() *Table {
-	return NewTableWithCapacity(0, 0)
-}
-
-func NewTableWithCapacity(capacity, dim int) *Table {
-	t := &Table{
-		docIDs:     make([]string, 0, capacity),
-		index:      make(map[string]int, capacity),
-		tombstones: make([]bool, 0, capacity),
-		vectors:    make(map[string]*flatVectorCol),
-		attrs:      make(map[string][]*cloudyneighpb.AttributeValue),
+	return &Table{
+		index:   make(map[string]int),
+		vectors: make(map[string]*flatVectorCol),
+		attrs:   make(map[string][]*cloudyneighpb.AttributeValue),
 	}
-	if dim > 0 {
-		t.vectors["default"] = &flatVectorCol{
-			dim:    dim,
-			data:   make([]float32, 0, capacity*dim),
-			hasVec: make([]bool, 0, capacity),
-		}
-	}
-	return t
 }
 
 func (t *Table) Clone() *Table {

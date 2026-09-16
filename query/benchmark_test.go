@@ -13,7 +13,7 @@ func BenchmarkSearch1M1024_Table(b *testing.B) {
 	const numVecs = 1_000_000
 	const dim = 1024
 
-	tbl := query.NewTableWithCapacity(numVecs, dim)
+	tbl := query.NewTable()
 	vec := make([]float32, dim)
 	rng := rand.New(rand.NewPCG(42, 100))
 	for i := range vec {
