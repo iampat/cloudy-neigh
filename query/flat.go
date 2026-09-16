@@ -20,7 +20,7 @@ type flatVectorCol struct {
 }
 
 type FlatTable struct {
-	mu         sync.RWMutex
+	mu         sync.Mutex
 	numRows    int
 	docIDs     []string
 	index      map[string]int
@@ -31,8 +31,6 @@ type FlatTable struct {
 
 var _ QueryExecutor = (*FlatTable)(nil)
 
-type VanillaTable = FlatTable
-
 func NewFlatTable() *FlatTable {
 	return &FlatTable{
 		index:   make(map[string]int),
@@ -40,8 +38,6 @@ func NewFlatTable() *FlatTable {
 		attrs:   make(map[string][]*cloudyneighpb.AttributeValue),
 	}
 }
-
-var NewVanillaTable = NewFlatTable
 
 func NewFlatTableWithCapacity(capacity, dim int) *FlatTable {
 	t := &FlatTable{
@@ -209,23 +205,6 @@ func (t *FlatTable) Upsert(id string, vectors map[string][]float32, attrs map[st
 	return nil
 }
 
-func (t *FlatTable) UpsertRecord(rec *cloudyneighpb.Record) error {
-	if rec == nil {
-		return errors.New("query: nil record")
-	}
-	var vectors map[string][]float32
-	if len(rec.Vectors) > 0 {
-		vectors = make(map[string][]float32, len(rec.Vectors))
-		for name, vec := range rec.Vectors {
-			if vec == nil {
-				return fmt.Errorf("query: nil vector %q", name)
-			}
-			vectors[name] = vec.Values
-		}
-	}
-	return t.Upsert(rec.Id, vectors, rec.Attributes)
-}
-
 func (t *FlatTable) Delete(id string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -260,8 +239,8 @@ func (t *FlatTable) recordAtLocked(row int, id string) *cloudyneighpb.Record {
 }
 
 func (t *FlatTable) Get(id string) (*cloudyneighpb.Record, bool) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	row, ok := t.index[id]
 	if !ok || t.tombstones[row] {
 		return nil, false
@@ -269,47 +248,7 @@ func (t *FlatTable) Get(id string) (*cloudyneighpb.Record, bool) {
 	return t.recordAtLocked(row, id), true
 }
 
-func (t *FlatTable) Vector(id, col string) ([]float32, bool) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	row, ok := t.index[id]
-	if !ok || t.tombstones[row] {
-		return nil, false
-	}
-	vCol, ok := t.vectors[col]
-	if !ok || row >= len(vCol.hasVec) || !vCol.hasVec[row] {
-		return nil, false
-	}
-	offset := row * vCol.dim
-	return slices.Clone(vCol.data[offset : offset+vCol.dim]), true
-}
-
-func (t *FlatTable) Attribute(id, key string) (*cloudyneighpb.AttributeValue, bool) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	row, ok := t.index[id]
-	if !ok || t.tombstones[row] {
-		return nil, false
-	}
-	col, ok := t.attrs[key]
-	if !ok || row >= len(col) || col[row] == nil {
-		return nil, false
-	}
-	return proto.Clone(col[row]).(*cloudyneighpb.AttributeValue), true
-}
-
 func (t *FlatTable) Search(
-	col string,
-	query []float32,
-	topK int,
-	metric cloudyneighpb.DistanceMetric,
-	filter *cloudyneighpb.EqualityFilter,
-) ([]*cloudyneighpb.ScoredRecord, error) {
-	hits, _, err := t.SearchWithStats(col, query, topK, metric, filter)
-	return hits, err
-}
-
-func (t *FlatTable) SearchWithStats(
 	col string,
 	query []float32,
 	topK int,
@@ -320,8 +259,8 @@ func (t *FlatTable) SearchWithStats(
 		return nil, SearchStats{}, nil
 	}
 
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	vCol, ok := t.vectors[col]
 	if !ok || t.numRows == 0 {

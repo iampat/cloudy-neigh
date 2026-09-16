@@ -472,7 +472,7 @@ func TestTable_Search_Metrics(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			hits, err := table.Search("v", []float32{1.0, 0.0}, 4, tc.metric, nil)
+			hits, _, err := table.Search("v", []float32{1.0, 0.0}, 4, tc.metric, nil)
 			require.NoError(t, err)
 			require.Len(t, hits, len(tc.wantIDs))
 
@@ -528,7 +528,7 @@ func TestTable_Search_TopKBounds(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			hits, err := table.Search("v", []float32{0.0, 0.0}, tc.topK, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
+			hits, _, err := table.Search("v", []float32{0.0, 0.0}, tc.topK, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
 			require.NoError(t, err)
 			if len(tc.wantIDs) == 0 {
 				require.Empty(t, hits)
@@ -581,7 +581,7 @@ func TestTable_Search_Ties(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			hits, err := table.Search("v", []float32{1.0, 0.0}, tc.topK, tc.metric, nil)
+			hits, _, err := table.Search("v", []float32{1.0, 0.0}, tc.topK, tc.metric, nil)
 			require.NoError(t, err)
 			require.Len(t, hits, len(tc.wantIDs))
 			for i, hit := range hits {
@@ -663,7 +663,7 @@ func TestTable_Search_Filters(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			hits, err := table.Search("v", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, tc.filter)
+			hits, _, err := table.Search("v", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, tc.filter)
 			require.NoError(t, err)
 			if len(tc.wantIDs) == 0 {
 				require.Empty(t, hits)
@@ -699,14 +699,14 @@ func TestTable_Search_Skips(t *testing.T) {
 	table := b.Build()
 
 	t.Run("cosine skips tombstones missing vectors and zero stored vectors", func(t *testing.T) {
-		hits, err := table.Search("v", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+		hits, _, err := table.Search("v", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
 		require.NoError(t, err)
 		require.Len(t, hits, 1)
 		require.Equal(t, "doc-live", hits[0].Record.Id)
 	})
 
 	t.Run("l2 squared includes zero stored vector", func(t *testing.T) {
-		hits, err := table.Search("v", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
+		hits, _, err := table.Search("v", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
 		require.NoError(t, err)
 		require.Len(t, hits, 2)
 		require.Equal(t, "doc-live", hits[0].Record.Id)
@@ -767,7 +767,7 @@ func TestTable_Search_Errors(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			hits, err := table.Search(tc.col, tc.query, 5, tc.metric, nil)
+			hits, _, err := table.Search(tc.col, tc.query, 5, tc.metric, nil)
 			if tc.wantErrIs != nil {
 				require.ErrorIs(t, err, tc.wantErrIs)
 				return
@@ -782,12 +782,12 @@ func TestTable_Search_Errors(t *testing.T) {
 	}
 
 	t.Run("unspecified metric returns error", func(t *testing.T) {
-		_, err := table.Search("v", []float32{1.0, 2.0, 3.0}, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_UNSPECIFIED, nil)
+		_, _, err := table.Search("v", []float32{1.0, 2.0, 3.0}, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_UNSPECIFIED, nil)
 		require.Error(t, err)
 	})
 
 	t.Run("unknown metric returns error", func(t *testing.T) {
-		_, err := table.Search("v", []float32{1.0, 2.0, 3.0}, 5, cloudyneighpb.DistanceMetric(999), nil)
+		_, _, err := table.Search("v", []float32{1.0, 2.0, 3.0}, 5, cloudyneighpb.DistanceMetric(999), nil)
 		require.Error(t, err)
 	})
 }
@@ -815,7 +815,7 @@ func TestTable_Search_Concurrent(t *testing.T) {
 	for r := 0; r < readers; r++ {
 		go func() {
 			for i := 0; i < iters; i++ {
-				hits, err := oldSnap.Search("v", []float32{1.0, 2.0}, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
+				hits, _, err := oldSnap.Search("v", []float32{1.0, 2.0}, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
 				if err != nil {
 					errCh <- err
 					return
@@ -891,7 +891,7 @@ func TestTable_ChunkBoundary(t *testing.T) {
 		require.Equal(t, []float32{float32(i), float32(i + 1)}, vec)
 	}
 
-	hits, err := table.Search("v", []float32{1000.0, 1001.0}, 3, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
+	hits, _, err := table.Search("v", []float32{1000.0, 1001.0}, 3, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 3)
 	require.Equal(t, "doc-1000", hits[0].Record.Id)
@@ -943,7 +943,7 @@ func TestTable_SnapshotIsolation_Delta(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "doc-10", rec10Old.Id)
 
-	hitsOld, err := snap1.Search("v", []float32{999.0, 999.0}, 1, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
+	hitsOld, _, err := snap1.Search("v", []float32{999.0, 999.0}, 1, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, hitsOld)
 	require.NotEqual(t, float32(0.0), hitsOld[0].Score)
@@ -960,7 +960,7 @@ func TestTable_SnapshotIsolation_Delta(t *testing.T) {
 	_, ok = snap2.Get("doc-10")
 	require.False(t, ok)
 
-	hitsNew, err := snap2.Search("v", []float32{999.0, 999.0}, 1, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
+	hitsNew, _, err := snap2.Search("v", []float32{999.0, 999.0}, 1, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
 	require.NoError(t, err)
 	require.Len(t, hitsNew, 1)
 	require.Equal(t, "doc-05", hitsNew[0].Record.Id)
@@ -1032,14 +1032,14 @@ func BenchmarkTable_ApplyDelta(b *testing.B) {
 	}
 }
 
-func TestTable_SearchWithStats(t *testing.T) {
+func TestTable_Search_Stats(t *testing.T) {
 	b := query.NewBuilder()
 	require.NoError(t, b.Upsert("doc-1", map[string][]float32{
 		"default": {1.0, 0.0},
 	}, nil))
 	tbl := b.Build()
 
-	hits, stats, err := tbl.SearchWithStats("default", []float32{1.0, 0.0}, 1, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+	hits, stats, err := tbl.Search("default", []float32{1.0, 0.0}, 1, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	require.GreaterOrEqual(t, stats.ScanDuration, time.Duration(0))

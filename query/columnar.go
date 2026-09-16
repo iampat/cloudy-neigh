@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -36,7 +35,6 @@ type packedVectorCol struct {
 }
 
 type Table struct {
-	mu         sync.RWMutex
 	numRows    int
 	docIDs     [][]string
 	index      []map[string]int
@@ -126,12 +124,6 @@ func (t *Table) Builder() *Builder {
 	if t == nil {
 		return NewBuilder()
 	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.builderLocked()
-}
-
-func (t *Table) builderLocked() *Builder {
 	docIDs := slices.Clone(t.docIDs)
 	docShared := make([]bool, len(docIDs))
 	for i := range docShared {
@@ -200,57 +192,6 @@ func (t *Table) builderLocked() *Builder {
 		vectors:    vectors,
 		attrs:      attrs,
 	}
-}
-
-func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	b := t.builderLocked()
-	if err := b.Upsert(id, vectors, attrs); err != nil {
-		return err
-	}
-	next := b.Build()
-	t.numRows = next.numRows
-	t.docIDs = next.docIDs
-	t.index = next.index
-	t.tombstones = next.tombstones
-	t.vectors = next.vectors
-	t.attrs = next.attrs
-	return nil
-}
-
-func (t *Table) UpsertRecord(rec *cloudyneighpb.Record) error {
-	if rec == nil {
-		return errors.New("query: nil record")
-	}
-	var vectors map[string][]float32
-	if len(rec.Vectors) > 0 {
-		vectors = make(map[string][]float32, len(rec.Vectors))
-		for name, vec := range rec.Vectors {
-			if vec == nil {
-				return fmt.Errorf("query: nil vector %q", name)
-			}
-			vectors[name] = vec.Values
-		}
-	}
-	return t.Upsert(rec.Id, vectors, rec.Attributes)
-}
-
-func (t *Table) Delete(id string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	b := t.builderLocked()
-	if !b.Delete(id) {
-		return false
-	}
-	next := b.Build()
-	t.numRows = next.numRows
-	t.docIDs = next.docIDs
-	t.index = next.index
-	t.tombstones = next.tombstones
-	t.vectors = next.vectors
-	t.attrs = next.attrs
-	return true
 }
 
 func (b *Builder) rowOf(id string) (int, bool) {
@@ -619,8 +560,6 @@ func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
 	if t == nil {
 		return nil, false
 	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
 	row, ok := t.rowOf(id)
 	if !ok {
 		return nil, false
@@ -636,8 +575,6 @@ func (t *Table) Vector(id, col string) ([]float32, bool) {
 	if t == nil {
 		return nil, false
 	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
 	row, ok := t.rowOf(id)
 	if !ok {
 		return nil, false
@@ -663,8 +600,6 @@ func (t *Table) Attribute(id, key string) (*cloudyneighpb.AttributeValue, bool) 
 	if t == nil {
 		return nil, false
 	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
 	row, ok := t.rowOf(id)
 	if !ok {
 		return nil, false
@@ -731,24 +666,10 @@ func (t *Table) Search(
 	topK int,
 	metric cloudyneighpb.DistanceMetric,
 	filter *cloudyneighpb.EqualityFilter,
-) ([]*cloudyneighpb.ScoredRecord, error) {
-	hits, _, err := t.SearchWithStats(col, query, topK, metric, filter)
-	return hits, err
-}
-
-func (t *Table) SearchWithStats(
-	col string,
-	query []float32,
-	topK int,
-	metric cloudyneighpb.DistanceMetric,
-	filter *cloudyneighpb.EqualityFilter,
 ) ([]*cloudyneighpb.ScoredRecord, SearchStats, error) {
 	if t == nil || topK <= 0 {
 		return nil, SearchStats{}, nil
 	}
-
-	t.mu.RLock()
-	defer t.mu.RUnlock()
 
 	vCol, ok := t.vectors[col]
 	if !ok || vCol.numVecs == 0 {

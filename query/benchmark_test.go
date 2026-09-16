@@ -35,7 +35,7 @@ func BenchmarkSearch1M1024_FlatTable(b *testing.B) {
 	}
 
 	for b.Loop() {
-		hits, err := ft.Search("default", queryVec, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+		hits, _, err := ft.Search("default", queryVec, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -72,7 +72,7 @@ func BenchmarkSearch1M1024_ChunkedTable(b *testing.B) {
 	}
 
 	for b.Loop() {
-		hits, err := table.Search("default", queryVec, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+		hits, _, err := table.Search("default", queryVec, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -43,21 +43,7 @@ func TestFlatTable_UpsertAndGet(t *testing.T) {
 	require.Equal(t, []float32{1.0, 2.0, 3.0}, rec.Vectors["default"].Values)
 	require.True(t, proto.Equal(stringAttr("electronics"), rec.Attributes["category"]))
 
-	vec, ok := tbl.Vector("doc-1", "default")
-	require.True(t, ok)
-	require.Equal(t, []float32{1.0, 2.0, 3.0}, vec)
-
-	attr, ok := tbl.Attribute("doc-1", "category")
-	require.True(t, ok)
-	require.True(t, proto.Equal(stringAttr("electronics"), attr))
-
 	_, ok = tbl.Get("doc-missing")
-	require.False(t, ok)
-
-	_, ok = tbl.Vector("doc-1", "missing_col")
-	require.False(t, ok)
-
-	_, ok = tbl.Attribute("doc-1", "missing_attr")
 	require.False(t, ok)
 }
 
@@ -65,17 +51,8 @@ func TestFlatTable_Validation(t *testing.T) {
 	tbl := query.NewFlatTable()
 
 	require.Error(t, tbl.Upsert("", map[string][]float32{"default": {1.0}}, nil))
-	require.Error(t, tbl.UpsertRecord(nil))
-
 	require.NoError(t, tbl.Upsert("doc-1", map[string][]float32{"default": {1.0, 2.0}}, nil))
 	require.ErrorIs(t, tbl.Upsert("doc-2", map[string][]float32{"default": {1.0}}, nil), query.ErrDimensionMismatch)
-
-	require.Error(t, tbl.UpsertRecord(&cloudyneighpb.Record{
-		Id: "doc-nil-vec",
-		Vectors: map[string]*cloudyneighpb.Vector{
-			"default": nil,
-		},
-	}))
 }
 
 func TestFlatTable_Delete(t *testing.T) {
@@ -88,12 +65,6 @@ func TestFlatTable_Delete(t *testing.T) {
 	require.False(t, tbl.Delete("doc-1"))
 
 	_, ok := tbl.Get("doc-1")
-	require.False(t, ok)
-
-	_, ok = tbl.Vector("doc-1", "default")
-	require.False(t, ok)
-
-	_, ok = tbl.Attribute("doc-1", "any")
 	require.False(t, ok)
 }
 
@@ -120,12 +91,9 @@ func TestFlatTable_ReupsertDeletedDoc(t *testing.T) {
 	require.Equal(t, []float32{5.0, 6.0}, rec.Vectors["v1"].Values)
 	require.Nil(t, rec.Vectors["v2"])
 	require.True(t, proto.Equal(stringAttr("new"), rec.Attributes["tag"]))
-
-	_, ok = tbl.Vector("doc-1", "v2")
-	require.False(t, ok)
 }
 
-func TestFlatTable_SearchWithStats(t *testing.T) {
+func TestFlatTable_Search(t *testing.T) {
 	tbl := query.NewFlatTable()
 
 	docs := []struct {
@@ -144,7 +112,7 @@ func TestFlatTable_SearchWithStats(t *testing.T) {
 		}))
 	}
 
-	hits, stats, err := tbl.SearchWithStats("default", []float32{1.0, 0.0}, 2, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+	hits, stats, err := tbl.Search("default", []float32{1.0, 0.0}, 2, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 2)
 	require.Equal(t, "d1", hits[0].Record.Id)
@@ -156,17 +124,15 @@ func TestFlatTable_SearchWithStats(t *testing.T) {
 		Field: "cat",
 		Value: stringAttr("b"),
 	}
-	filteredHits, err := tbl.Search("default", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, filter)
+	filteredHits, _, err := tbl.Search("default", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, filter)
 	require.NoError(t, err)
 	require.Len(t, filteredHits, 1)
 	require.Equal(t, "d2", filteredHits[0].Record.Id)
 }
 
 func TestQueryExecutor_Equivalence(t *testing.T) {
-	chunked := query.NewTable()
+	b := query.NewBuilder()
 	flat := query.NewFlatTable()
-
-	tables := []query.QueryExecutor{chunked, flat}
 
 	for i := 0; i < 50; i++ {
 		id := strconv.Itoa(i)
@@ -174,21 +140,25 @@ func TestQueryExecutor_Equivalence(t *testing.T) {
 		attrs := map[string]*cloudyneighpb.AttributeValue{
 			"parity": stringAttr(strconv.Itoa(i % 2)),
 		}
-		for _, tbl := range tables {
-			require.NoError(t, tbl.Upsert(id, map[string][]float32{"v": v}, attrs))
-		}
+		require.NoError(t, b.Upsert(id, map[string][]float32{"v": v}, attrs))
+		require.NoError(t, flat.Upsert(id, map[string][]float32{"v": v}, attrs))
 	}
 
-	for _, tbl := range tables {
-		require.True(t, tbl.Delete("10"))
-		require.True(t, tbl.Delete("25"))
-	}
+	require.True(t, b.Delete("10"))
+	require.True(t, b.Delete("25"))
+	require.True(t, flat.Delete("10"))
+	require.True(t, flat.Delete("25"))
+
+	chunked := b.Build()
+
+	executors := []query.QueryExecutor{chunked, flat}
+	require.Len(t, executors, 2)
 
 	queryVec := []float32{20.0, 30.0, 40.0}
-	chunkedHits, _, err1 := chunked.SearchWithStats("v", queryVec, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+	chunkedHits, _, err1 := chunked.Search("v", queryVec, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
 	require.NoError(t, err1)
 
-	flatHits, _, err2 := flat.SearchWithStats("v", queryVec, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+	flatHits, _, err2 := flat.Search("v", queryVec, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
 	require.NoError(t, err2)
 
 	require.Equal(t, len(chunkedHits), len(flatHits))
@@ -201,10 +171,10 @@ func TestQueryExecutor_Equivalence(t *testing.T) {
 		Field: "parity",
 		Value: stringAttr("1"),
 	}
-	cFilterHits, err1 := chunked.Search("v", queryVec, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, filter)
+	cFilterHits, _, err1 := chunked.Search("v", queryVec, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, filter)
 	require.NoError(t, err1)
 
-	fFilterHits, err2 := flat.Search("v", queryVec, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, filter)
+	fFilterHits, _, err2 := flat.Search("v", queryVec, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, filter)
 	require.NoError(t, err2)
 
 	require.Equal(t, len(cFilterHits), len(fFilterHits))
