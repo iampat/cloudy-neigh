@@ -35,18 +35,8 @@ type Table struct {
 
 var _ QueryExecutor = (*Table)(nil)
 
-type FlatTable = Table
-
 func NewTable() *Table {
-	return &Table{
-		index:   make(map[string]int),
-		vectors: make(map[string]*flatVectorCol),
-		attrs:   make(map[string][]*cloudyneighpb.AttributeValue),
-	}
-}
-
-func NewFlatTable() *Table {
-	return NewTable()
+	return NewTableWithCapacity(0, 0)
 }
 
 func NewTableWithCapacity(capacity, dim int) *Table {
@@ -65,10 +55,6 @@ func NewTableWithCapacity(capacity, dim int) *Table {
 		}
 	}
 	return t
-}
-
-func NewFlatTableWithCapacity(capacity, dim int) *Table {
-	return NewTableWithCapacity(capacity, dim)
 }
 
 func (t *Table) Reserve(capacity int) {
