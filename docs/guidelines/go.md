@@ -35,6 +35,8 @@ backend, find the library's unified interface. Push the backend-specific code
 into the smallest hook the library offers, such as the `As` escape hatch in
 `gocloud.dev/blob`. A constructor per backend is the smell this rule prevents.
 
+No premature optimization. Always start with a vanilla implementation. Only move to complex structures when profiling proves the vanilla version is a bottleneck.
+
 ## Dependencies
 
 - No new third-party dependency unless we agree first. Flag a `go.mod`
