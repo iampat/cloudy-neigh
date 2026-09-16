@@ -5,6 +5,8 @@ go_library(
     srcs = [
         "columnar.go",
         "engine.go",
+        "executor.go",
+        "flat.go",
         "loader.go",
     ],
     importpath = "github.com/iampat/cloudy-neigh/query",
@@ -23,8 +25,10 @@ go_library(
 go_test(
     name = "query_test",
     srcs = [
+        "benchmark_test.go",
         "columnar_test.go",
         "engine_test.go",
+        "flat_test.go",
         "loader_test.go",
     ],
     deps = [
