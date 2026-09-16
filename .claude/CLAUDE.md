@@ -163,6 +163,9 @@ not trust memory over the help output.
 - Do not solve a problem we do not have. Leave out a limit, a constraint, or a
   mitigation until the problem appears. Delete a `CONSIDER` that guards a case
   nobody met.
+- No premature optimization. Always start with a vanilla implementation. Move
+  to complex solutions only when profiling proves the vanilla version is a
+  bottleneck.
 - Verify a claim before you write it. Read the help output, the source, or the
   API before you state how a tool behaves. "I do not know" beats a confident
   error.
