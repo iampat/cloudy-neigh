@@ -648,7 +648,7 @@ func TestLoader_ForkBranch_Inheritance(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, proto.Equal(stringAttr("doc2"), rec2.Attributes["title"]))
 
-	hits, err := snap.Search("default", []float32{1.0, 0.0}, 2, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+	hits, _, err := snap.Search("default", []float32{1.0, 0.0}, 2, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 2)
 	require.Equal(t, "doc-1", hits[0].Record.Id)
@@ -787,7 +787,7 @@ func TestLoader_BatchSegmentLoading(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, proto.Equal(stringAttr("doc4"), rec4.Attributes["title"]))
 
-	hits, err := snap.Search("default", []float32{1.0, 0.0}, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
+	hits, _, err := snap.Search("default", []float32{1.0, 0.0}, 5, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 3)
 	require.Equal(t, "doc-1", hits[0].Record.Id)

@@ -1,5 +1,7 @@
 # TODO
 
+- [ ] Audit codebase for instances of premature optimization. Always compare with a vanilla baseline first.
+  - Example: `Table` used chunked copy-on-write slices before measuring a flat contiguous `[]float32` array. Profiling 1M vectors showed SIMD math dominates 95% of execution time, making chunk indirection negligible (6.3% difference).
 - [ ] Refactor the storage layer.
   - [ ] Replace the cloud SDK with a shim around GCS. Use the atomic-file
         package from Tailscale.

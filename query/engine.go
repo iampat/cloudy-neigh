@@ -147,5 +147,5 @@ func (e *Engine) Query(ctx context.Context, req Request) ([]*cloudyneighpb.Score
 	}
 
 	table := b.table.Load()
-	return table.SearchWithStats(col, req.Vector, req.TopK, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, req.Filter)
+	return table.Search(col, req.Vector, req.TopK, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, req.Filter)
 }

@@ -35,6 +35,8 @@ backend, find the library's unified interface. Push the backend-specific code
 into the smallest hook the library offers, such as the `As` escape hatch in
 `gocloud.dev/blob`. A constructor per backend is the smell this rule prevents.
 
+No premature optimization. Always start with a vanilla implementation. Only move to complex structures when profiling proves the vanilla version is a bottleneck.
+
 ## Dependencies
 
 - No new third-party dependency unless we agree first. Flag a `go.mod`
@@ -180,3 +182,37 @@ stacked clauses.
 gofumpt runs through `bazel run //:format`. nogo runs inside `bazel build`.
 golangci-lint runs in CI as an advisory check. Do not report in review what
 these already enforce. Formatting and unused-variable findings are noise.
+
+## Profiling
+
+Use `runtime/pprof` to capture profiles. Use `go tool pprof` through Bazel to inspect them.
+
+### How pprof works
+
+The Go CPU profiler interrupts execution at 100 Hz (every 10 ms).
+Each interruption captures stack traces of active goroutines.
+Sampling has low overhead and captures active CPU time.
+
+Memory profiling tracks heap allocations by sampling one allocation per 512 KB.
+
+### Visualizing and saving profiles
+
+Always run `pprof` through Bazel.
+
+- Interactive flame graph:
+  ```sh
+  bazel run @rules_go//go -- tool pprof -http=:8080 <profile>
+  ```
+  Open `http://localhost:8080/ui/flamegraph` in a browser.
+
+- Export SVG or PNG call graph:
+  ```sh
+  bazel run @rules_go//go -- tool pprof -svg <profile> > graph.svg
+  bazel run @rules_go//go -- tool pprof -png <profile> > graph.png
+  ```
+
+- Text summary:
+  ```sh
+  bazel run @rules_go//go -- tool pprof -top <profile>
+  ```
+

@@ -36,6 +36,8 @@ We are working together in an ongoing technical dialogue to solve hard distribut
 
 ### 3. Core Engineering Philosophy
 * **First-Principles & Latency Hierarchy:** Think in numbers and orders of magnitude (L1/L2 cache vs. RAM vs. NVMe vs. Datacenter RTT vs. WAN). Use back-of-the-envelope sanity checks.
+* **Mandatory Vanilla Baseline Across All Stages:** In all design and review stages, always establish a vanilla baseline architecture first. Never introduce speculative partitioning or fancy data layouts upfront. Premature optimization is the root of all evil 97% of the time. Adopt complex designs only when empirical profiling proves the simple solution fails.
+* **Read Optimization Over Write Optimization:** Prioritize read latency and query execution throughput over write or ingestion complexity. When evaluating architectural trade-offs, always optimize for the read path.
 * **Design for 10x, Plan to Rewrite at 100x:** Favor pragmatic systems that scale cleanly for the next order of magnitude without drowning in speculative abstractions for 1000x.
 * **Simple, Composable Primitives:** Prioritize orthogonal abstractions, clear data layouts, and deterministic state transitions.
 * **Operational Reality:** Factor in developer cognitive load, observability (metrics, tracing), blast radius, and on-call debuggability.
