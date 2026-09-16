@@ -122,13 +122,8 @@ func TestTable_Upsert(t *testing.T) {
 
 			if len(tc.wantVec) > 0 {
 				require.Equal(t, tc.wantVec, rec.Vectors["default"].Values)
-				vec, ok := table.Vector(tc.rec.Id, "default")
-				require.True(t, ok)
-				require.Equal(t, tc.wantVec, vec)
 			} else {
 				require.Nil(t, rec.Vectors["default"])
-				_, ok := table.Vector(tc.rec.Id, "default")
-				require.False(t, ok)
 			}
 			b = table.Builder()
 		})
@@ -198,22 +193,16 @@ func TestTable_MultiVector(t *testing.T) {
 			require.True(t, ok)
 			for col, expected := range tc.vectors {
 				require.Equal(t, expected, rec.Vectors[col].Values)
-				vec, ok := table.Vector(tc.id, col)
-				require.True(t, ok)
-				require.Equal(t, expected, vec)
 			}
 			b = table.Builder()
 		})
 	}
 
 	table := b.Build()
-	vec, ok := table.Vector("doc-mv-2", "body_emb")
-	require.False(t, ok)
-	require.Nil(t, vec)
-
-	vec, ok = table.Vector("doc-mv-2", "nonexistent")
-	require.False(t, ok)
-	require.Nil(t, vec)
+	rec, ok := table.Get("doc-mv-2")
+	require.True(t, ok)
+	require.Nil(t, rec.Vectors["body_emb"])
+	require.Nil(t, rec.Vectors["nonexistent"])
 }
 
 func TestTable_PartialUpdate(t *testing.T) {
@@ -326,9 +315,7 @@ func TestTable_FlatStorage(t *testing.T) {
 			require.Equal(t, tc.id, rec.Id)
 			require.True(t, proto.Equal(tc.wantIdx, rec.Attributes["idx"]))
 
-			vec, ok := table.Vector(tc.id, "v")
-			require.True(t, ok)
-			require.Equal(t, []float32{tc.wantVal}, vec)
+			require.Equal(t, []float32{tc.wantVal}, rec.Vectors["v"].Values)
 		})
 	}
 
@@ -341,9 +328,9 @@ func TestTable_FlatStorage(t *testing.T) {
 	err := b.Upsert("h", nil, map[string]*cloudyneighpb.AttributeValue{"idx": stringAttr("updated")})
 	require.NoError(t, err)
 	table = b.Build()
-	attr, ok := table.Attribute("h", "idx")
+	rec, ok := table.Get("h")
 	require.True(t, ok)
-	require.True(t, proto.Equal(stringAttr("updated"), attr))
+	require.True(t, proto.Equal(stringAttr("updated"), rec.Attributes["idx"]))
 }
 
 func TestTable_ZeroValue(t *testing.T) {
@@ -385,17 +372,10 @@ func TestTable_SparseVectors(t *testing.T) {
 
 	for i := 0; i < 50; i++ {
 		id := "doc-" + strconv.Itoa(i)
-		_, ok := table.Vector(id, "v")
-		require.False(t, ok)
-
 		rec, ok := table.Get(id)
 		require.True(t, ok)
 		require.Nil(t, rec.Vectors["v"])
 	}
-
-	vec, ok := table.Vector("doc-50", "v")
-	require.True(t, ok)
-	require.Equal(t, []float32{1.0, 2.0, 3.0, 4.0}, vec)
 
 	rec, ok := table.Get("doc-50")
 	require.True(t, ok)
@@ -885,9 +865,7 @@ func TestTable_ChunkBoundary(t *testing.T) {
 		rec, ok := table.Get(id)
 		require.True(t, ok)
 		require.Equal(t, id, rec.Id)
-		vec, ok := table.Vector(id, "v")
-		require.True(t, ok)
-		require.Equal(t, []float32{float32(i), float32(i + 1)}, vec)
+		require.Equal(t, []float32{float32(i), float32(i + 1)}, rec.Vectors["v"].Values)
 	}
 
 	hits, _, err := table.Search("v", []float32{1000.0, 1001.0}, 3, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED, nil)
@@ -1027,9 +1005,9 @@ func TestTable_ReupsertDeletedDocClearsOmittedVectors(t *testing.T) {
 	require.NoError(t, err)
 
 	table := b.Build()
-	v, ok := table.Vector("doc-1", "vec1")
+	rec, ok := table.Get("doc-1")
 	require.True(t, ok)
-	require.Equal(t, []float32{1.0, 2.0}, v)
+	require.Equal(t, []float32{1.0, 2.0}, rec.Vectors["vec1"].Values)
 
 	b = table.Builder()
 	require.True(t, b.Delete("doc-1"))
@@ -1043,10 +1021,8 @@ func TestTable_ReupsertDeletedDocClearsOmittedVectors(t *testing.T) {
 	require.NoError(t, err)
 
 	table = b.Build()
-	v, ok = table.Vector("doc-1", "vec1")
+	rec, ok = table.Get("doc-1")
 	require.True(t, ok)
-	require.Equal(t, []float32{3.0, 4.0}, v)
-
-	_, ok = table.Vector("doc-1", "vec2")
-	require.False(t, ok)
+	require.Equal(t, []float32{3.0, 4.0}, rec.Vectors["vec1"].Values)
+	require.Nil(t, rec.Vectors["vec2"])
 }

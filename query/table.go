@@ -57,40 +57,6 @@ func NewTableWithCapacity(capacity, dim int) *Table {
 	return t
 }
 
-func (t *Table) Reserve(capacity int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if capacity <= t.numRows {
-		return
-	}
-	if cap(t.docIDs) < capacity {
-		newDocIDs := make([]string, len(t.docIDs), capacity)
-		copy(newDocIDs, t.docIDs)
-		t.docIDs = newDocIDs
-	}
-	if cap(t.tombstones) < capacity {
-		newTombs := make([]bool, len(t.tombstones), capacity)
-		copy(newTombs, t.tombstones)
-		t.tombstones = newTombs
-	}
-	if t.index == nil {
-		t.index = make(map[string]int, capacity)
-	}
-	for _, vCol := range t.vectors {
-		targetCap := capacity * vCol.dim
-		if cap(vCol.data) < targetCap {
-			newData := make([]float32, len(vCol.data), targetCap)
-			copy(newData, vCol.data)
-			vCol.data = newData
-		}
-		if cap(vCol.hasVec) < capacity {
-			newHasVec := make([]bool, len(vCol.hasVec), capacity)
-			copy(newHasVec, vCol.hasVec)
-			vCol.hasVec = newHasVec
-		}
-	}
-}
-
 func (t *Table) Clone() *Table {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -306,35 +272,6 @@ func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
 	return t.recordAtLocked(row, id), true
 }
 
-func (t *Table) Vector(id, col string) ([]float32, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	row, ok := t.index[id]
-	if !ok || t.isTombstoned(row) {
-		return nil, false
-	}
-	vc, ok := t.vectors[col]
-	if !ok || row >= len(vc.hasVec) || !vc.hasVec[row] {
-		return nil, false
-	}
-	offset := row * vc.dim
-	return slices.Clone(vc.data[offset : offset+vc.dim]), true
-}
-
-func (t *Table) Attribute(id, key string) (*cloudyneighpb.AttributeValue, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	row, ok := t.index[id]
-	if !ok || t.isTombstoned(row) {
-		return nil, false
-	}
-	col, ok := t.attrs[key]
-	if !ok || row >= len(col) || col[row] == nil {
-		return nil, false
-	}
-	return proto.Clone(col[row]).(*cloudyneighpb.AttributeValue), true
-}
-
 func (t *Table) Search(
 	col string,
 	query []float32,
@@ -358,6 +295,7 @@ func (t *Table) Search(
 	}
 
 	var cmpFunc func(a, b searchHit) int
+	isDesc := false
 	switch metric {
 	case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE:
 		normSq, err := distance.DotProduct(query, query)
@@ -372,8 +310,18 @@ func (t *Table) Search(
 		cmpFunc = cmpAsc
 	case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT:
 		cmpFunc = cmpDesc
+		isDesc = true
 	default:
 		return nil, SearchStats{}, fmt.Errorf("query: unknown metric %v", metric)
+	}
+
+	var filterAttrs []*cloudyneighpb.AttributeValue
+	if filter != nil {
+		colAttrs, ok := t.attrs[filter.Field]
+		if !ok {
+			return nil, SearchStats{}, nil
+		}
+		filterAttrs = colAttrs
 	}
 
 	heapCap := topK
@@ -393,9 +341,8 @@ func (t *Table) Search(
 		if t.tombstones[row] || !vCol.hasVec[row] {
 			continue
 		}
-		if filter != nil {
-			attrs, ok := t.attrs[filter.Field]
-			if !ok || row >= len(attrs) || attrs[row] == nil || !proto.Equal(attrs[row], filter.Value) {
+		if filterAttrs != nil {
+			if row >= len(filterAttrs) || filterAttrs[row] == nil || !proto.Equal(filterAttrs[row], filter.Value) {
 				continue
 			}
 		}
@@ -425,6 +372,18 @@ func (t *Table) Search(
 			score, err = distance.DotProduct(query, storedVec)
 			if err != nil {
 				return nil, SearchStats{}, err
+			}
+		}
+
+		if h.Len() == topK {
+			if isDesc {
+				if score < h.hits[0].score {
+					continue
+				}
+			} else {
+				if score > h.hits[0].score {
+					continue
+				}
 			}
 		}
 
