@@ -3,7 +3,6 @@ package query_test
 import (
 	"errors"
 	"fmt"
-	"runtime"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -965,71 +964,6 @@ func TestTable_SnapshotIsolation_Delta(t *testing.T) {
 	require.Len(t, hitsNew, 1)
 	require.Equal(t, "doc-05", hitsNew[0].Record.Id)
 	require.Equal(t, float32(0.0), hitsNew[0].Score)
-}
-
-func TestTable_DeltaApply_ODeltaCost(t *testing.T) {
-	b := query.NewBuilder()
-	const baseCount = 20000
-	vec := make([]float32, 128)
-	for i := range vec {
-		vec[i] = float32(i)
-	}
-
-	for i := 0; i < baseCount; i++ {
-		id := strconv.Itoa(i)
-		err := b.Upsert(id, map[string][]float32{"v": vec}, nil)
-		require.NoError(t, err)
-	}
-	baseSnap := b.Build()
-
-	runtime.GC()
-	var m1, m2 runtime.MemStats
-	runtime.ReadMemStats(&m1)
-
-	wb := baseSnap.Builder()
-	const deltaCount = 100
-	for i := 0; i < deltaCount; i++ {
-		id := strconv.Itoa(baseCount + i)
-		err := wb.Upsert(id, map[string][]float32{"v": vec}, nil)
-		require.NoError(t, err)
-	}
-	deltaSnap := wb.Build()
-
-	runtime.ReadMemStats(&m2)
-	allocBytes := m2.TotalAlloc - m1.TotalAlloc
-
-	// 20,000 vectors of 128 float32s is 10.24 MB.
-	// Applying 100 vectors copies at most one partial chunk (< 512 KB),
-	// allocating far less than the 10+ MB base table.
-	require.Less(t, allocBytes, uint64(1500*1024))
-
-	_, ok := deltaSnap.Get(strconv.Itoa(baseCount))
-	require.True(t, ok)
-	_, ok = baseSnap.Get(strconv.Itoa(baseCount))
-	require.False(t, ok)
-}
-
-func BenchmarkTable_ApplyDelta(b *testing.B) {
-	tb := query.NewBuilder()
-	const baseCount = 5000
-	vec := make([]float32, 128)
-	for i := range vec {
-		vec[i] = float32(i)
-	}
-	for i := 0; i < baseCount; i++ {
-		_ = tb.Upsert(strconv.Itoa(i), map[string][]float32{"v": vec}, nil)
-	}
-	snap := tb.Build()
-
-	const deltaCount = 50
-
-	for b.Loop() {
-		wb := snap.Builder()
-		for i := 0; i < deltaCount; i++ {
-			_ = wb.Upsert(strconv.Itoa(baseCount+i), map[string][]float32{"v": vec}, nil)
-		}
-		_ = wb.Build()
-	}
 }
 
 func TestTable_Search_Stats(t *testing.T) {

@@ -166,6 +166,7 @@ not trust memory over the help output.
 - No premature optimization. Always start with a vanilla implementation. Move
   to complex solutions only when profiling proves the vanilla version is a
   bottleneck.
+- Always optimize for read performance over write performance. When choosing between read optimization and write optimization, always favor reads.
 - Verify a claim before you write it. Read the help output, the source, or the
   API before you state how a tool behaves. "I do not know" beats a confident
   error.

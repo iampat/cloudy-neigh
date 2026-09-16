@@ -3,11 +3,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "query",
     srcs = [
-        "columnar.go",
         "engine.go",
         "executor.go",
-        "flat.go",
         "loader.go",
+        "table.go",
     ],
     importpath = "github.com/iampat/cloudy-neigh/query",
     visibility = ["//visibility:public"],
@@ -26,10 +25,9 @@ go_test(
     name = "query_test",
     srcs = [
         "benchmark_test.go",
-        "columnar_test.go",
         "engine_test.go",
-        "flat_test.go",
         "loader_test.go",
+        "table_test.go",
     ],
     deps = [
         ":query",

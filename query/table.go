@@ -1,10 +1,12 @@
 package query
 
 import (
+	"cmp"
 	"container/heap"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,13 +15,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+var ErrDimensionMismatch = errors.New("query: vector dimension mismatch")
+
 type flatVectorCol struct {
 	dim    int
 	data   []float32
 	hasVec []bool
 }
 
-type FlatTable struct {
+type Table struct {
 	mu         sync.Mutex
 	numRows    int
 	docIDs     []string
@@ -29,18 +33,24 @@ type FlatTable struct {
 	attrs      map[string][]*cloudyneighpb.AttributeValue
 }
 
-var _ QueryExecutor = (*FlatTable)(nil)
+var _ QueryExecutor = (*Table)(nil)
 
-func NewFlatTable() *FlatTable {
-	return &FlatTable{
+type FlatTable = Table
+
+func NewTable() *Table {
+	return &Table{
 		index:   make(map[string]int),
 		vectors: make(map[string]*flatVectorCol),
 		attrs:   make(map[string][]*cloudyneighpb.AttributeValue),
 	}
 }
 
-func NewFlatTableWithCapacity(capacity, dim int) *FlatTable {
-	t := &FlatTable{
+func NewFlatTable() *Table {
+	return NewTable()
+}
+
+func NewTableWithCapacity(capacity, dim int) *Table {
+	t := &Table{
 		docIDs:     make([]string, 0, capacity),
 		index:      make(map[string]int, capacity),
 		tombstones: make([]bool, 0, capacity),
@@ -57,7 +67,11 @@ func NewFlatTableWithCapacity(capacity, dim int) *FlatTable {
 	return t
 }
 
-func (t *FlatTable) Reserve(capacity int) {
+func NewFlatTableWithCapacity(capacity, dim int) *Table {
+	return NewTableWithCapacity(capacity, dim)
+}
+
+func (t *Table) Reserve(capacity int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if capacity <= t.numRows {
@@ -91,7 +105,41 @@ func (t *FlatTable) Reserve(capacity int) {
 	}
 }
 
-func (t *FlatTable) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
+func (t *Table) Clone() *Table {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	c := &Table{
+		numRows:    t.numRows,
+		docIDs:     slices.Clone(t.docIDs),
+		index:      make(map[string]int, len(t.index)),
+		tombstones: slices.Clone(t.tombstones),
+		vectors:    make(map[string]*flatVectorCol, len(t.vectors)),
+		attrs:      make(map[string][]*cloudyneighpb.AttributeValue, len(t.attrs)),
+	}
+	for k, v := range t.index {
+		c.index[k] = v
+	}
+	for k, v := range t.vectors {
+		c.vectors[k] = &flatVectorCol{
+			dim:    v.dim,
+			data:   slices.Clone(v.data),
+			hasVec: slices.Clone(v.hasVec),
+		}
+	}
+	for k, col := range t.attrs {
+		newCol := make([]*cloudyneighpb.AttributeValue, len(col))
+		for i, a := range col {
+			if a != nil {
+				newCol[i] = proto.Clone(a).(*cloudyneighpb.AttributeValue)
+			}
+		}
+		c.attrs[k] = newCol
+	}
+	return c
+}
+
+func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
 	if id == "" {
 		return errors.New("query: empty doc id")
 	}
@@ -141,13 +189,16 @@ func (t *FlatTable) Upsert(id string, vectors map[string][]float32, attrs map[st
 		}
 	}
 
-	if row, exists := t.index[id]; exists {
+	if row, ok := t.index[id]; ok {
 		wasDeleted := t.tombstones[row]
+		t.tombstones[row] = false
+
 		if wasDeleted {
-			t.tombstones[row] = false
-			for _, aCol := range t.attrs {
-				if row < len(aCol) {
-					aCol[row] = nil
+			for k, aCol := range t.attrs {
+				if _, ok := attrs[k]; !ok {
+					if row < len(aCol) {
+						aCol[row] = nil
+					}
 				}
 			}
 			for col, vCol := range t.vectors {
@@ -205,7 +256,24 @@ func (t *FlatTable) Upsert(id string, vectors map[string][]float32, attrs map[st
 	return nil
 }
 
-func (t *FlatTable) Delete(id string) bool {
+func (t *Table) UpsertRecord(rec *cloudyneighpb.Record) error {
+	if rec == nil {
+		return errors.New("query: nil record")
+	}
+	var vectors map[string][]float32
+	if len(rec.Vectors) > 0 {
+		vectors = make(map[string][]float32, len(rec.Vectors))
+		for name, vec := range rec.Vectors {
+			if vec == nil {
+				return fmt.Errorf("query: nil vector %q", name)
+			}
+			vectors[name] = vec.Values
+		}
+	}
+	return t.Upsert(rec.Id, vectors, rec.Attributes)
+}
+
+func (t *Table) Delete(id string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	row, ok := t.index[id]
@@ -216,7 +284,11 @@ func (t *FlatTable) Delete(id string) bool {
 	return true
 }
 
-func (t *FlatTable) recordAtLocked(row int, id string) *cloudyneighpb.Record {
+func (t *Table) isTombstoned(row int) bool {
+	return row < len(t.tombstones) && t.tombstones[row]
+}
+
+func (t *Table) recordAtLocked(row int, id string) *cloudyneighpb.Record {
 	rec := &cloudyneighpb.Record{
 		Id:         id,
 		Vectors:    make(map[string]*cloudyneighpb.Vector, len(t.vectors)),
@@ -238,17 +310,46 @@ func (t *FlatTable) recordAtLocked(row int, id string) *cloudyneighpb.Record {
 	return rec
 }
 
-func (t *FlatTable) Get(id string) (*cloudyneighpb.Record, bool) {
+func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	row, ok := t.index[id]
-	if !ok || t.tombstones[row] {
+	if !ok || t.isTombstoned(row) {
 		return nil, false
 	}
 	return t.recordAtLocked(row, id), true
 }
 
-func (t *FlatTable) Search(
+func (t *Table) Vector(id, col string) ([]float32, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	row, ok := t.index[id]
+	if !ok || t.isTombstoned(row) {
+		return nil, false
+	}
+	vc, ok := t.vectors[col]
+	if !ok || row >= len(vc.hasVec) || !vc.hasVec[row] {
+		return nil, false
+	}
+	offset := row * vc.dim
+	return slices.Clone(vc.data[offset : offset+vc.dim]), true
+}
+
+func (t *Table) Attribute(id, key string) (*cloudyneighpb.AttributeValue, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	row, ok := t.index[id]
+	if !ok || t.isTombstoned(row) {
+		return nil, false
+	}
+	col, ok := t.attrs[key]
+	if !ok || row >= len(col) || col[row] == nil {
+		return nil, false
+	}
+	return proto.Clone(col[row]).(*cloudyneighpb.AttributeValue), true
+}
+
+func (t *Table) Search(
 	col string,
 	query []float32,
 	topK int,
@@ -372,4 +473,71 @@ func (t *FlatTable) Search(
 		ScanDuration:        scanDur,
 		MaterializeDuration: matDur,
 	}, nil
+}
+
+type Builder struct {
+	table *Table
+}
+
+func NewBuilder() *Builder {
+	return &Builder{table: NewTable()}
+}
+
+func (t *Table) Builder() *Builder {
+	if t == nil {
+		return NewBuilder()
+	}
+	return &Builder{table: t.Clone()}
+}
+
+func (b *Builder) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
+	return b.table.Upsert(id, vectors, attrs)
+}
+
+func (b *Builder) UpsertRecord(rec *cloudyneighpb.Record) error {
+	return b.table.UpsertRecord(rec)
+}
+
+func (b *Builder) Delete(id string) bool {
+	return b.table.Delete(id)
+}
+
+func (b *Builder) Build() *Table {
+	return b.table
+}
+
+type searchHit struct {
+	row   int
+	id    string
+	score float32
+}
+
+func cmpAsc(a, b searchHit) int {
+	if a.score != b.score {
+		return cmp.Compare(a.score, b.score)
+	}
+	return strings.Compare(a.id, b.id)
+}
+
+func cmpDesc(a, b searchHit) int {
+	if a.score != b.score {
+		return cmp.Compare(b.score, a.score)
+	}
+	return strings.Compare(a.id, b.id)
+}
+
+type hitHeap struct {
+	hits []searchHit
+	cmp  func(a, b searchHit) int
+}
+
+func (h *hitHeap) Len() int           { return len(h.hits) }
+func (h *hitHeap) Less(i, j int) bool { return h.cmp(h.hits[i], h.hits[j]) > 0 }
+func (h *hitHeap) Swap(i, j int)      { h.hits[i], h.hits[j] = h.hits[j], h.hits[i] }
+func (h *hitHeap) Push(x any)         { h.hits = append(h.hits, x.(searchHit)) }
+func (h *hitHeap) Pop() any {
+	n := len(h.hits)
+	x := h.hits[n-1]
+	h.hits = h.hits[:n-1]
+	return x
 }
