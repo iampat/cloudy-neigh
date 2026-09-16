@@ -18,7 +18,7 @@ flags.DEFINE_string(
     "datasets/cohere-wikipedia",
     "Directory containing Parquet files",
 )
-flags.DEFINE_integer("batch_size", 1000, "Batch size for writes")
+flags.DEFINE_integer("batch_size", 200, "Batch size for writes")
 flags.DEFINE_integer("max_docs", None, "Maximum documents to stream")
 flags.DEFINE_string("target", "localhost:50051", "Target ingest address")
 flags.DEFINE_string("namespace", "main", "Target namespace")

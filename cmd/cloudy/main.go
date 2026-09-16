@@ -32,6 +32,8 @@ type ingestConfig struct {
 	flushDocs     int
 	flushInterval time.Duration
 	pollInterval  time.Duration
+	batchDocs     int
+	batchInterval time.Duration
 	debug         bool
 }
 
@@ -46,6 +48,8 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 	fs.IntVar(&cfg.flushDocs, "flush-docs", 10000, "memtable doc threshold for flush")
 	fs.DurationVar(&cfg.flushInterval, "flush-interval", 10*time.Second, "memtable time threshold for flush")
 	fs.DurationVar(&cfg.pollInterval, "poll-interval", 100*time.Millisecond, "WAL poll interval")
+	fs.IntVar(&cfg.batchDocs, "batch-docs", 1000, "ingest batcher doc threshold")
+	fs.DurationVar(&cfg.batchInterval, "batch-interval", 10*time.Millisecond, "ingest batcher time threshold")
 	fs.BoolVar(&cfg.debug, "debug", false, "enable debug logging")
 
 	if err := fs.Parse(args); err != nil {
@@ -75,6 +79,12 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 	if cfg.pollInterval <= 0 {
 		return ingestConfig{}, errors.New("-poll-interval must be positive")
 	}
+	if cfg.batchDocs <= 0 {
+		return ingestConfig{}, errors.New("-batch-docs must be positive")
+	}
+	if cfg.batchInterval <= 0 {
+		return ingestConfig{}, errors.New("-batch-interval must be positive")
+	}
 	return cfg, nil
 }
 
@@ -82,6 +92,7 @@ type ingestServer struct {
 	lis        net.Listener
 	grpcServer *grpc.Server
 	store      objectstore.Store
+	batcher    *ingest.BatchIngester
 	flusher    *ingest.Flusher
 }
 
@@ -97,8 +108,18 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 		return nil, fmt.Errorf("open logstream: %w", err)
 	}
 
-	srv, err := grpcapi.NewIngestServer(log)
+	batcher, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+		MaxDocs:     cfg.batchDocs,
+		MaxInterval: cfg.batchInterval,
+	})
 	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("create batch ingester: %w", err)
+	}
+
+	srv, err := grpcapi.NewIngestServer(batcher)
+	if err != nil {
+		batcher.Close()
 		store.Close()
 		return nil, fmt.Errorf("create ingest server: %w", err)
 	}
@@ -109,6 +130,7 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 		PollInterval:  cfg.pollInterval,
 	})
 	if err != nil {
+		batcher.Close()
 		store.Close()
 		return nil, fmt.Errorf("create flusher: %w", err)
 	}
@@ -121,6 +143,7 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 
 	lis, err := net.Listen("tcp", cfg.listen)
 	if err != nil {
+		batcher.Close()
 		store.Close()
 		return nil, fmt.Errorf("listen on %s: %w", cfg.listen, err)
 	}
@@ -129,6 +152,7 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 		lis:        lis,
 		grpcServer: grpcServer,
 		store:      store,
+		batcher:    batcher,
 		flusher:    flusher,
 	}, nil
 }
@@ -139,6 +163,9 @@ func (s *ingestServer) Addr() net.Addr {
 
 func (s *ingestServer) Serve(ctx context.Context) (err error) {
 	defer func() {
+		if closeErr := s.batcher.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		if closeErr := s.store.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}

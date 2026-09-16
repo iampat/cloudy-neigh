@@ -1,0 +1,1169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cloudy-neigh: Interactive Implementation Walkthrough</title>
+<style>
+:root {
+  --bg-primary: #0a0f1d;
+  --bg-secondary: #111827;
+  --bg-tertiary: #1f2937;
+  --bg-card: #151e32;
+  --border: #374151;
+  --border-focus: #60a5fa;
+  --text-main: #f3f4f6;
+  --text-muted: #9ca3af;
+  --text-dim: #6b7280;
+  --accent-blue: #3b82f6;
+  --accent-cyan: #06b6d4;
+  --accent-green: #10b981;
+  --accent-amber: #f59e0b;
+  --accent-rose: #f43f5e;
+  --accent-purple: #8b5cf6;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  padding: 24px;
+}
+
+.container {
+  max-width: 1300px;
+  margin: 0 auto;
+}
+
+header {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 20px;
+  margin-bottom: 28px;
+}
+
+h1 {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+h1 .tag {
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.2);
+  color: var(--accent-blue);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.subtitle {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin-top: 6px;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+  overflow-x: auto;
+}
+
+.nav-tab {
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.nav-tab:hover {
+  color: var(--text-main);
+}
+
+.nav-tab.active {
+  color: var(--accent-blue);
+  border-bottom-color: var(--accent-blue);
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* Card Styles */
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Controls Bar */
+.controls-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  background: var(--bg-card);
+  padding: 12px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+button {
+  background: var(--bg-tertiary);
+  color: var(--text-main);
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s;
+}
+
+button:hover {
+  background: #283548;
+  border-color: var(--border-focus);
+}
+
+button.primary {
+  background: var(--accent-blue);
+  color: #fff;
+  border-color: var(--accent-blue);
+}
+
+button.primary:hover {
+  background: #2563eb;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Pipeline Canvas */
+.pipeline-visualizer {
+  position: relative;
+  background: #0d1322;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px 16px;
+  min-height: 480px;
+  overflow-x: auto;
+}
+
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  min-width: 960px;
+  position: relative;
+}
+
+.component-node {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.component-node:hover {
+  border-color: var(--border-focus);
+  transform: translateY(-2px);
+}
+
+.component-node.active {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+}
+
+.component-node.highlighted {
+  border-color: var(--accent-amber);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
+}
+
+.node-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.node-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.node-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+}
+
+.badge-proc1 { background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); }
+.badge-proc2 { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
+.badge-proc3 { background: rgba(139, 92, 246, 0.2); color: var(--accent-purple); }
+.badge-gcs   { background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); }
+
+.node-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-bottom: 10px;
+}
+
+.node-file {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--accent-cyan);
+  background: rgba(6, 182, 212, 0.1);
+  padding: 2px 6px;
+  border-radius: 3px;
+  display: inline-block;
+  text-decoration: none;
+}
+
+.node-file:hover {
+  text-decoration: underline;
+}
+
+/* Step Explanation Panel */
+.step-banner {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent-blue);
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin-top: 20px;
+  display: flex;
+  gap: 20px;
+}
+
+.step-number-box {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 54px;
+  height: 54px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.step-number-box .num {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent-blue);
+  line-height: 1;
+}
+
+.step-number-box .of {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.step-info {
+  flex-grow: 1;
+}
+
+.step-info h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.step-info p {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+
+.step-meta {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent-cyan);
+}
+
+/* Data Structure Explorer */
+.structure-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 960px) {
+  .structure-grid { grid-template-columns: 1fr; }
+}
+
+.code-box {
+  background: #0d1322;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #d1d5db;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+.chunk-visualizer {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.chunk-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.chunk-card.shared {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.chunk-card.cloned {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.chunk-header {
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.chunk-status-shared { color: var(--accent-green); }
+.chunk-status-cloned { color: var(--accent-amber); }
+
+/* Framing Visualizer */
+.frame-visual {
+  display: flex;
+  margin: 16px 0;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.frame-segment {
+  padding: 14px 10px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  border-right: 1px solid rgba(255,255,255,0.1);
+}
+
+.frame-hdr-len { background: #1e3a8a; flex: 2; }
+.frame-hdr-crc { background: #1d4ed8; flex: 1.5; }
+.frame-payload { background: #065f46; flex: 6; }
+.frame-ftr-crc { background: #15803d; flex: 1.5; border-right: none; }
+
+/* Interactive Simulator */
+.sim-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 20px;
+}
+
+.log-stream-display {
+  background: #080c16;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  height: 260px;
+  overflow-y: auto;
+}
+
+.log-entry {
+  padding: 4px 6px;
+  border-radius: 3px;
+  margin-bottom: 4px;
+}
+
+.log-entry.success { color: var(--accent-green); background: rgba(16, 185, 129, 0.08); }
+.log-entry.conflict { color: var(--accent-rose); background: rgba(244, 63, 94, 0.08); }
+.log-entry.probe { color: var(--accent-cyan); background: rgba(6, 182, 212, 0.08); }
+.log-entry.info { color: var(--text-muted); }
+
+/* Flowchart Connector Lines */
+.flow-arrow {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 18px;
+  font-family: var(--font-mono);
+  padding: 4px 0;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.badge-blue { background: rgba(59, 130, 246, 0.15); color: #93c5fd; }
+.badge-green { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }
+.badge-amber { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
+
+.table-layout {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 10px;
+}
+
+.table-layout th, .table-layout td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.table-layout th {
+  background: var(--bg-tertiary);
+  color: #fff;
+  font-weight: 600;
+}
+
+.table-layout tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>
+      cloudy-neigh Architecture & Dataflow
+      <span class="tag">Interactive Walkthrough</span>
+    </h1>
+    <div class="subtitle">
+      A step-by-step systems explorable for distributed-systems and database engineers.
+      Covers single global WAL, atomic CAS on GCS, and chunked columnar in-memory vector execution.
+    </div>
+  </header>
+
+  <nav class="nav-tabs">
+    <div class="nav-tab active" onclick="switchTab('pipeline')">1. Interactive End-to-End Pipeline</div>
+    <div class="nav-tab" onclick="switchTab('columnar')">2. Chunked Columnar Memory & CoW</div>
+    <div class="nav-tab" onclick="switchTab('wal')">3. Global WAL & Head Probe Simulator</div>
+    <div class="nav-tab" onclick="switchTab('recordio')">4. RecordIO Binary Framing & CRC-32C</div>
+    <div class="nav-tab" onclick="switchTab('failures')">5. Crash Invariants & Failure Matrix</div>
+    <div class="nav-tab" onclick="switchTab('benchmarks')">6. Benchmark Metrics & Dataset Stats</div>
+  </nav>
+
+  <!-- TAB 1: PIPELINE -->
+  <div id="tab-pipeline" class="tab-content active">
+    <div class="controls-bar">
+      <button class="primary" id="btn-play" onclick="togglePlay()">▶ Play Animation</button>
+      <button onclick="prevStep()">◀ Step Back</button>
+      <button onclick="nextStep()">Step Forward ▶</button>
+      <button onclick="resetPipeline()">↺ Reset</button>
+      <span style="margin-left: auto; font-size: 13px; color: var(--text-muted);">
+        Active Step: <strong id="step-indicator" style="color: #fff;">1 / 8</strong>
+      </span>
+    </div>
+
+    <div class="pipeline-visualizer">
+      <div class="pipeline-grid">
+        <!-- Process 1: Ingest -->
+        <div class="component-node" id="node-client" onclick="selectStep(1)">
+          <div class="node-header">
+            <span class="node-title">Client / Ingestion</span>
+            <span class="node-badge badge-proc1">Caller</span>
+          </div>
+          <div class="node-desc">Issues gRPC <code>UpsertRequest</code> (batch of records with 1024-dim vectors).</div>
+          <a class="node-file" href="file:///Users/ali/workspace/iampat/cloudy-neigh/scripts/demoload.py">scripts/demoload.py</a>
+        </div>
+
+        <div class="component-node" id="node-ingest-server" onclick="selectStep(2)">
+          <div class="node-header">
+            <span class="node-title">IngestServer</span>
+            <span class="node-badge badge-proc1">Process 1</span>
+          </div>
+          <div class="node-desc">Wraps records into <code>WalRecord</code> envelopes, marshals, and appends to WAL.</div>
+          <a class="node-file" href="file:///Users/ali/workspace/iampat/cloudy-neigh/grpcapi/ingest.go">grpcapi/ingest.go</a>
+        </div>
+
+        <!-- Layer 1: WAL -->
+        <div class="component-node" id="node-wal" onclick="selectStep(2)">
+          <div class="node-header">
+            <span class="node-title">Global WAL (GCS)</span>
+            <span class="node-badge badge-gcs">ObjectStore</span>
+          </div>
+          <div class="node-desc">Sequenced keys: <code>wal/00000000000000000104.recordio</code> via atomic <code>Absent: true</code>.</div>
+          <a class="node-file" href="file:///Users/ali/workspace/iampat/cloudy-neigh/logstream/log.go">logstream/log.go</a>
+        </div>
+
+        <!-- Process 2: Flusher -->
+        <div class="component-node" id="node-flusher" onclick="selectStep(3)">
+          <div class="node-header">
+            <span class="node-title">Flusher / Router</span>
+            <span class="node-badge badge-proc2">Process 2</span>
+          </div>
+          <div class="node-desc">Tails WAL from <code>checkpoint_seq + 1</code>, routes mutations to branch Memtables.</div>
+          <a class="node-file" href="file:///Users/ali/workspace/iampat/cloudy-neigh/ingest/flusher.go">ingest/flusher.go</a>
+        </div>
+
+        <!-- Memtable -->
+        <div class="component-node" id="node-memtable" onclick="selectStep(4)">
+          <div class="node-header">
+            <span class="node-title">Branch Memtable</span>
+            <span class="node-badge badge-proc2">Memory</span>
+          </div>
+          <div class="node-desc">Accumulates mutations. Flushes when docs ≥ 10,000 or age ≥ 10 seconds.</div>
+          <a class="node-file" href="file:///Users/ali/workspace/iampat/cloudy-neigh/ingest/flusher.go">ingest/flusher.go#L40</a>
+        </div>
+
+        <!-- Segments on GCS -->
+        <div class="component-node" id="node-segments" onclick="selectStep(5)">
+          <div class="node-header">
+            <span class="node-title">Segment Storage</span>
+            <span class="node-badge badge-gcs">ObjectStore</span>
+          </div>
+          <div class="node-desc">Immutable RecordIO: <code>segments/&lt;branch&gt;/&lt;id&gt;.recordio</code>.</div>
+          <a class="node-file" href="file:///Users/ali/workspace/iampat/cloudy-neigh/segment/writer.go">segment/writer.go</a>
+        </div>
+
+        <!-- Branch Manifest CAS -->
+        <div class="component-node" id="node-manifest" onclick="selectStep(6)">
+          <div class="node-header">
+            <span class="node-title">Branch Head (CAS)</span>
+            <span class="node-badge badge-gcs">refs/heads/</span>
+          </div>
+          <div class="node-desc">Atomic CAS: <code>BranchManifest</code> updated with <code>GenerationMatch</code>.</div>
+          <a class="node-file" href="file:///Users/ali/workspace/iampat/cloudy-neigh/kvfs/branch.go">kvfs/branch.go</a>
+        </div>
+
+        <!-- Process 3: Query Engine -->
+        <div class="component-node" id="node-query" onclick="selectStep(7)">
+          <div class="node-header">
+            <span class="node-title">Query Engine</span>
+            <span class="node-badge badge-proc3">Process 3</span>
+          </div>
+          <div class="node-desc">Polls manifest every 2s, downloads unseen segments, swaps CoW table.</div>
+          <a class="node-file" href="file:///Users/ali/workspace/iampat/cloudy-neigh/query/engine.go">query/engine.go</a>
+        </div>
+      </div>
+
+      <div class="step-banner" id="step-banner">
+        <div class="step-number-box">
+          <div class="num" id="banner-step-num">1</div>
+          <div class="of">OF 8</div>
+        </div>
+        <div class="step-info">
+          <h3 id="banner-title">Client Submits Batch Upsert</h3>
+          <p id="banner-desc">The Python ingestion client streams Cohere Wikipedia batches into IngestServer over gRPC.</p>
+          <div class="step-meta" id="banner-meta">Payload: 1,000 documents | Dim: 1024 float32 | RPC: IngestService.Upsert</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: COLUMNAR MEMORY & COW -->
+  <div id="tab-columnar" class="tab-content">
+    <div class="card">
+      <div class="card-title">
+        Chunked Columnar In-Memory Store: <code>query.Table</code>
+        <span class="badge badge-blue">1024 Rows per Chunk</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+        To eliminate pointer bloat and GC overhead, rows are partitioned into 1024-element chunks.
+        Vectors reside in dense, contiguous <code>[]float32</code> arrays. Modifying the table uses Copy-on-Write (CoW) structural sharing:
+        only touched chunks are cloned, while untouched chunks share memory across revisions.
+      </p>
+
+      <div class="controls-bar">
+        <button class="primary" onclick="simAddRow()">+ Upsert Row to Chunk</button>
+        <button onclick="simDeleteRow()">Mark Tombstone (Delete)</button>
+        <button onclick="simBuildCoW()">Builder.Build() New Table</button>
+        <button onclick="simResetCoW()">Reset Table</button>
+      </div>
+
+      <div class="chunk-visualizer" id="cow-visualizer">
+        <!-- Populated via JS -->
+      </div>
+
+      <div style="margin-top: 20px;" class="structure-grid">
+        <div>
+          <h4 style="font-size: 14px; margin-bottom: 8px;">Memory Layout Invariants</h4>
+          <ul style="font-size: 13px; color: var(--text-muted); padding-left: 20px; line-height: 1.6;">
+            <li>Bitwise chunk math: <code>chunk = row >> 10</code>, <code>offset = row & 1023</code>.</li>
+            <li>No slice header per vector: 1024 vectors packed contiguously as <code>1024 * dim</code> floats.</li>
+            <li>Bidirectional maps: <code>vecToRow[c][vs]</code> and <code>rowToVec[c][rs]</code> decouple rows from vectors.</li>
+            <li>Lock-free query serving: reads call <code>atomic.Pointer[Table].Load()</code> with zero lock contention.</li>
+          </ul>
+        </div>
+        <div>
+          <h4 style="font-size: 14px; margin-bottom: 8px;">Search Pipeline Optimization</h4>
+          <ul style="font-size: 13px; color: var(--text-muted); padding-left: 20px; line-height: 1.6;">
+            <li><strong>Pre-filtering:</strong> Scalar equality checks run <em>before</em> SIMD vector distance.</li>
+            <li><strong>SIMD Kernels:</strong> 4-way fused multiply-add (FMA) with horizontal pair addition.</li>
+            <li><strong>Bounded Min-Heap:</strong> Candidates worse than the current top-k boundary are culled in $O(1)$.</li>
+            <li><strong>Lazy Materialization:</strong> Protobuf records are deserialized only for final top-k hits.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: WAL & HEAD PROBE -->
+  <div id="tab-wal" class="tab-content">
+    <div class="card">
+      <div class="card-title">
+        Global Write-Ahead Log: Collision & Jump Probe Simulator
+        <span class="badge badge-amber">logstream.Log</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+        Writers append to <code>wal/&lt;020d_seq&gt;.recordio</code> with <code>if-generation-match=0</code> (Absent: true).
+        When two writers race, one receives HTTP 412 (Precondition Failed).
+        The writer discovers the new log head using a list scan followed by an exponential jump probe and binary search in $O(\log N)$ calls.
+      </p>
+
+      <div class="sim-grid">
+        <div>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <button class="primary" onclick="simNormalAppend()">Normal Append (No Race)</button>
+            <button onclick="simRaceAppend()">Simulate Concurrent Race (HTTP 412)</button>
+            <button onclick="simClearLog()">Clear Simulator Log</button>
+          </div>
+          <div style="margin-top: 20px; font-size: 13px; color: var(--text-muted);">
+            <div>Current Head: <strong id="wal-head-seq" style="color: var(--accent-cyan);">seq 103</strong></div>
+            <div style="margin-top: 6px;">Key: <code id="wal-head-key" style="color: #fff;">wal/00000000000000000103.recordio</code></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="log-stream-display" id="wal-log-stream">
+            <div class="log-entry info">[system] logstream initialized. Tail discovered at seq 103.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 4: RECORDIO -->
+  <div id="tab-recordio" class="tab-content">
+    <div class="card">
+      <div class="card-title">
+        RecordIO Container Framing & Checksum Integrity
+        <span class="badge badge-green">recordio.Writer & Scanner</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-muted);">
+        Every log entry and segment file uses the RecordIO binary frame.
+        A 12-byte header and 4-byte footer encapsulate variable payloads with masked CRC-32C checksums.
+      </p>
+
+      <div class="frame-visual">
+        <div class="frame-segment frame-hdr-len">
+          Payload Length (8B)<br><span style="font-size: 10px; font-weight: normal;">uint64 little endian</span>
+        </div>
+        <div class="frame-segment frame-hdr-crc">
+          Header CRC (4B)<br><span style="font-size: 10px; font-weight: normal;">Masked CRC-32C</span>
+        </div>
+        <div class="frame-segment frame-payload">
+          Payload (N Bytes)<br><span style="font-size: 10px; font-weight: normal;">Serialized Protobuf Mutation</span>
+        </div>
+        <div class="frame-segment frame-ftr-crc">
+          Data CRC (4B)<br><span style="font-size: 10px; font-weight: normal;">Masked CRC-32C</span>
+        </div>
+      </div>
+
+      <div class="controls-bar">
+        <button class="primary" onclick="simVerifyFrame('valid')">Verify Valid Frame</button>
+        <button onclick="simVerifyFrame('corrupt_header')">Corrupt Header CRC</button>
+        <button onclick="simVerifyFrame('corrupt_data')">Corrupt Data CRC</button>
+        <button onclick="simVerifyFrame('torn')">Simulate Torn Write (Truncation)</button>
+      </div>
+
+      <div class="code-box" id="frame-status-box">
+        Frame Scanner Status: Ready. 16-byte overhead per record.
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 5: FAILURES -->
+  <div id="tab-failures" class="tab-content">
+    <div class="card">
+      <div class="card-title">Distributed Systems Failure Matrix & Recovery Invariants</div>
+      <table class="table-layout">
+        <thead>
+          <tr>
+            <th>Failure Scenario</th>
+            <th>Impact</th>
+            <th>Engine Recovery Protocol</th>
+            <th>Safety Invariant</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Crash during WAL Append</strong></td>
+            <td>HTTP request fails or truncates on object storage.</td>
+            <td>Conditional write (Absent: true) ensures object is never overwritten. Caller retries at next sequence.</td>
+            <td>Log contiguity: sequence numbers form an unbroken 1..N sequence.</td>
+          </tr>
+          <tr>
+            <td><strong>Ingest Node Crash</strong></td>
+            <td>In-flight batch dropped before WAL acknowledgment.</td>
+            <td>Process is stateless. Ingest client retries with standard exponential backoff against healthy replica.</td>
+            <td>At-least-once delivery; mutations are idempotent.</td>
+          </tr>
+          <tr>
+            <td><strong>Crash between Segment Upload and CAS</strong></td>
+            <td>Dangling unreferenced segment blob in <code>segments/</code>.</td>
+            <td>On restart, Flusher re-tails WAL from <code>checkpoint_seq + 1</code>. Dangling segment is never added to manifest.</td>
+            <td>Garbage-tolerant: segments become live only upon manifest CAS.</td>
+          </tr>
+          <tr>
+            <td><strong>Manifest CAS Race (HTTP 412)</strong></td>
+            <td>Concurrent flusher updated branch manifest first.</td>
+            <td>Flusher catches <code>ErrPreconditionFailed</code>, re-resolves current manifest, merges segment ref, retries CAS.</td>
+            <td>Linearizable manifest progression on cloud storage.</td>
+          </tr>
+          <tr>
+            <td><strong>Query Node Crash (kill -9)</strong></td>
+            <td>In-memory columnar table discarded.</td>
+            <td>On restart, Query Engine polls <code>refs/heads/</code>, downloads segments, and reconstructs columnar table in RAM.</td>
+            <td>Zero local disk durability requirement. Zero data loss.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TAB 6: BENCHMARKS & DATASET -->
+  <div id="tab-benchmarks" class="tab-content">
+    <div class="card">
+      <div class="card-title">
+        Cohere Wikipedia Dataset & Segment Count
+        <span class="badge badge-blue">Corpus: 1,000,000 Documents</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+        The dataset contains 1,000,000 documents with 1024-dimension float32 vectors across 10 Parquet files (7 English, 1 German, 1 Spanish, 1 French).
+        With the flusher threshold configured to <code>DocThreshold = 10,000</code>, continuous streaming produces:
+      </p>
+      <div style="background: #0d1322; border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; font-family: var(--font-mono); font-size: 13px; color: var(--accent-cyan); margin-bottom: 16px;">
+        1,000,000 documents ÷ 10,000 docs/segment = 100 segment files (segments/main/*.recordio)
+      </div>
+
+      <div class="card-title" style="margin-top: 24px;">Benchmark Measurements (Apple M3 Max, ARM64)</div>
+      <table class="table-layout">
+        <thead>
+          <tr>
+            <th>Kernel / Metric</th>
+            <th>Dimension</th>
+            <th>Pure Go</th>
+            <th>SIMD Architecture (FMA)</th>
+            <th>Speedup</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Cosine Distance</strong></td>
+            <td>1024</td>
+            <td>20,294 ns/op</td>
+            <td>273.6 ns/op</td>
+            <td><strong style="color: var(--accent-green);">74.1x faster</strong></td>
+          </tr>
+          <tr>
+            <td><strong>Dot Product</strong></td>
+            <td>1024</td>
+            <td>6,193 ns/op</td>
+            <td>277.3 ns/op</td>
+            <td><strong style="color: var(--accent-green);">22.3x faster</strong></td>
+          </tr>
+          <tr>
+            <td><strong>L2 Squared</strong></td>
+            <td>1024</td>
+            <td>6,448 ns/op</td>
+            <td>289.3 ns/op</td>
+            <td><strong style="color: var(--accent-green);">22.3x faster</strong></td>
+          </tr>
+          <tr>
+            <td><strong>NormalizeInPlace</strong></td>
+            <td>1024</td>
+            <td>10,852 ns/op</td>
+            <td>947.9 ns/op</td>
+            <td><strong style="color: var(--accent-green);">11.4x faster</strong></td>
+          </tr>
+          <tr>
+            <td><strong>Columnar ApplyDelta</strong></td>
+            <td>Table CoW</td>
+            <td>-</td>
+            <td>264.9 µs / batch</td>
+            <td><strong style="color: var(--accent-blue);">3,774 batches/s</strong></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="card-title" style="margin-top: 24px;">End-to-End Ingestion & Query Benchmarks</div>
+      <table class="table-layout">
+        <thead>
+          <tr>
+            <th>Workload</th>
+            <th>Configuration</th>
+            <th>Throughput / Latency (p50)</th>
+            <th>Tail Latency (p99)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Server-Side Batched Ingest</strong></td>
+            <td>Client batch=200, Server queue=1000 docs / 10ms</td>
+            <td><strong>1,377 docs/sec</strong> sustained</td>
+            <td>Blocks until WAL commit</td>
+          </tr>
+          <tr>
+            <td><strong>Pure Vector Search (k-NN)</strong></td>
+            <td>10,000 docs, 1024-dim, top_k=10</td>
+            <td><strong>12.72 ms</strong> (mean: 12.77 ms)</td>
+            <td><strong>13.36 ms</strong></td>
+          </tr>
+          <tr>
+            <td><strong>Filtered Vector Search</strong></td>
+            <td>10,000 docs, 1024-dim, top_k=10, lang=en</td>
+            <td><strong>52.68 ms</strong> (mean: 52.83 ms)</td>
+            <td><strong>55.80 ms</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Tab Switching
+function switchTab(tabId) {
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  
+  event.target.classList.add('active');
+  document.getElementById('tab-' + tabId).classList.add('active');
+}
+
+// Pipeline Steps Data
+const pipelineSteps = [
+  {
+    step: 1,
+    nodes: ['node-client', 'node-ingest-server'],
+    title: "1. Client Sends gRPC Upsert (Batch = 200)",
+    desc: "Client streams smaller batches of 200 records containing 1024-dim vectors to IngestService.Upsert. IngestServer delegates directly to injected Ingester.",
+    meta: "Target: localhost:50051 | Namespace: 'main' | Batch size: 200 docs"
+  },
+  {
+    step: 2,
+    nodes: ['node-ingest-server', 'node-wal'],
+    title: "2. Server-Side Batching & Conditional WAL Append",
+    desc: "BatchIngester buffers incoming requests until 1,000 docs accumulate or 10ms passes. Writes to wal/00000000000000000104.recordio with Absent: true. Clients block until WAL commit.",
+    meta: "Queue threshold: 1,000 docs / 10ms | Precondition: Absent: true | Clients unblock after 200 OK"
+  },
+  {
+    step: 3,
+    nodes: ['node-wal', 'node-flusher'],
+    title: "3. Flusher Tails WAL from Checkpoint",
+    desc: "Process 2 Flusher tails the log sequentially starting at checkpoint_seq + 1. It skips already-checkpointed records and routes new mutations to branch Memtables.",
+    meta: "Poll Interval: 100ms | LogStream.Read(seq=104) | Route: branch 'main'"
+  },
+  {
+    step: 4,
+    nodes: ['node-flusher', 'node-memtable'],
+    title: "4. Memtable Threshold Trigger",
+    desc: "The branch Memtable accumulates document mutations. When document count hits 10,000 (DocThreshold) or 10s elapses (TimeThreshold), a flush begins.",
+    meta: "Memtable doc count: 10,000 / 10,000 | Trigger: DocThreshold"
+  },
+  {
+    step: 5,
+    nodes: ['node-memtable', 'node-segments'],
+    title: "5. Segment Write and Upload to ObjectStore",
+    desc: "Flusher encodes mutations into RecordIO format with CRC-32C checksums and uploads to segments/main/20260914150000-000120ab12cd34ef.recordio.",
+    meta: "Monotonic Segment ID: YYYYMMDDHHMMSS-micros-rand | Absent: true"
+  },
+  {
+    step: 6,
+    nodes: ['node-flusher', 'node-manifest'],
+    title: "6. Manifest Compare-And-Swap (CAS) Commit",
+    desc: "Flusher updates refs/heads/main. Appends the new SegmentRef, sets CheckpointSeq = 104, and executes Put with GenerationMatch. Retries on 412.",
+    meta: "Refs key: refs/heads/main | CheckpointSeq: 104 | Condition: GenerationMatch"
+  },
+  {
+    step: 7,
+    nodes: ['node-manifest', 'node-query'],
+    title: "7. Query Engine Polls Manifest & CoW Update",
+    desc: "Query background ticker (2s) polls refs/heads/main. It detects generation change, streams only the new segment, and creates a new Table using Copy-on-Write chunk sharing.",
+    meta: "atomic.Pointer[Table].Store(newTable) | Lock-free atomic swap"
+  },
+  {
+    step: 8,
+    nodes: ['node-query', 'node-client'],
+    title: "8. Vector Query Execution (Pre-filtered SIMD Cosine)",
+    desc: "Query arrives: filters on lang='en', evaluates SIMD Cosine distance against 1024-dim vectors, culls with min-heap, and returns top-k hits to client.",
+    meta: "Latency: < 5ms in RAM | Kernel: SIMD Float32x4 FMA | Top-K: 10 hits"
+  }
+];
+
+let currentStep = 1;
+let playInterval = null;
+
+function renderPipelineStep(stepNum) {
+  currentStep = stepNum;
+  const s = pipelineSteps[stepNum - 1];
+
+  document.querySelectorAll('.component-node').forEach(node => {
+    node.classList.remove('active', 'highlighted');
+  });
+
+  s.nodes.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('highlighted');
+  });
+
+  document.getElementById('step-indicator').textContent = `${s.step} / ${pipelineSteps.length}`;
+  document.getElementById('banner-step-num').textContent = s.step;
+  document.getElementById('banner-title').textContent = s.title;
+  document.getElementById('banner-desc').textContent = s.desc;
+  document.getElementById('banner-meta').textContent = s.meta;
+}
+
+function nextStep() {
+  if (currentStep < pipelineSteps.length) {
+    renderPipelineStep(currentStep + 1);
+  } else {
+    renderPipelineStep(1);
+  }
+}
+
+function prevStep() {
+  if (currentStep > 1) {
+    renderPipelineStep(currentStep - 1);
+  }
+}
+
+function selectStep(n) {
+  if (playInterval) togglePlay();
+  renderPipelineStep(n);
+}
+
+function resetPipeline() {
+  if (playInterval) togglePlay();
+  renderPipelineStep(1);
+}
+
+function togglePlay() {
+  const btn = document.getElementById('btn-play');
+  if (playInterval) {
+    clearInterval(playInterval);
+    playInterval = null;
+    btn.textContent = "▶ Play Animation";
+    btn.classList.add('primary');
+  } else {
+    btn.textContent = "⏸ Pause";
+    btn.classList.remove('primary');
+    playInterval = setInterval(() => {
+      nextStep();
+    }, 2400);
+  }
+}
+
+// TAB 2: Columnar CoW Simulation
+let chunksData = [
+  { id: 0, rows: 1024, status: 'shared', modified: false },
+  { id: 1, rows: 1024, status: 'shared', modified: false },
+  { id: 2, rows: 480,  status: 'shared', modified: false },
+  { id: 3, rows: 0,    status: 'empty',  modified: false }
+];
+
+function renderCoW() {
+  const container = document.getElementById('cow-visualizer');
+  container.innerHTML = '';
+  chunksData.forEach(c => {
+    const card = document.createElement('div');
+    card.className = `chunk-card ${c.status}`;
+    card.innerHTML = `
+      <div class="chunk-header">
+        <span>Chunk #${c.id}</span>
+        <span class="chunk-status-${c.status}">[${c.status.toUpperCase()}]</span>
+      </div>
+      <div style="color: var(--text-muted); font-size: 11px;">
+        Rows: <strong>${c.rows} / 1024</strong><br>
+        Memory: ${c.rows > 0 ? (c.rows * 1024 * 4 / 1024).toFixed(0) + ' KiB' : '0 KiB'}<br>
+        Modified in Builder: <strong>${c.modified ? 'YES (Cloned)' : 'NO'}</strong>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function simAddRow() {
+  // Find active chunk
+  let active = chunksData.find(c => c.rows < 1024);
+  if (!active) {
+    active = { id: chunksData.length, rows: 0, status: 'cloned', modified: true };
+    chunksData.push(active);
+  }
+  active.rows += 50;
+  if (active.rows > 1024) active.rows = 1024;
+  active.status = 'cloned';
+  active.modified = true;
+  renderCoW();
+}
+
+function simDeleteRow() {
+  chunksData[0].modified = true;
+  chunksData[0].status = 'cloned';
+  renderCoW();
+}
+
+function simBuildCoW() {
+  chunksData.forEach(c => {
+    if (c.rows > 0) c.status = 'shared';
+    c.modified = false;
+  });
+  renderCoW();
+}
+
+function simResetCoW() {
+  chunksData = [
+    { id: 0, rows: 1024, status: 'shared', modified: false },
+    { id: 1, rows: 1024, status: 'shared', modified: false },
+    { id: 2, rows: 480,  status: 'shared', modified: false }
+  ];
+  renderCoW();
+}
+
+// TAB 3: WAL Simulation
+let walCurrentSeq = 103;
+
+function simNormalAppend() {
+  walCurrentSeq++;
+  const log = document.getElementById('wal-log-stream');
+  const seqStr = String(walCurrentSeq).padStart(20, '0');
+  
+  const entry = document.createElement('div');
+  entry.className = 'log-entry success';
+  entry.textContent = `[200 OK] Put("wal/${seqStr}.recordio", Absent=true) -> Committed seq ${walCurrentSeq}`;
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+
+  document.getElementById('wal-head-seq').textContent = `seq ${walCurrentSeq}`;
+  document.getElementById('wal-head-key').textContent = `wal/${seqStr}.recordio`;
+}
+
+function simRaceAppend() {
+  const log = document.getElementById('wal-log-stream');
+  const targetSeq = walCurrentSeq + 1;
+  const seqStr = String(targetSeq).padStart(20, '0');
+
+  // Step 1: 412
+  const entry1 = document.createElement('div');
+  entry1.className = 'log-entry conflict';
+  entry1.textContent = `[412 Conflict] Put("wal/${seqStr}.recordio", Absent=true) failed. Another writer claimed seq ${targetSeq}!`;
+  log.appendChild(entry1);
+
+  // Step 2: Head Discovery
+  const entry2 = document.createElement('div');
+  entry2.className = 'log-entry probe';
+  entry2.textContent = `[probe] Triggering head discovery starting at seq ${targetSeq}...`;
+  log.appendChild(entry2);
+
+  // Step 3: Jump
+  setTimeout(() => {
+    walCurrentSeq += 2; // concurrent writer added 2 segments
+    const newHeadStr = String(walCurrentSeq).padStart(20, '0');
+    const entry3 = document.createElement('div');
+    entry3.className = 'log-entry probe';
+    entry3.textContent = `[jump] Probing Exists(): low=${targetSeq}, high=${walCurrentSeq}. Found head at seq ${walCurrentSeq}.`;
+    log.appendChild(entry3);
+
+    // Step 4: Retry
+    walCurrentSeq++;
+    const retryStr = String(walCurrentSeq).padStart(20, '0');
+    const entry4 = document.createElement('div');
+    entry4.className = 'log-entry success';
+    entry4.textContent = `[200 OK] Retry Put("wal/${retryStr}.recordio", Absent=true) -> Committed seq ${walCurrentSeq}!`;
+    log.appendChild(entry4);
+    log.scrollTop = log.scrollHeight;
+
+    document.getElementById('wal-head-seq').textContent = `seq ${walCurrentSeq}`;
+    document.getElementById('wal-head-key').textContent = `wal/${retryStr}.recordio`;
+  }, 400);
+}
+
+function simClearLog() {
+  document.getElementById('wal-log-stream').innerHTML = '<div class="log-entry info">[system] logstream reset.</div>';
+}
+
+// TAB 4: RecordIO Verification Simulation
+function simVerifyFrame(type) {
+  const box = document.getElementById('frame-status-box');
+  if (type === 'valid') {
+    box.innerHTML = `<span style="color: var(--accent-green);">[OK]</span> Header CRC matches (Castagnoli 0x3f4a12b9). Data CRC matches. Clean EOF at 16B boundary. Valid mutation parsed.`;
+  } else if (type === 'corrupt_header') {
+    box.innerHTML = `<span style="color: var(--accent-rose);">[ERROR recordio.ErrHeaderCorrupted]</span> Header CRC mismatch! Expected 0x3f4a12b9, computed 0xdeadbeef. Scan aborted.`;
+  } else if (type === 'corrupt_data') {
+    box.innerHTML = `<span style="color: var(--accent-rose);">[ERROR recordio.ErrDataCorrupted]</span> Payload footer CRC mismatch! Bit flip detected in serialized protobuf. Record discarded.`;
+  } else if (type === 'torn') {
+    box.innerHTML = `<span style="color: var(--accent-amber);">[ERROR recordio.ErrTornWrite]</span> Unexpected EOF mid-payload! 1024 bytes expected, stream truncated at 412 bytes. Segment tail marked torn.`;
+  }
+}
+
+// Init
+renderPipelineStep(1);
+renderCoW();
+</script>
+</body>
+</html>

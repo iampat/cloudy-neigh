@@ -6,27 +6,29 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/namespace"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
-	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 )
 
-var ErrNilLog = errors.New("grpcapi: nil log")
+var ErrNilIngester = errors.New("grpcapi: nil ingester")
+
+type Ingester interface {
+	Upsert(ctx context.Context, namespace string, records []*cloudyneighpb.Record) error
+	Delete(ctx context.Context, namespace string, ids []string) error
+}
 
 type IngestServer struct {
 	cloudyneighpb.UnimplementedIngestServiceServer
-	log *logstream.Log
+	ingester Ingester
 }
 
-func NewIngestServer(log *logstream.Log) (*IngestServer, error) {
-	if log == nil {
-		return nil, ErrNilLog
+func NewIngestServer(ingester Ingester) (*IngestServer, error) {
+	if ingester == nil {
+		return nil, ErrNilIngester
 	}
-	return &IngestServer{log: log}, nil
+	return &IngestServer{ingester: ingester}, nil
 }
 
 func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequest) (*cloudyneighpb.UpsertResponse, error) {
@@ -41,7 +43,6 @@ func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequ
 		return &cloudyneighpb.UpsertResponse{}, nil
 	}
 
-	records := make([]logstream.Record, len(req.Records))
 	for i, rec := range req.Records {
 		if rec == nil {
 			return nil, status.Errorf(codes.InvalidArgument, "grpcapi: record at index %d is nil", i)
@@ -49,43 +50,21 @@ func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequ
 		if rec.Id == "" {
 			return nil, status.Errorf(codes.InvalidArgument, "grpcapi: record at index %d has empty id", i)
 		}
-		payload, err := proto.Marshal(rec)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "grpcapi: marshal record: %v", err)
-		}
-		walRec := &storagepb.WalRecord{
-			Record: &storagepb.WalRecord_Mutation{
-				Mutation: &storagepb.DocumentMutation{
-					Branch:  req.Namespace,
-					DocId:   rec.Id,
-					Op:      storagepb.MutationOp_PUT,
-					Payload: payload,
-				},
-			},
-		}
-		recBytes, err := proto.Marshal(walRec)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "grpcapi: marshal wal record: %v", err)
-		}
-		records[i] = recBytes
 	}
 
-	appendStart := time.Now()
-	if _, err := s.log.Append(ctx, records); err != nil {
+	if err := s.ingester.Upsert(ctx, req.Namespace, req.Records); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, status.Error(codes.Canceled, err.Error())
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, status.Error(codes.DeadlineExceeded, err.Error())
 		}
-		return nil, status.Errorf(codes.Internal, "grpcapi: append wal: %v", err)
+		return nil, status.Errorf(codes.Internal, "grpcapi: upsert: %v", err)
 	}
-	appendDur := time.Since(appendStart)
 
 	slog.Debug("upsert",
 		"namespace", req.Namespace,
 		"records", len(req.Records),
-		"append_dur", appendDur,
 		"total_dur", time.Since(start),
 	)
 
@@ -105,35 +84,20 @@ func (s *IngestServer) Delete(ctx context.Context, req *cloudyneighpb.DeleteRequ
 		return &cloudyneighpb.DeleteResponse{}, nil
 	}
 
-	records := make([]logstream.Record, len(req.Ids))
 	for i, id := range req.Ids {
 		if id == "" {
 			return nil, status.Errorf(codes.InvalidArgument, "grpcapi: id at index %d is empty", i)
 		}
-		rec := &storagepb.WalRecord{
-			Record: &storagepb.WalRecord_Mutation{
-				Mutation: &storagepb.DocumentMutation{
-					Branch: req.Namespace,
-					DocId:  id,
-					Op:     storagepb.MutationOp_DELETE,
-				},
-			},
-		}
-		recBytes, err := proto.Marshal(rec)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "grpcapi: marshal wal record: %v", err)
-		}
-		records[i] = recBytes
 	}
 
-	if _, err := s.log.Append(ctx, records); err != nil {
+	if err := s.ingester.Delete(ctx, req.Namespace, req.Ids); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, status.Error(codes.Canceled, err.Error())
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, status.Error(codes.DeadlineExceeded, err.Error())
 		}
-		return nil, status.Errorf(codes.Internal, "grpcapi: append wal: %v", err)
+		return nil, status.Errorf(codes.Internal, "grpcapi: delete: %v", err)
 	}
 
 	return &cloudyneighpb.DeleteResponse{
