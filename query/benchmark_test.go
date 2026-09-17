@@ -9,8 +9,8 @@ import (
 	"github.com/iampat/cloudy-neigh/query"
 )
 
-func BenchmarkSearch1M1024_Table(b *testing.B) {
-	const numVecs = 1_000_000
+func BenchmarkSearch10K1024_Table(b *testing.B) {
+	const numVecs = 10_000
 	const dim = 1024
 
 	tbl := query.NewTable()

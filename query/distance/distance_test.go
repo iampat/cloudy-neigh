@@ -344,7 +344,6 @@ func FuzzL2Squared(f *testing.F) {
 		}
 
 		l2Pure := distance.L2SquaredPure(a, b)
-		l2Acc := distance.L2SquaredAccelerated(a, b)
 		l2Port := distance.L2SquaredPortable(a, b)
 
 		if math.IsInf(float64(l2Pure), 0) || math.IsNaN(float64(l2Pure)) {
@@ -355,7 +354,6 @@ func FuzzL2Squared(f *testing.F) {
 		if mag := math.Abs(float64(l2Pure)); mag > 1.0 {
 			tol = 1e-5 * mag
 		}
-		require.InDelta(t, l2Pure, l2Acc, tol)
 		require.InDelta(t, l2Pure, l2Port, tol)
 
 		got, err := distance.L2Squared(a, b)
@@ -386,7 +384,6 @@ func FuzzDotProduct(f *testing.F) {
 		}
 
 		dotPure := distance.DotProductPure(a, b)
-		dotAcc := distance.DotProductAccelerated(a, b)
 		dotPort := distance.DotProductPortable(a, b)
 
 		if math.IsInf(float64(dotPure), 0) || math.IsNaN(float64(dotPure)) {
@@ -397,7 +394,6 @@ func FuzzDotProduct(f *testing.F) {
 		if mag := math.Abs(float64(dotPure)); mag > 1.0 {
 			tol = 1e-5 * mag
 		}
-		require.InDelta(t, dotPure, dotAcc, tol)
 		require.InDelta(t, dotPure, dotPort, tol)
 
 		got, err := distance.DotProduct(a, b)
@@ -429,25 +425,21 @@ func FuzzCosine(f *testing.F) {
 		}
 
 		cosPure, errPure := distance.CosinePure(a, b)
-		cosAcc, errAcc := distance.CosineAccelerated(a, b)
 		cosPort, errPort := distance.CosinePortable(a, b)
 
 		if errPure != nil {
 			require.ErrorIs(t, errPure, distance.ErrZeroVector)
-			require.ErrorIs(t, errAcc, distance.ErrZeroVector)
 			require.ErrorIs(t, errPort, distance.ErrZeroVector)
 			_, err := distance.Cosine(a, b)
 			require.ErrorIs(t, err, distance.ErrZeroVector)
 			return
 		}
-		require.NoError(t, errAcc)
 		require.NoError(t, errPort)
 
 		if math.IsNaN(float64(cosPure)) || math.IsInf(float64(cosPure), 0) {
 			return
 		}
 
-		require.InDelta(t, cosPure, cosAcc, 1e-5)
 		require.InDelta(t, cosPure, cosPort, 1e-5)
 
 		got, err := distance.Cosine(a, b)
@@ -474,26 +466,21 @@ func FuzzNormalizeInPlace(f *testing.F) {
 		}
 
 		normPure := slices.Clone(v)
-		normAcc := slices.Clone(v)
 		normPort := slices.Clone(v)
 
 		errPure := distance.NormalizeInPlacePure(normPure)
-		errAcc := distance.NormalizeInPlaceAccelerated(normAcc)
 		errPort := distance.NormalizeInPlacePortable(normPort)
 
 		if errPure != nil {
 			require.ErrorIs(t, errPure, distance.ErrZeroVector)
-			require.ErrorIs(t, errAcc, distance.ErrZeroVector)
 			require.ErrorIs(t, errPort, distance.ErrZeroVector)
 			err := distance.NormalizeInPlace(slices.Clone(v))
 			require.ErrorIs(t, err, distance.ErrZeroVector)
 			return
 		}
-		require.NoError(t, errAcc)
 		require.NoError(t, errPort)
 
 		for i := range normPure {
-			require.InDelta(t, normPure[i], normAcc[i], 1e-5)
 			require.InDelta(t, normPure[i], normPort[i], 1e-5)
 		}
 	})

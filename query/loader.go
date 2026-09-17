@@ -104,6 +104,12 @@ func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.
 	reader := segment.NewReader(rc)
 	count := 0
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		mut, err := reader.Next()
 		if err != nil {
 			if errors.Is(err, io.EOF) {

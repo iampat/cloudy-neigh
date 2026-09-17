@@ -173,19 +173,12 @@ func (f *Flusher) shutdownFlush(startSeq uint64) error {
 		startSeq = minSeq + 1
 	}
 
-	if err := f.drain(ctx, startSeq); err != nil {
-		return err
-	}
-	return f.flushAll(ctx)
-}
-
-func (f *Flusher) drain(ctx context.Context, startSeq uint64) error {
 	seq := startSeq
 	for {
 		records, err := f.log.Read(ctx, seq)
 		if err != nil {
 			if errors.Is(err, logstream.ErrEndOfStream) {
-				return nil
+				break
 			}
 			return fmt.Errorf("drain log seq %d: %w", seq, err)
 		}
@@ -194,6 +187,8 @@ func (f *Flusher) drain(ctx context.Context, startSeq uint64) error {
 		}
 		seq++
 	}
+
+	return f.flushAll(ctx)
 }
 
 func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logstream.Record) error {

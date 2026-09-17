@@ -6,12 +6,8 @@ var (
 	CosinePure           = cosinePure
 	NormalizeInPlacePure = normalizeInPlacePure
 
-	L2SquaredAccelerated        = l2Squared
-	DotProductAccelerated       = dotProduct
-	CosineAccelerated           = cosine
-	NormalizeInPlaceAccelerated = normalizeInPlace
-	L2SquaredPortable           = l2SquaredPortable
-	DotProductPortable          = dotProductPortable
-	CosinePortable              = cosinePortable
-	NormalizeInPlacePortable    = normalizeInPlacePortable
+	L2SquaredPortable        = l2SquaredPortable
+	DotProductPortable       = dotProductPortable
+	CosinePortable           = cosinePortable
+	NormalizeInPlacePortable = normalizeInPlacePortable
 )

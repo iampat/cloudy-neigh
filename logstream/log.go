@@ -65,7 +65,12 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 		if err != nil {
 			return 0, err
 		}
-		l.lastKnown.CompareAndSwap(0, t)
+		for {
+			curr := l.lastKnown.Load()
+			if t <= curr || l.lastKnown.CompareAndSwap(curr, t) {
+				break
+			}
+		}
 	}
 
 	seq := l.lastKnown.Load() + 1
