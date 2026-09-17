@@ -10,14 +10,8 @@ var (
 	DotProductAccelerated       = dotProduct
 	CosineAccelerated           = cosine
 	NormalizeInPlaceAccelerated = normalizeInPlace
-
-	L2SquaredArch        = l2SquaredArch
-	DotProductArch       = dotProductArch
-	CosineArch           = cosineArch
-	NormalizeInPlaceArch = normalizeInPlaceArch
-
-	L2SquaredPortable        = l2SquaredPortable
-	DotProductPortable       = dotProductPortable
-	CosinePortable           = cosinePortable
-	NormalizeInPlacePortable = normalizeInPlacePortable
+	L2SquaredPortable           = l2SquaredPortable
+	DotProductPortable          = dotProductPortable
+	CosinePortable              = cosinePortable
+	NormalizeInPlacePortable    = normalizeInPlacePortable
 )

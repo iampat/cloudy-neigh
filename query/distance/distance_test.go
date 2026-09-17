@@ -334,7 +334,6 @@ func FuzzL2Squared(f *testing.F) {
 		if len(a) == 0 {
 			require.Equal(t, float32(0), distance.L2SquaredPure(a, b))
 			require.Equal(t, float32(0), distance.L2SquaredPortable(a, b))
-			require.Equal(t, float32(0), distance.L2SquaredArch(a, b))
 			got, err := distance.L2Squared(a, b)
 			require.NoError(t, err)
 			require.Equal(t, float32(0), got)
@@ -347,7 +346,6 @@ func FuzzL2Squared(f *testing.F) {
 		l2Pure := distance.L2SquaredPure(a, b)
 		l2Acc := distance.L2SquaredAccelerated(a, b)
 		l2Port := distance.L2SquaredPortable(a, b)
-		l2Arch := distance.L2SquaredArch(a, b)
 
 		if math.IsInf(float64(l2Pure), 0) || math.IsNaN(float64(l2Pure)) {
 			return
@@ -359,7 +357,6 @@ func FuzzL2Squared(f *testing.F) {
 		}
 		require.InDelta(t, l2Pure, l2Acc, tol)
 		require.InDelta(t, l2Pure, l2Port, tol)
-		require.InDelta(t, l2Pure, l2Arch, tol)
 
 		got, err := distance.L2Squared(a, b)
 		require.NoError(t, err)
@@ -379,7 +376,6 @@ func FuzzDotProduct(f *testing.F) {
 		if len(a) == 0 {
 			require.Equal(t, float32(0), distance.DotProductPure(a, b))
 			require.Equal(t, float32(0), distance.DotProductPortable(a, b))
-			require.Equal(t, float32(0), distance.DotProductArch(a, b))
 			got, err := distance.DotProduct(a, b)
 			require.NoError(t, err)
 			require.Equal(t, float32(0), got)
@@ -392,7 +388,6 @@ func FuzzDotProduct(f *testing.F) {
 		dotPure := distance.DotProductPure(a, b)
 		dotAcc := distance.DotProductAccelerated(a, b)
 		dotPort := distance.DotProductPortable(a, b)
-		dotArch := distance.DotProductArch(a, b)
 
 		if math.IsInf(float64(dotPure), 0) || math.IsNaN(float64(dotPure)) {
 			return
@@ -404,7 +399,6 @@ func FuzzDotProduct(f *testing.F) {
 		}
 		require.InDelta(t, dotPure, dotAcc, tol)
 		require.InDelta(t, dotPure, dotPort, tol)
-		require.InDelta(t, dotPure, dotArch, tol)
 
 		got, err := distance.DotProduct(a, b)
 		require.NoError(t, err)
@@ -424,10 +418,8 @@ func FuzzCosine(f *testing.F) {
 		if len(a) == 0 {
 			_, errPure := distance.CosinePure(a, b)
 			_, errPort := distance.CosinePortable(a, b)
-			_, errArch := distance.CosineArch(a, b)
 			require.ErrorIs(t, errPure, distance.ErrZeroVector)
 			require.ErrorIs(t, errPort, distance.ErrZeroVector)
-			require.ErrorIs(t, errArch, distance.ErrZeroVector)
 			_, err := distance.Cosine(a, b)
 			require.ErrorIs(t, err, distance.ErrZeroVector)
 			return
@@ -439,20 +431,17 @@ func FuzzCosine(f *testing.F) {
 		cosPure, errPure := distance.CosinePure(a, b)
 		cosAcc, errAcc := distance.CosineAccelerated(a, b)
 		cosPort, errPort := distance.CosinePortable(a, b)
-		cosArch, errArch := distance.CosineArch(a, b)
 
 		if errPure != nil {
 			require.ErrorIs(t, errPure, distance.ErrZeroVector)
 			require.ErrorIs(t, errAcc, distance.ErrZeroVector)
 			require.ErrorIs(t, errPort, distance.ErrZeroVector)
-			require.ErrorIs(t, errArch, distance.ErrZeroVector)
 			_, err := distance.Cosine(a, b)
 			require.ErrorIs(t, err, distance.ErrZeroVector)
 			return
 		}
 		require.NoError(t, errAcc)
 		require.NoError(t, errPort)
-		require.NoError(t, errArch)
 
 		if math.IsNaN(float64(cosPure)) || math.IsInf(float64(cosPure), 0) {
 			return
@@ -460,7 +449,6 @@ func FuzzCosine(f *testing.F) {
 
 		require.InDelta(t, cosPure, cosAcc, 1e-5)
 		require.InDelta(t, cosPure, cosPort, 1e-5)
-		require.InDelta(t, cosPure, cosArch, 1e-5)
 
 		got, err := distance.Cosine(a, b)
 		require.NoError(t, err)
@@ -475,10 +463,8 @@ func FuzzNormalizeInPlace(f *testing.F) {
 		if len(v) == 0 {
 			errPure := distance.NormalizeInPlacePure(v)
 			errPort := distance.NormalizeInPlacePortable(v)
-			errArch := distance.NormalizeInPlaceArch(v)
 			require.ErrorIs(t, errPure, distance.ErrZeroVector)
 			require.ErrorIs(t, errPort, distance.ErrZeroVector)
-			require.ErrorIs(t, errArch, distance.ErrZeroVector)
 			err := distance.NormalizeInPlace(v)
 			require.ErrorIs(t, err, distance.ErrZeroVector)
 			return
@@ -490,30 +476,25 @@ func FuzzNormalizeInPlace(f *testing.F) {
 		normPure := slices.Clone(v)
 		normAcc := slices.Clone(v)
 		normPort := slices.Clone(v)
-		normArch := slices.Clone(v)
 
 		errPure := distance.NormalizeInPlacePure(normPure)
 		errAcc := distance.NormalizeInPlaceAccelerated(normAcc)
 		errPort := distance.NormalizeInPlacePortable(normPort)
-		errArch := distance.NormalizeInPlaceArch(normArch)
 
 		if errPure != nil {
 			require.ErrorIs(t, errPure, distance.ErrZeroVector)
 			require.ErrorIs(t, errAcc, distance.ErrZeroVector)
 			require.ErrorIs(t, errPort, distance.ErrZeroVector)
-			require.ErrorIs(t, errArch, distance.ErrZeroVector)
 			err := distance.NormalizeInPlace(slices.Clone(v))
 			require.ErrorIs(t, err, distance.ErrZeroVector)
 			return
 		}
 		require.NoError(t, errAcc)
 		require.NoError(t, errPort)
-		require.NoError(t, errArch)
 
 		for i := range normPure {
 			require.InDelta(t, normPure[i], normAcc[i], 1e-5)
 			require.InDelta(t, normPure[i], normPort[i], 1e-5)
-			require.InDelta(t, normPure[i], normArch[i], 1e-5)
 		}
 	})
 }
@@ -523,25 +504,21 @@ func BenchmarkDistance(b *testing.B) {
 		name     string
 		pure     func(a, b []float32) (float32, error)
 		portable func(a, b []float32) (float32, error)
-		arch     func(a, b []float32) (float32, error)
 	}{
 		{
 			name:     "L2Squared",
 			pure:     func(a, b []float32) (float32, error) { return distance.L2SquaredPure(a, b), nil },
 			portable: func(a, b []float32) (float32, error) { return distance.L2SquaredPortable(a, b), nil },
-			arch:     func(a, b []float32) (float32, error) { return distance.L2SquaredArch(a, b), nil },
 		},
 		{
 			name:     "DotProduct",
 			pure:     func(a, b []float32) (float32, error) { return distance.DotProductPure(a, b), nil },
 			portable: func(a, b []float32) (float32, error) { return distance.DotProductPortable(a, b), nil },
-			arch:     func(a, b []float32) (float32, error) { return distance.DotProductArch(a, b), nil },
 		},
 		{
 			name:     "Cosine",
 			pure:     distance.CosinePure,
 			portable: distance.CosinePortable,
-			arch:     distance.CosineArch,
 		},
 	}
 	for _, f := range funcs {
@@ -560,15 +537,6 @@ func BenchmarkDistance(b *testing.B) {
 				v2 := randomVector(dim, 2)
 				for b.Loop() {
 					if _, err := f.portable(v1, v2); err != nil {
-						b.Fatal(err)
-					}
-				}
-			})
-			b.Run(f.name+"/simd-arch/"+strconv.Itoa(dim), func(b *testing.B) {
-				v1 := randomVector(dim, 1)
-				v2 := randomVector(dim, 2)
-				for b.Loop() {
-					if _, err := f.arch(v1, v2); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -592,16 +560,6 @@ func BenchmarkDistance(b *testing.B) {
 			for b.Loop() {
 				copy(buf, v)
 				if err := distance.NormalizeInPlacePortable(buf); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
-		b.Run("NormalizeInPlace/simd-arch/"+strconv.Itoa(dim), func(b *testing.B) {
-			v := randomVector(dim, 1)
-			buf := slices.Clone(v)
-			for b.Loop() {
-				copy(buf, v)
-				if err := distance.NormalizeInPlaceArch(buf); err != nil {
 					b.Fatal(err)
 				}
 			}

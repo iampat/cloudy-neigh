@@ -23,6 +23,11 @@ type flatVectorCol struct {
 	hasVec []bool
 }
 
+type SearchStats struct {
+	ScanDuration        time.Duration
+	MaterializeDuration time.Duration
+}
+
 type Table struct {
 	mu         sync.Mutex
 	numRows    int
@@ -32,8 +37,6 @@ type Table struct {
 	vectors    map[string]*flatVectorCol
 	attrs      map[string][]*cloudyneighpb.AttributeValue
 }
-
-var _ QueryExecutor = (*Table)(nil)
 
 func NewTable() *Table {
 	return &Table{
@@ -269,9 +272,6 @@ func (t *Table) Search(
 		return nil, SearchStats{}, nil
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	vCol, ok := t.vectors[col]
 	if !ok || t.numRows == 0 {
 		return nil, SearchStats{}, nil
@@ -302,12 +302,18 @@ func (t *Table) Search(
 	}
 
 	var filterAttrs []*cloudyneighpb.AttributeValue
+	var filterTarget string
+	hasFilter := false
 	if filter != nil {
 		colAttrs, ok := t.attrs[filter.Field]
 		if !ok {
 			return nil, SearchStats{}, nil
 		}
 		filterAttrs = colAttrs
+		hasFilter = true
+		if filter.Value != nil {
+			filterTarget = filter.Value.GetStringValue()
+		}
 	}
 
 	heapCap := topK
@@ -327,8 +333,8 @@ func (t *Table) Search(
 		if t.tombstones[row] || !vCol.hasVec[row] {
 			continue
 		}
-		if filterAttrs != nil {
-			if row >= len(filterAttrs) || filterAttrs[row] == nil || !proto.Equal(filterAttrs[row], filter.Value) {
+		if hasFilter {
+			if row >= len(filterAttrs) || filterAttrs[row] == nil || filterAttrs[row].GetStringValue() != filterTarget {
 				continue
 			}
 		}

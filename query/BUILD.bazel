@@ -4,7 +4,6 @@ go_library(
     name = "query",
     srcs = [
         "engine.go",
-        "executor.go",
         "loader.go",
         "table.go",
     ],

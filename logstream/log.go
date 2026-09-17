@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -26,8 +27,7 @@ type Log struct {
 	store  objectstore.Store
 	prefix string
 
-	ch        chan struct{}
-	lastKnown uint64
+	lastKnown atomic.Uint64
 }
 
 func New(store objectstore.Store, prefix string) (*Log, error) {
@@ -40,7 +40,6 @@ func New(store objectstore.Store, prefix string) (*Log, error) {
 	return &Log{
 		store:  store,
 		prefix: prefix,
-		ch:     make(chan struct{}, 1),
 	}, nil
 }
 
@@ -61,22 +60,15 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 	}
 	payload := buf.Bytes()
 
-	select {
-	case <-ctx.Done():
-		return 0, ctx.Err()
-	case l.ch <- struct{}{}:
-	}
-	defer func() { <-l.ch }()
-
-	if l.lastKnown == 0 {
+	if l.lastKnown.Load() == 0 {
 		t, err := l.Tail(ctx)
 		if err != nil {
 			return 0, err
 		}
-		l.lastKnown = t
+		l.lastKnown.CompareAndSwap(0, t)
 	}
 
-	seq := l.lastKnown + 1
+	seq := l.lastKnown.Load() + 1
 	first := seq
 	var collisions, lists, jumpProbes int
 	start := time.Now()
@@ -85,7 +77,12 @@ func (l *Log) Append(ctx context.Context, records []Record) (uint64, error) {
 		key := segmentKey(l.prefix, seq)
 		_, err := l.store.Put(ctx, key, bytes.NewReader(payload), objectstore.Condition{Absent: true})
 		if err == nil {
-			l.lastKnown = seq
+			for {
+				curr := l.lastKnown.Load()
+				if seq <= curr || l.lastKnown.CompareAndSwap(curr, seq) {
+					break
+				}
+			}
 			slog.Debug("logstream append",
 				"prefix", l.prefix,
 				"seq", seq,
