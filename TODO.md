@@ -1,7 +1,7 @@
 # TODO
 
-- [ ] Audit codebase for instances of premature optimization. Always compare with a vanilla baseline first.
-  - Example: `Table` used chunked copy-on-write slices before measuring a flat contiguous `[]float32` array. Profiling 1M vectors showed SIMD math dominates 95% of execution time, making chunk indirection negligible (6.3% difference).
+- [X] Audit codebase for instances of premature optimization. Always compare with a vanilla baseline first.
+  - Example: `Table` switched from chunked copy-on-write slices to a flat contiguous `[]float32` array. PR 134 eliminated dead SIMD intrinsics, QueryExecutor, Table mutex, and Loader buffering.
 - [ ] Replace the actor goroutine and per-request channels in BatchIngester with group commit.
       Use a mutex-protected batch queue with a shared completion channel.
 - [ ] Refactor the storage layer.
@@ -93,8 +93,6 @@
       Replace `Next() (*DocumentMutation, error)` returning `io.EOF` with `Scan() bool`, `Mutation() *DocumentMutation`, and `Err() error`.
 - [ ] Use nil-safe protobuf getters across the codebase. Replace a nil check
       plus field access with `GetX()`. `docs/guidelines/go.md` has the rule.
-- [ ] Add CPU-feature guards or arch gating for the simd kernels. archsimd needs an AVX check on amd64 before use.
-- [ ] Try multi-accumulator unrolling in the simd kernels.
 - [ ] Fix the double expansion of `--config=race`. `.bazelrc` sets it by default, so an explicit `--config=race` expands it twice.
 - [ ] Drop `--test_output=streamed` from `test:fuzz`. It disables sharding and serializes the test run.
 - [ ] Build fuzz targets with coverage instrumentation. Without it, fuzzing runs without coverage guidance.

@@ -50,10 +50,19 @@
 
 ### Changed
 
+- `query.Table`: replaced chunked copy-on-write slices with flat contiguous vector storage.
+- `query.Loader`: stream segments directly into table builders without intermediate slice buffers.
+- `logstream.Log`: removed lock held across network I/O in Append.
+- `ingest.Flusher`: inlined drain helper and advanced tail CAS monotonically.
 - Migrated the wire format, ingest, and query to the protobuf Record message.
 - Replaced `scripts/requirements.txt` with root `requirements.txt`.
 - Standardized Protobuf dependencies across `grpcapi`, `kvfs`, and `segment` on generated `*_go_proto` targets.
 - `logstream`: Unified stream and prefix into a single prefix path parameter in `logstream.New`. Removed `WithPrefix` option.
+
+### Removed
+
+- `query.QueryExecutor`: deleted redundant query executor abstraction.
+- `query/distance`: deleted dead SIMD intrinsics and fallback stubs.
 
 ### Fixed
 
