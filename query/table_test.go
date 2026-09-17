@@ -638,6 +638,22 @@ func TestTable_Search_Filters(t *testing.T) {
 			filter:  nil,
 			wantIDs: []string{"doc-1", "doc-4", "doc-2", "doc-3"},
 		},
+		{
+			name: "nil filter value matches nothing",
+			filter: &cloudyneighpb.EqualityFilter{
+				Field: "cat",
+				Value: nil,
+			},
+			wantIDs: nil,
+		},
+		{
+			name: "empty string filter value matches nothing when no empty string attributes exist",
+			filter: &cloudyneighpb.EqualityFilter{
+				Field: "cat",
+				Value: stringAttr(""),
+			},
+			wantIDs: nil,
+		},
 	}
 
 	for _, tc := range tests {

@@ -1,7 +1,6 @@
 package query
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -95,23 +94,22 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.SegmentRef, b *Builder) error {
 	segKey := segment.RefKey(branch, seg)
 
-	fetchStart := time.Now()
+	loadStart := time.Now()
 	rc, _, err := l.store.Get(ctx, segKey)
 	if err != nil {
 		return fmt.Errorf("get segment %s: %w", segKey, err)
 	}
 	defer rc.Close()
 
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		return fmt.Errorf("read segment %s: %w", segKey, err)
-	}
-	fetchDur := time.Since(fetchStart)
-
-	decodeStart := time.Now()
-	reader := segment.NewReader(bytes.NewReader(data))
-	var muts []*storagepb.DocumentMutation
+	reader := segment.NewReader(rc)
+	count := 0
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		mut, err := reader.Next()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -119,50 +117,28 @@ func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.
 			}
 			return fmt.Errorf("read mutation from %s: %w", segKey, err)
 		}
-		muts = append(muts, mut)
-	}
-	type decodedMut struct {
-		op    storagepb.MutationOp
-		docID string
-		rec   *cloudyneighpb.Record
-	}
-	decoded := make([]decodedMut, 0, len(muts))
-	for _, mut := range muts {
 		switch mut.Op {
 		case storagepb.MutationOp_PUT:
 			var rec cloudyneighpb.Record
 			if err := proto.Unmarshal(mut.Payload, &rec); err != nil {
 				return fmt.Errorf("unmarshal record from %s: %w", segKey, err)
 			}
-			decoded = append(decoded, decodedMut{op: mut.Op, docID: mut.DocId, rec: &rec})
+			if err := b.UpsertRecord(&rec); err != nil {
+				return fmt.Errorf("upsert record %s from %s: %w", rec.Id, segKey, err)
+			}
 		case storagepb.MutationOp_DELETE:
-			decoded = append(decoded, decodedMut{op: mut.Op, docID: mut.DocId})
+			b.Delete(mut.DocId)
 		default:
 			return fmt.Errorf("unknown mutation op %v in %s", mut.Op, segKey)
 		}
+		count++
 	}
-	decodeDur := time.Since(decodeStart)
-
-	applyStart := time.Now()
-	for _, d := range decoded {
-		switch d.op {
-		case storagepb.MutationOp_PUT:
-			if err := b.UpsertRecord(d.rec); err != nil {
-				return fmt.Errorf("upsert record %s from %s: %w", d.rec.Id, segKey, err)
-			}
-		case storagepb.MutationOp_DELETE:
-			b.Delete(d.docID)
-		}
-	}
-	applyDur := time.Since(applyStart)
 
 	slog.Debug("loaded segment",
 		"branch", branch,
 		"segment_id", seg.SegmentId,
-		"records", len(muts),
-		"fetch_dur", fetchDur,
-		"decode_dur", decodeDur,
-		"apply_dur", applyDur,
+		"records", count,
+		"load_dur", time.Since(loadStart),
 	)
 
 	return nil

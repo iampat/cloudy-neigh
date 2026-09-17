@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -23,8 +22,12 @@ type flatVectorCol struct {
 	hasVec []bool
 }
 
+type SearchStats struct {
+	ScanDuration        time.Duration
+	MaterializeDuration time.Duration
+}
+
 type Table struct {
-	mu         sync.Mutex
 	numRows    int
 	docIDs     []string
 	index      map[string]int
@@ -32,8 +35,6 @@ type Table struct {
 	vectors    map[string]*flatVectorCol
 	attrs      map[string][]*cloudyneighpb.AttributeValue
 }
-
-var _ QueryExecutor = (*Table)(nil)
 
 func NewTable() *Table {
 	return &Table{
@@ -44,9 +45,6 @@ func NewTable() *Table {
 }
 
 func (t *Table) Clone() *Table {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	c := &Table{
 		numRows:    t.numRows,
 		docIDs:     slices.Clone(t.docIDs),
@@ -81,9 +79,6 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 	if id == "" {
 		return errors.New("query: empty doc id")
 	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	if t.index == nil {
 		t.index = make(map[string]int)
@@ -212,8 +207,6 @@ func (t *Table) UpsertRecord(rec *cloudyneighpb.Record) error {
 }
 
 func (t *Table) Delete(id string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	row, ok := t.index[id]
 	if !ok || t.tombstones[row] {
 		return false
@@ -226,7 +219,7 @@ func (t *Table) isTombstoned(row int) bool {
 	return row < len(t.tombstones) && t.tombstones[row]
 }
 
-func (t *Table) recordAtLocked(row int, id string) *cloudyneighpb.Record {
+func (t *Table) recordAt(row int, id string) *cloudyneighpb.Record {
 	rec := &cloudyneighpb.Record{
 		Id:         id,
 		Vectors:    make(map[string]*cloudyneighpb.Vector, len(t.vectors)),
@@ -249,13 +242,11 @@ func (t *Table) recordAtLocked(row int, id string) *cloudyneighpb.Record {
 }
 
 func (t *Table) Get(id string) (*cloudyneighpb.Record, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	row, ok := t.index[id]
 	if !ok || t.isTombstoned(row) {
 		return nil, false
 	}
-	return t.recordAtLocked(row, id), true
+	return t.recordAt(row, id), true
 }
 
 func (t *Table) Search(
@@ -268,9 +259,6 @@ func (t *Table) Search(
 	if topK <= 0 {
 		return nil, SearchStats{}, nil
 	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	vCol, ok := t.vectors[col]
 	if !ok || t.numRows == 0 {
@@ -394,7 +382,7 @@ func (t *Table) Search(
 	hits := make([]*cloudyneighpb.ScoredRecord, len(h.hits))
 	for i, hit := range h.hits {
 		hits[i] = &cloudyneighpb.ScoredRecord{
-			Record: t.recordAtLocked(hit.row, hit.id),
+			Record: t.recordAt(hit.row, hit.id),
 			Score:  hit.score,
 		}
 	}

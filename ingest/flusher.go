@@ -38,12 +38,10 @@ func withDefaults(c Config) Config {
 }
 
 type memtable struct {
-	branch     string
-	mutations  []*storagepb.DocumentMutation
-	firstAt    time.Time
-	lastSeq    uint64
-	readWalDur time.Duration
-	applyDur   time.Duration
+	branch    string
+	mutations []*storagepb.DocumentMutation
+	firstAt   time.Time
+	lastSeq   uint64
 }
 
 const listLimit = 1000
@@ -130,9 +128,7 @@ func (f *Flusher) Run(ctx context.Context) error {
 	seq := minCheckpoint + 1
 
 	for {
-		readStart := time.Now()
 		records, err := f.log.Read(ctx, seq)
-		readDur := time.Since(readStart)
 		if err != nil {
 			if errors.Is(err, logstream.ErrEndOfStream) {
 				if err := f.flushExpiredMemtables(ctx); err != nil {
@@ -154,7 +150,7 @@ func (f *Flusher) Run(ctx context.Context) error {
 			return fmt.Errorf("read log seq %d: %w", seq, err)
 		}
 
-		if err := f.processRecords(ctx, seq, records, readDur); err != nil {
+		if err := f.processRecords(ctx, seq, records); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return f.shutdownFlush(seq + 1)
 			}
@@ -179,16 +175,14 @@ func (f *Flusher) shutdownFlush(startSeq uint64) error {
 
 	seq := startSeq
 	for {
-		readStart := time.Now()
 		records, err := f.log.Read(ctx, seq)
-		readDur := time.Since(readStart)
 		if err != nil {
 			if errors.Is(err, logstream.ErrEndOfStream) {
 				break
 			}
 			return fmt.Errorf("drain log seq %d: %w", seq, err)
 		}
-		if err := f.processRecords(ctx, seq, records, readDur); err != nil {
+		if err := f.processRecords(ctx, seq, records); err != nil {
 			return err
 		}
 		seq++
@@ -197,9 +191,7 @@ func (f *Flusher) shutdownFlush(startSeq uint64) error {
 	return f.flushAll(ctx)
 }
 
-func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logstream.Record, readWalDur time.Duration) error {
-	applyStart := time.Now()
-	touched := make(map[*memtable]struct{})
+func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logstream.Record) error {
 	for _, rec := range records {
 		var walRec storagepb.WalRecord
 		if err := proto.Unmarshal(rec, &walRec); err != nil {
@@ -225,17 +217,6 @@ func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logs
 		}
 		mt.mutations = append(mt.mutations, mut)
 		mt.lastSeq = seq
-		touched[mt] = struct{}{}
-	}
-	applyDur := time.Since(applyStart)
-
-	if len(touched) > 0 {
-		perMtRead := readWalDur / time.Duration(len(touched))
-		perMtApply := applyDur / time.Duration(len(touched))
-		for mt := range touched {
-			mt.readWalDur += perMtRead
-			mt.applyDur += perMtApply
-		}
 	}
 
 	var toFlush []*memtable
@@ -363,8 +344,6 @@ func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
 			slog.Info("flush",
 				"branch", mt.branch,
 				"docs", len(mt.mutations),
-				"read_wal_dur", mt.readWalDur,
-				"apply_dur", mt.applyDur,
 				"encode_upload_dur", encodeUploadDur,
 				"cas_dur", casDur,
 			)

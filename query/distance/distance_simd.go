@@ -5,7 +5,6 @@ package distance
 import (
 	"math"
 	"simd"
-	"simd/archsimd"
 
 	// rules_go omits transitive standard-library dependencies of GOEXPERIMENT
 	// packages from -importcfg, so the explicit reference forces the entry.
@@ -32,123 +31,6 @@ func cosine(a, b []float32) (float32, error) {
 
 func normalizeInPlace(v []float32) error {
 	return normalizeInPlacePortable(v)
-}
-
-func l2SquaredArch(a, b []float32) float32 {
-	n := len(a)
-	chunks := n &^ 3
-	acc := archsimd.Float32x4{}
-
-	for i := 0; i < chunks; i += 4 {
-		va := archsimd.LoadFloat32x4(a[i:])
-		vb := archsimd.LoadFloat32x4(b[i:])
-		diff := va.Sub(vb)
-		acc = diff.MulAdd(diff, acc)
-	}
-
-	p1 := acc.ConcatAddPairs(acc)
-	p2 := p1.ConcatAddPairs(p1)
-	sum := p2.GetElem(0)
-
-	for i := chunks; i < n; i++ {
-		d := a[i] - b[i]
-		sum += d * d
-	}
-	return sum
-}
-
-func dotProductArch(a, b []float32) float32 {
-	n := len(a)
-	chunks := n &^ 3
-	acc := archsimd.Float32x4{}
-
-	for i := 0; i < chunks; i += 4 {
-		va := archsimd.LoadFloat32x4(a[i:])
-		vb := archsimd.LoadFloat32x4(b[i:])
-		acc = va.MulAdd(vb, acc)
-	}
-
-	p1 := acc.ConcatAddPairs(acc)
-	p2 := p1.ConcatAddPairs(p1)
-	sum := p2.GetElem(0)
-
-	for i := chunks; i < n; i++ {
-		sum += a[i] * b[i]
-	}
-	return sum
-}
-
-func cosineArch(a, b []float32) (float32, error) {
-	n := len(a)
-	chunks := n &^ 3
-	accDot := archsimd.Float32x4{}
-	accA := archsimd.Float32x4{}
-	accB := archsimd.Float32x4{}
-
-	for i := 0; i < chunks; i += 4 {
-		va := archsimd.LoadFloat32x4(a[i:])
-		vb := archsimd.LoadFloat32x4(b[i:])
-
-		accDot = va.MulAdd(vb, accDot)
-		accA = va.MulAdd(va, accA)
-		accB = vb.MulAdd(vb, accB)
-	}
-
-	pDot1 := accDot.ConcatAddPairs(accDot)
-	pDot2 := pDot1.ConcatAddPairs(pDot1)
-	dot := pDot2.GetElem(0)
-
-	pA1 := accA.ConcatAddPairs(accA)
-	pA2 := pA1.ConcatAddPairs(pA1)
-	sumA := pA2.GetElem(0)
-
-	pB1 := accB.ConcatAddPairs(accB)
-	pB2 := pB1.ConcatAddPairs(pB1)
-	sumB := pB2.GetElem(0)
-
-	for i := chunks; i < n; i++ {
-		ai, bi := a[i], b[i]
-		dot += ai * bi
-		sumA += ai * ai
-		sumB += bi * bi
-	}
-
-	if sumA == 0 || sumB == 0 {
-		return 0, ErrZeroVector
-	}
-
-	denom := float32(math.Sqrt(float64(sumA)) * math.Sqrt(float64(sumB)))
-	sim := dot / denom
-	if sim > 1 {
-		sim = 1
-	} else if sim < -1 {
-		sim = -1
-	}
-	return 1 - sim, nil
-}
-
-func normalizeInPlaceArch(v []float32) error {
-	sum := dotProductArch(v, v)
-	if sum == 0 {
-		return ErrZeroVector
-	}
-	norm := float32(math.Sqrt(float64(sum)))
-	invNorm := 1 / norm
-
-	n := len(v)
-	chunks := n &^ 3
-	vInv := archsimd.BroadcastFloat32x4(invNorm)
-
-	for i := 0; i < chunks; i += 4 {
-		vec := archsimd.LoadFloat32x4(v[i:])
-		vec = vec.Mul(vInv)
-		vec.Store(v[i:])
-	}
-
-	for i := chunks; i < n; i++ {
-		v[i] *= invNorm
-	}
-	return nil
 }
 
 func l2SquaredPortable(a, b []float32) float32 {
