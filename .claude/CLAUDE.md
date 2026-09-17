@@ -113,6 +113,13 @@ not trust memory over the help output.
   around it.
 - A transcript of the conversation goes to `docs/reviews/<date>-<topic>.md`.
 
+## pi
+
+`pi` is an agent CLI for ChatGPT queries.
+
+- Run `pi -p "<prompt>"` to execute in headless mode and print the response.
+- Credentials are managed by `pi`. Do not configure API keys.
+
 ## Gotchas & conventions
 
 - Prefer jq over Python scripts when analysing JSON files.
