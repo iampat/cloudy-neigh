@@ -118,6 +118,7 @@ not trust memory over the help output.
 `pi` is an agent CLI for ChatGPT queries.
 
 - Run `pi -p "<prompt>"` to execute in headless mode and print the response.
+- Pass context files using `@<path>` arguments: `pi @file.go -p "<prompt>"`.
 - Credentials are managed by `pi`. Do not configure API keys.
 
 ## Gotchas & conventions
