@@ -9,6 +9,7 @@ import (
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
 	"github.com/iampat/cloudy-neigh/ingest"
+	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -24,7 +25,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *logstream.Log) {
+func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *logstream.Log, objectstore.Store) {
 	t.Helper()
 	store, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(t, err)
@@ -33,7 +34,7 @@ func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *logstream.L
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	ingester, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+	ingester, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
 		MaxDocs:     1,
 		MaxInterval: 0,
 	})
@@ -55,8 +56,7 @@ func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *logstream.L
 		lis.Close()
 	})
 
-	conn, err := grpc.NewClient(
-		"passthrough://bufnet",
+	conn, err := grpc.NewClient("passthrough://bufnet",
 		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
 			return lis.Dial()
 		}),
@@ -65,7 +65,7 @@ func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *logstream.L
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 
-	return cloudyneighpb.NewIngestServiceClient(conn), log
+	return cloudyneighpb.NewIngestServiceClient(conn), log, store
 }
 
 func TestNewIngestServer_NilIngester(t *testing.T) {
@@ -78,7 +78,7 @@ func stringAttr(s string) *cloudyneighpb.AttributeValue {
 }
 
 func TestUpsert_Success(t *testing.T) {
-	client, log := setupTestEnv(t)
+	client, log, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	rec1 := &cloudyneighpb.Record{
@@ -117,25 +117,30 @@ func TestUpsert_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 
-	wantRecs := []*cloudyneighpb.Record{rec1, rec2}
-	for i, r := range records {
-		var rec storagepb.WalRecord
-		require.NoError(t, proto.Unmarshal(r, &rec))
+	var walRec1 storagepb.WalRecord
+	require.NoError(t, proto.Unmarshal(records[0], &walRec1))
+	assert.Equal(t, "main", walRec1.GetMutation().Branch)
+	assert.Equal(t, "doc-1", walRec1.GetMutation().DocId)
+	assert.Equal(t, storagepb.MutationOp_PUT, walRec1.GetMutation().Op)
 
-		mutation := rec.GetMutation()
-		require.NotNil(t, mutation)
-		assert.Equal(t, "main", mutation.Branch)
-		assert.Equal(t, wantRecs[i].Id, mutation.DocId)
-		assert.Equal(t, storagepb.MutationOp_PUT, mutation.Op)
+	var payload1 cloudyneighpb.Record
+	require.NoError(t, proto.Unmarshal(walRec1.GetMutation().Payload, &payload1))
+	assert.Equal(t, "doc-1", payload1.Id)
+	assert.Equal(t, []float32{0.1, 0.2, 0.3}, payload1.Vectors["default"].Values)
+	assert.Equal(t, "Document One", payload1.Attributes["title"].GetStringValue())
 
-		var gotRec cloudyneighpb.Record
-		require.NoError(t, proto.Unmarshal(mutation.Payload, &gotRec))
-		assert.True(t, proto.Equal(wantRecs[i], &gotRec))
-	}
+	var walRec2 storagepb.WalRecord
+	require.NoError(t, proto.Unmarshal(records[1], &walRec2))
+	assert.Equal(t, "main", walRec2.GetMutation().Branch)
+	assert.Equal(t, "doc-2", walRec2.GetMutation().DocId)
+
+	var payload2 cloudyneighpb.Record
+	require.NoError(t, proto.Unmarshal(walRec2.GetMutation().Payload, &payload2))
+	assert.Equal(t, "doc-2", payload2.Id)
 }
 
-func TestUpsert_Empty(t *testing.T) {
-	client, log := setupTestEnv(t)
+func TestUpsert_EmptyRecords(t *testing.T) {
+	client, log, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
@@ -151,7 +156,7 @@ func TestUpsert_Empty(t *testing.T) {
 }
 
 func TestUpsert_Validation(t *testing.T) {
-	client, _ := setupTestEnv(t)
+	client, _, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	validRec := &cloudyneighpb.Record{Id: "doc-1"}
@@ -160,13 +165,6 @@ func TestUpsert_Validation(t *testing.T) {
 		name string
 		req  *cloudyneighpb.UpsertRequest
 	}{
-		{
-			name: "empty namespace",
-			req: &cloudyneighpb.UpsertRequest{
-				Namespace: "",
-				Records:   []*cloudyneighpb.Record{validRec},
-			},
-		},
 		{
 			name: "invalid namespace starting with digit",
 			req: &cloudyneighpb.UpsertRequest{
@@ -208,8 +206,29 @@ func TestUpsert_Validation(t *testing.T) {
 	}
 }
 
+func TestUpsert_DefaultNamespace(t *testing.T) {
+	client, log, _ := setupTestEnv(t)
+	ctx := context.Background()
+
+	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
+		Namespace: "",
+		Records:   []*cloudyneighpb.Record{{Id: "doc-default"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), resp.UpsertedCount)
+
+	records, err := log.Read(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	var walRec storagepb.WalRecord
+	require.NoError(t, proto.Unmarshal(records[0], &walRec))
+	assert.Equal(t, "default", walRec.GetMutation().Branch)
+	assert.Equal(t, "doc-default", walRec.GetMutation().DocId)
+}
+
 func TestDelete_Success(t *testing.T) {
-	client, log := setupTestEnv(t)
+	client, log, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -242,7 +261,7 @@ func TestDelete_Success(t *testing.T) {
 }
 
 func TestDelete_Empty(t *testing.T) {
-	client, log := setupTestEnv(t)
+	client, log, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -258,20 +277,13 @@ func TestDelete_Empty(t *testing.T) {
 }
 
 func TestDelete_Validation(t *testing.T) {
-	client, _ := setupTestEnv(t)
+	client, _, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	tests := []struct {
 		name string
 		req  *cloudyneighpb.DeleteRequest
 	}{
-		{
-			name: "empty namespace",
-			req: &cloudyneighpb.DeleteRequest{
-				Namespace: "",
-				Ids:       []string{"doc-1"},
-			},
-		},
 		{
 			name: "invalid namespace",
 			req: &cloudyneighpb.DeleteRequest{
@@ -299,8 +311,127 @@ func TestDelete_Validation(t *testing.T) {
 	}
 }
 
+func TestDelete_DefaultNamespace(t *testing.T) {
+	client, log, _ := setupTestEnv(t)
+	ctx := context.Background()
+
+	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
+		Namespace: "",
+		Ids:       []string{"doc-default"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), resp.DeletedCount)
+
+	records, err := log.Read(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	var walRec storagepb.WalRecord
+	require.NoError(t, proto.Unmarshal(records[0], &walRec))
+	assert.Equal(t, "default", walRec.GetMutation().Branch)
+	assert.Equal(t, "doc-default", walRec.GetMutation().DocId)
+	assert.Equal(t, storagepb.MutationOp_DELETE, walRec.GetMutation().Op)
+}
+
+func TestCreateNamespace(t *testing.T) {
+	client, _, store := setupTestEnv(t)
+	ctx := context.Background()
+
+	_, err := client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: "custom-ns"})
+	require.NoError(t, err)
+
+	_, err = client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: "custom-ns"})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.AlreadyExists, st.Code())
+
+	_, err = client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: ""})
+	require.NoError(t, err)
+
+	_, _, err = kvfs.ResolveBranch(ctx, store, "default")
+	require.NoError(t, err)
+
+	_, err = client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: "123invalid"})
+	require.Error(t, err)
+	st, ok = status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+func TestFork(t *testing.T) {
+	client, log, _ := setupTestEnv(t)
+	ctx := context.Background()
+
+	_, err := client.Fork(ctx, &cloudyneighpb.ForkRequest{
+		SourceNamespace: "nonexistent",
+		TargetNamespace: "child",
+	})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.NotFound, st.Code())
+
+	_, err = client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: "parent"})
+	require.NoError(t, err)
+
+	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
+		SourceNamespace: "parent",
+		TargetNamespace: "",
+	})
+	require.Error(t, err)
+	st, ok = status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+
+	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
+		SourceNamespace: "parent",
+		TargetNamespace: "parent",
+	})
+	require.Error(t, err)
+	st, ok = status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+
+	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
+		SourceNamespace: "parent",
+		TargetNamespace: "child",
+	})
+	require.NoError(t, err)
+
+	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
+		SourceNamespace: "parent",
+		TargetNamespace: "child",
+	})
+	require.Error(t, err)
+	st, ok = status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.AlreadyExists, st.Code())
+
+	records, err := log.Read(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	var walRec storagepb.WalRecord
+	require.NoError(t, proto.Unmarshal(records[0], &walRec))
+	evt := walRec.GetBranchEvent()
+	require.NotNil(t, evt)
+	assert.Equal(t, storagepb.BranchLifecycleEvent_FORK, evt.Type)
+	assert.Equal(t, "child", evt.Branch)
+	assert.Equal(t, "parent", evt.ParentBranch)
+
+	_, err = client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: ""})
+	require.NoError(t, err)
+
+	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
+		SourceNamespace: "",
+		TargetNamespace: "forked-from-default",
+	})
+	require.NoError(t, err)
+}
+
 func TestUpsert_CanceledContext(t *testing.T) {
-	client, _ := setupTestEnv(t)
+	client, _, _ := setupTestEnv(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -323,7 +454,7 @@ func TestLocalFSBackend(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	ingester, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+	ingester, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
 		MaxDocs:     1,
 		MaxInterval: 0,
 	})

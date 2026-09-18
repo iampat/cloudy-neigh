@@ -241,7 +241,7 @@ func TestQuery_EndToEnd(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	ingester, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+	ingester, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
 		MaxDocs:     1,
 		MaxInterval: 0,
 	})
