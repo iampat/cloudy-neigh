@@ -13,19 +13,6 @@ const (
 	refPrefix        = "refs/heads/"
 )
 
-func BranchKey(ns, branch string) string {
-	if branch == "" {
-		if ns == "" {
-			return DefaultNamespace
-		}
-		return ns
-	}
-	if ns == "" || ns == DefaultNamespace {
-		return branch
-	}
-	return ns + "_" + branch
-}
-
 var ErrInvalidName = errors.New("namespace: invalid name")
 
 func validate(name string) error {

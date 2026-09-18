@@ -37,10 +37,9 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 		return nil, status.Errorf(codes.InvalidArgument, "grpcapi: invalid namespace: %v", err)
 	}
 
-	if req.Branch != "" {
-		if err := namespace.ValidateBranch(req.Branch); err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "grpcapi: invalid branch: %v", err)
-		}
+	targetBranch, err := resolveBranch(req.Namespace, req.Branch)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(req.Vector) == 0 {
@@ -51,8 +50,6 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 	}
 
 	valDur := time.Since(valStart)
-
-	targetBranch := namespace.BranchKey(req.Namespace, req.Branch)
 	searchStart := time.Now()
 	hits, stats, err := s.engine.Query(ctx, query.Request{
 		Namespace:    targetBranch,
