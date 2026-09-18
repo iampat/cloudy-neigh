@@ -108,7 +108,7 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 		return nil, fmt.Errorf("open logstream: %w", err)
 	}
 
-	batcher, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+	batcher, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
 		MaxDocs:     cfg.batchDocs,
 		MaxInterval: cfg.batchInterval,
 	})

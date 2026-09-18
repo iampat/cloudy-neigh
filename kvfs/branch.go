@@ -128,6 +128,27 @@ func CreateBranch(ctx context.Context, store objectstore.Store, newBranch, paren
 	return parentManifest, gen, nil
 }
 
+func CreateEmptyBranch(ctx context.Context, store objectstore.Store, branch string) (*storagepb.BranchManifest, string, error) {
+	if err := namespace.ValidateBranch(branch); err != nil {
+		return nil, "", err
+	}
+
+	m := &storagepb.BranchManifest{}
+	data, err := proto.Marshal(m)
+	if err != nil {
+		return nil, "", fmt.Errorf("kvfs: marshal empty manifest %s: %w", branch, err)
+	}
+
+	gen, err := store.Put(ctx, branchKey(branch), bytes.NewReader(data), objectstore.Condition{Absent: true})
+	if err != nil {
+		if errors.Is(err, objectstore.ErrPreconditionFailed) {
+			return nil, "", ErrBranchAlreadyExists
+		}
+		return nil, "", fmt.Errorf("kvfs: create empty branch %s: %w", branch, err)
+	}
+	return m, gen, nil
+}
+
 func DeleteBranch(ctx context.Context, store objectstore.Store, branch string) error {
 	if err := namespace.ValidateBranch(branch); err != nil {
 		return err
