@@ -198,6 +198,21 @@ func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logs
 			return fmt.Errorf("unmarshal wal record at seq %d: %w", seq, err)
 		}
 
+		if evt := walRec.GetBranchEvent(); evt != nil {
+			if evt.Type == storagepb.BranchLifecycleEvent_FORK {
+				if mt, ok := f.memtables[evt.ParentBranch]; ok && len(mt.mutations) > 0 {
+					if err := f.flushMemtable(ctx, mt); err != nil {
+						return err
+					}
+					delete(f.memtables, evt.ParentBranch)
+				}
+				if lastSeq, ok := f.branchCheckpoints[evt.Branch]; !ok || seq > lastSeq {
+					f.branchCheckpoints[evt.Branch] = seq
+				}
+			}
+			continue
+		}
+
 		mut := walRec.GetMutation()
 		if mut == nil || mut.Branch == "" {
 			continue

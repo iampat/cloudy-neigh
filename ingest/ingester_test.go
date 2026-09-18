@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/iampat/cloudy-neigh/ingest"
+	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -16,8 +17,17 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func TestNewBatchIngester_NilStore(t *testing.T) {
+	_, err := ingest.NewBatchIngester(nil, nil, ingest.BatchConfig{})
+	assert.ErrorIs(t, err, ingest.ErrNilStore)
+}
+
 func TestNewBatchIngester_NilLog(t *testing.T) {
-	_, err := ingest.NewBatchIngester(nil, ingest.BatchConfig{})
+	store, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	_, err = ingest.NewBatchIngester(store, nil, ingest.BatchConfig{})
 	assert.ErrorIs(t, err, ingest.ErrNilLog)
 }
 
@@ -29,7 +39,7 @@ func TestBatchIngester_BatchDocThreshold(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	b, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+	b, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
 		MaxDocs:     10,
 		MaxInterval: 1 * time.Second,
 	})
@@ -68,7 +78,7 @@ func TestBatchIngester_BatchTimeThreshold(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	b, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+	b, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
 		MaxDocs:     1000,
 		MaxInterval: 20 * time.Millisecond,
 	})
@@ -104,7 +114,7 @@ func TestBatchIngester_Delete(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	b, err := ingest.NewBatchIngester(log, ingest.BatchConfig{
+	b, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
 		MaxDocs:     2,
 		MaxInterval: 1 * time.Second,
 	})
@@ -123,4 +133,44 @@ func TestBatchIngester_Delete(t *testing.T) {
 	require.NoError(t, proto.Unmarshal(records[0], &walRec))
 	assert.Equal(t, storagepb.MutationOp_DELETE, walRec.GetMutation().Op)
 	assert.Equal(t, "doc-1", walRec.GetMutation().DocId)
+}
+
+func TestBatchIngester_Fork(t *testing.T) {
+	store, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	log, err := logstream.New(store, "wal")
+	require.NoError(t, err)
+
+	b, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
+		MaxDocs:     1,
+		MaxInterval: 10 * time.Millisecond,
+	})
+	require.NoError(t, err)
+	defer b.Close()
+
+	ctx := context.Background()
+	assert.Error(t, b.Fork(ctx, "nonexistent", "child"))
+
+	_, err = kvfs.UpdateBranch(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	require.NoError(t, err)
+	require.NoError(t, b.Fork(ctx, "parent", "child"))
+	assert.Error(t, b.Fork(ctx, "parent", "child"))
+
+	tail, err := log.Tail(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), tail)
+
+	records, err := log.Read(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	var walRec storagepb.WalRecord
+	require.NoError(t, proto.Unmarshal(records[0], &walRec))
+	evt := walRec.GetBranchEvent()
+	require.NotNil(t, evt)
+	assert.Equal(t, storagepb.BranchLifecycleEvent_FORK, evt.Type)
+	assert.Equal(t, "child", evt.Branch)
+	assert.Equal(t, "parent", evt.ParentBranch)
 }

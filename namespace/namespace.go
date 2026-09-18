@@ -7,8 +7,10 @@ import (
 )
 
 const (
-	DefaultTenant = "cloudy"
-	refPrefix     = "refs/heads/"
+	DefaultTenant    = "cloudy"
+	DefaultNamespace = "default"
+	DefaultBranch    = "main"
+	refPrefix        = "refs/heads/"
 )
 
 var ErrInvalidName = errors.New("namespace: invalid name")

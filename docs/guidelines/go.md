@@ -106,6 +106,7 @@ writing and in review.
   value of the type can carry it.
 - Protobuf getters are nil-safe. Call `GetX()` on a message that can be nil
   instead of a nil check plus a field access.
+- For a fallback default, initialize the variable with the default first. Override it when the caller provides a value.
 
 ## Logging
 

@@ -7,15 +7,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"google.golang.org/protobuf/proto"
 )
 
 var (
-	ErrNilLog = errors.New("ingest: nil log")
-	ErrClosed = errors.New("ingest: batcher closed")
+	ErrNilStore = errors.New("ingest: nil store")
+	ErrNilLog   = errors.New("ingest: nil log")
+	ErrClosed   = errors.New("ingest: batcher closed")
 )
 
 type BatchConfig struct {
@@ -34,11 +37,12 @@ func withBatchDefaults(c BatchConfig) BatchConfig {
 }
 
 type writeOp struct {
-	mutations []*storagepb.DocumentMutation
-	done      chan error
+	records []*storagepb.WalRecord
+	done    chan error
 }
 
 type BatchIngester struct {
+	store   objectstore.Store
 	log     *logstream.Log
 	cfg     BatchConfig
 	inCh    chan writeOp
@@ -47,11 +51,15 @@ type BatchIngester struct {
 	once    sync.Once
 }
 
-func NewBatchIngester(log *logstream.Log, cfg BatchConfig) (*BatchIngester, error) {
+func NewBatchIngester(store objectstore.Store, log *logstream.Log, cfg BatchConfig) (*BatchIngester, error) {
+	if store == nil {
+		return nil, ErrNilStore
+	}
 	if log == nil {
 		return nil, ErrNilLog
 	}
 	b := &BatchIngester{
+		store:   store,
 		log:     log,
 		cfg:     withBatchDefaults(cfg),
 		inCh:    make(chan writeOp, 64),
@@ -66,41 +74,74 @@ func (b *BatchIngester) Upsert(ctx context.Context, namespace string, records []
 	if len(records) == 0 {
 		return nil
 	}
-	muts := make([]*storagepb.DocumentMutation, len(records))
+	walRecs := make([]*storagepb.WalRecord, len(records))
 	for i, rec := range records {
 		payload, err := proto.Marshal(rec)
 		if err != nil {
 			return fmt.Errorf("marshal record: %w", err)
 		}
-		muts[i] = &storagepb.DocumentMutation{
-			Branch:  namespace,
-			DocId:   rec.Id,
-			Op:      storagepb.MutationOp_PUT,
-			Payload: payload,
+		walRecs[i] = &storagepb.WalRecord{
+			Record: &storagepb.WalRecord_Mutation{
+				Mutation: &storagepb.DocumentMutation{
+					Branch:  namespace,
+					DocId:   rec.Id,
+					Op:      storagepb.MutationOp_PUT,
+					Payload: payload,
+				},
+			},
 		}
 	}
-	return b.submit(ctx, muts)
+	return b.submit(ctx, walRecs)
 }
 
 func (b *BatchIngester) Delete(ctx context.Context, namespace string, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	muts := make([]*storagepb.DocumentMutation, len(ids))
+	walRecs := make([]*storagepb.WalRecord, len(ids))
 	for i, id := range ids {
-		muts[i] = &storagepb.DocumentMutation{
-			Branch: namespace,
-			DocId:  id,
-			Op:     storagepb.MutationOp_DELETE,
+		walRecs[i] = &storagepb.WalRecord{
+			Record: &storagepb.WalRecord_Mutation{
+				Mutation: &storagepb.DocumentMutation{
+					Branch: namespace,
+					DocId:  id,
+					Op:     storagepb.MutationOp_DELETE,
+				},
+			},
 		}
 	}
-	return b.submit(ctx, muts)
+	return b.submit(ctx, walRecs)
 }
 
-func (b *BatchIngester) submit(ctx context.Context, muts []*storagepb.DocumentMutation) error {
+func (b *BatchIngester) Fork(ctx context.Context, source, target string) error {
+	if _, _, err := kvfs.ResolveBranch(ctx, b.store, source); err != nil {
+		return err
+	}
+	if _, _, err := kvfs.ResolveBranch(ctx, b.store, target); err == nil {
+		return kvfs.ErrBranchAlreadyExists
+	} else if !errors.Is(err, objectstore.ErrNotFound) {
+		return err
+	}
+	if _, _, err := kvfs.CreateBranch(ctx, b.store, target, source); err != nil {
+		return err
+	}
+
+	eventRec := &storagepb.WalRecord{
+		Record: &storagepb.WalRecord_BranchEvent{
+			BranchEvent: &storagepb.BranchLifecycleEvent{
+				Type:         storagepb.BranchLifecycleEvent_FORK,
+				Branch:       target,
+				ParentBranch: source,
+			},
+		},
+	}
+	return b.submit(ctx, []*storagepb.WalRecord{eventRec})
+}
+
+func (b *BatchIngester) submit(ctx context.Context, recs []*storagepb.WalRecord) error {
 	op := writeOp{
-		mutations: muts,
-		done:      make(chan error, 1),
+		records: recs,
+		done:    make(chan error, 1),
 	}
 
 	select {
@@ -160,7 +201,7 @@ func (b *BatchIngester) run() {
 		select {
 		case op := <-b.inCh:
 			currentBatch = append(currentBatch, op)
-			currentCount += len(op.mutations)
+			currentCount += len(op.records)
 			if currentCount >= b.cfg.MaxDocs {
 				flush()
 			} else if len(currentBatch) == 1 && b.cfg.MaxInterval > 0 {
@@ -188,20 +229,15 @@ func (b *BatchIngester) run() {
 }
 
 func (b *BatchIngester) flushBatch(ops []writeOp) error {
-	var totalMuts int
+	var totalRecs int
 	for _, op := range ops {
-		totalMuts += len(op.mutations)
+		totalRecs += len(op.records)
 	}
-	records := make([]logstream.Record, totalMuts)
+	records := make([]logstream.Record, totalRecs)
 	idx := 0
 	for _, op := range ops {
-		for _, mut := range op.mutations {
-			walRec := &storagepb.WalRecord{
-				Record: &storagepb.WalRecord_Mutation{
-					Mutation: mut,
-				},
-			}
-			recBytes, err := proto.Marshal(walRec)
+		for _, rec := range op.records {
+			recBytes, err := proto.Marshal(rec)
 			if err != nil {
 				return fmt.Errorf("marshal wal record: %w", err)
 			}

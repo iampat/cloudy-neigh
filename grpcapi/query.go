@@ -36,6 +36,12 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 	if err := namespace.ValidateNamespace(req.Namespace); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "grpcapi: invalid namespace: %v", err)
 	}
+
+	targetBranch, err := resolveBranch(req.Namespace, req.Branch)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(req.Vector) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: empty query vector")
 	}
@@ -44,10 +50,9 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 	}
 
 	valDur := time.Since(valStart)
-
 	searchStart := time.Now()
 	hits, stats, err := s.engine.Query(ctx, query.Request{
-		Namespace:    req.Namespace,
+		Namespace:    targetBranch,
 		VectorColumn: req.VectorColumn,
 		Vector:       req.Vector,
 		TopK:         int(req.TopK),

@@ -27,6 +27,7 @@ message Record {
 message UpsertRequest {
   string namespace = 1;
   repeated Record records = 2;
+  string branch = 3;
 }
 
 message UpsertResponse {
@@ -36,6 +37,7 @@ message UpsertResponse {
 message DeleteRequest {
   string namespace = 1;
   repeated string ids = 2;
+  string branch = 3;
 }
 
 message DeleteResponse {
@@ -60,6 +62,7 @@ message QueryRequest {
   uint32 top_k = 3;
   EqualityFilter filter = 4;
   string vector_column = 5;
+  string branch = 6;
 }
 
 message ScoredRecord {
@@ -71,9 +74,18 @@ message QueryResponse {
   repeated ScoredRecord hits = 1;
 }
 
+message ForkRequest {
+  string namespace = 1;
+  string source_branch = 2;
+  string target_branch = 3;
+}
+
+message ForkResponse {}
+
 service IngestService {
   rpc Upsert(UpsertRequest) returns (UpsertResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Fork(ForkRequest) returns (ForkResponse);
 }
 
 service QueryService {
