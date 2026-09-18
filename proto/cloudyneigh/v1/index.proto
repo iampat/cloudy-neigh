@@ -71,9 +71,24 @@ message QueryResponse {
   repeated ScoredRecord hits = 1;
 }
 
+message CreateNamespaceRequest {
+  string namespace = 1;
+}
+
+message CreateNamespaceResponse {}
+
+message ForkRequest {
+  string source_namespace = 1;
+  string target_namespace = 2;
+}
+
+message ForkResponse {}
+
 service IngestService {
   rpc Upsert(UpsertRequest) returns (UpsertResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse);
+  rpc Fork(ForkRequest) returns (ForkResponse);
 }
 
 service QueryService {
