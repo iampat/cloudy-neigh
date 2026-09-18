@@ -95,19 +95,6 @@ func TestBranchOperations(t *testing.T) {
 		require.NoError(t, kvfs.DeleteBranch(ctx, s, "feature-x"))
 		_, _, err = kvfs.ResolveBranch(ctx, s, "feature-x")
 		assert.ErrorIs(t, err, objectstore.ErrNotFound)
-
-		emptyM, emptyGen, err := kvfs.CreateEmptyBranch(ctx, s, "empty-ns")
-		require.NoError(t, err)
-		assert.NotEmpty(t, emptyGen)
-		assert.Equal(t, uint64(0), emptyM.CheckpointSeq)
-		assert.Empty(t, emptyM.Segments)
-
-		resolvedEmpty, _, err := kvfs.ResolveBranch(ctx, s, "empty-ns")
-		require.NoError(t, err)
-		assert.True(t, proto.Equal(emptyM, resolvedEmpty))
-
-		_, _, err = kvfs.CreateEmptyBranch(ctx, s, "empty-ns")
-		assert.ErrorIs(t, err, kvfs.ErrBranchAlreadyExists)
 	})
 }
 

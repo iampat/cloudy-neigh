@@ -113,11 +113,6 @@ func (b *BatchIngester) Delete(ctx context.Context, namespace string, ids []stri
 	return b.submit(ctx, walRecs)
 }
 
-func (b *BatchIngester) CreateNamespace(ctx context.Context, namespace string) error {
-	_, _, err := kvfs.CreateEmptyBranch(ctx, b.store, namespace)
-	return err
-}
-
 func (b *BatchIngester) Fork(ctx context.Context, source, target string) error {
 	if _, _, err := kvfs.ResolveBranch(ctx, b.store, source); err != nil {
 		return err

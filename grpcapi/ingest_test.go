@@ -333,51 +333,27 @@ func TestDelete_DefaultNamespace(t *testing.T) {
 	assert.Equal(t, storagepb.MutationOp_DELETE, walRec.GetMutation().Op)
 }
 
-func TestCreateNamespace(t *testing.T) {
-	client, _, store := setupTestEnv(t)
-	ctx := context.Background()
-
-	_, err := client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: "custom-ns"})
-	require.NoError(t, err)
-
-	_, err = client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: "custom-ns"})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.AlreadyExists, st.Code())
-
-	_, err = client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: ""})
-	require.NoError(t, err)
-
-	_, _, err = kvfs.ResolveBranch(ctx, store, "default")
-	require.NoError(t, err)
-
-	_, err = client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: "123invalid"})
-	require.Error(t, err)
-	st, ok = status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
 func TestFork(t *testing.T) {
-	client, log, _ := setupTestEnv(t)
+	client, log, store := setupTestEnv(t)
 	ctx := context.Background()
 
 	_, err := client.Fork(ctx, &cloudyneighpb.ForkRequest{
-		SourceNamespace: "nonexistent",
-		TargetNamespace: "child",
+		Namespace:    "wiki",
+		SourceBranch: "nonexistent",
+		TargetBranch: "child",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.NotFound, st.Code())
 
-	_, err = client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: "parent"})
+	_, err = kvfs.UpdateBranch(ctx, store, "wiki_parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
-		SourceNamespace: "parent",
-		TargetNamespace: "",
+		Namespace:    "wiki",
+		SourceBranch: "parent",
+		TargetBranch: "",
 	})
 	require.Error(t, err)
 	st, ok = status.FromError(err)
@@ -385,8 +361,9 @@ func TestFork(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
-		SourceNamespace: "parent",
-		TargetNamespace: "parent",
+		Namespace:    "wiki",
+		SourceBranch: "parent",
+		TargetBranch: "parent",
 	})
 	require.Error(t, err)
 	st, ok = status.FromError(err)
@@ -394,14 +371,16 @@ func TestFork(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
-		SourceNamespace: "parent",
-		TargetNamespace: "child",
+		Namespace:    "wiki",
+		SourceBranch: "parent",
+		TargetBranch: "child",
 	})
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
-		SourceNamespace: "parent",
-		TargetNamespace: "child",
+		Namespace:    "wiki",
+		SourceBranch: "parent",
+		TargetBranch: "child",
 	})
 	require.Error(t, err)
 	st, ok = status.FromError(err)
@@ -417,15 +396,16 @@ func TestFork(t *testing.T) {
 	evt := walRec.GetBranchEvent()
 	require.NotNil(t, evt)
 	assert.Equal(t, storagepb.BranchLifecycleEvent_FORK, evt.Type)
-	assert.Equal(t, "child", evt.Branch)
-	assert.Equal(t, "parent", evt.ParentBranch)
+	assert.Equal(t, "wiki_child", evt.Branch)
+	assert.Equal(t, "wiki_parent", evt.ParentBranch)
 
-	_, err = client.CreateNamespace(ctx, &cloudyneighpb.CreateNamespaceRequest{Namespace: ""})
+	_, err = kvfs.UpdateBranch(ctx, store, "main", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
-		SourceNamespace: "",
-		TargetNamespace: "forked-from-default",
+		Namespace:    "",
+		SourceBranch: "",
+		TargetBranch: "forked-from-main",
 	})
 	require.NoError(t, err)
 }

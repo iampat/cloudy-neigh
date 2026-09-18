@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/iampat/cloudy-neigh/ingest"
+	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -134,23 +135,6 @@ func TestBatchIngester_Delete(t *testing.T) {
 	assert.Equal(t, "doc-1", walRec.GetMutation().DocId)
 }
 
-func TestBatchIngester_CreateNamespace(t *testing.T) {
-	store, err := objectstore.Open(context.Background(), "mem://")
-	require.NoError(t, err)
-	defer store.Close()
-
-	log, err := logstream.New(store, "wal")
-	require.NoError(t, err)
-
-	b, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{})
-	require.NoError(t, err)
-	defer b.Close()
-
-	ctx := context.Background()
-	require.NoError(t, b.CreateNamespace(ctx, "tenant-a"))
-	assert.Error(t, b.CreateNamespace(ctx, "tenant-a"))
-}
-
 func TestBatchIngester_Fork(t *testing.T) {
 	store, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(t, err)
@@ -169,7 +153,8 @@ func TestBatchIngester_Fork(t *testing.T) {
 	ctx := context.Background()
 	assert.Error(t, b.Fork(ctx, "nonexistent", "child"))
 
-	require.NoError(t, b.CreateNamespace(ctx, "parent"))
+	_, err = kvfs.UpdateBranch(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	require.NoError(t, err)
 	require.NoError(t, b.Fork(ctx, "parent", "child"))
 	assert.Error(t, b.Fork(ctx, "parent", "child"))
 
