@@ -124,6 +124,8 @@ func (b *BatchIngester) Fork(ctx context.Context, source, target string) error {
 	}
 	if _, _, err := kvfs.ResolveBranch(ctx, b.store, target); err == nil {
 		return kvfs.ErrBranchAlreadyExists
+	} else if !errors.Is(err, objectstore.ErrNotFound) {
+		return err
 	}
 	if _, _, err := kvfs.CreateBranch(ctx, b.store, target, source); err != nil {
 		return err
