@@ -29,8 +29,6 @@ type ingestConfig struct {
 	url           string
 	stream        string
 	maxMsgSize    int
-	flushDocs     int
-	flushInterval time.Duration
 	pollInterval  time.Duration
 	batchDocs     int
 	batchInterval time.Duration
@@ -45,8 +43,6 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 	fs.StringVar(&cfg.url, "url", "file:///tmp/cloudy-demo?create_dir=true", "object storage URL")
 	fs.StringVar(&cfg.stream, "stream", "wal", "WAL stream name")
 	fs.IntVar(&cfg.maxMsgSize, "max-msg-size", 64*1024*1024, "maximum message size in bytes")
-	fs.IntVar(&cfg.flushDocs, "flush-docs", 10000, "memtable doc threshold for flush")
-	fs.DurationVar(&cfg.flushInterval, "flush-interval", 10*time.Second, "memtable time threshold for flush")
 	fs.DurationVar(&cfg.pollInterval, "poll-interval", 100*time.Millisecond, "WAL poll interval")
 	fs.IntVar(&cfg.batchDocs, "batch-docs", 1000, "ingest batcher doc threshold")
 	fs.DurationVar(&cfg.batchInterval, "batch-interval", 10*time.Millisecond, "ingest batcher time threshold")
@@ -69,12 +65,6 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 	}
 	if cfg.maxMsgSize <= 0 {
 		return ingestConfig{}, errors.New("-max-msg-size must be positive")
-	}
-	if cfg.flushDocs <= 0 {
-		return ingestConfig{}, errors.New("-flush-docs must be positive")
-	}
-	if cfg.flushInterval <= 0 {
-		return ingestConfig{}, errors.New("-flush-interval must be positive")
 	}
 	if cfg.pollInterval <= 0 {
 		return ingestConfig{}, errors.New("-poll-interval must be positive")
@@ -125,9 +115,7 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 	}
 
 	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
-		DocThreshold:  cfg.flushDocs,
-		TimeThreshold: cfg.flushInterval,
-		PollInterval:  cfg.pollInterval,
+		PollInterval: cfg.pollInterval,
 	})
 	if err != nil {
 		batcher.Close()

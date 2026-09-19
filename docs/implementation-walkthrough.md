@@ -202,7 +202,6 @@ On startup, `Flusher.Run` scans all branches in `refs/heads/`:
 readLoop:
   records, err = log.Read(ctx, seq)
   if err == ErrEndOfStream:
-    flushExpiredMemtables(ctx)
     sleep(PollInterval) // 100ms
     continue
 
@@ -211,19 +210,16 @@ readLoop:
     mut = walRec.GetMutation()
     if seq <= branchCheckpoints[mut.Branch]:
       continue // Skip already-materialized mutation
+    branchMutations[mut.Branch].append(mut)
 
-    memtable = getOrCreate(mut.Branch)
-    memtable.mutations.append(mut)
-    memtable.lastSeq = seq
-
-  if len(memtable.mutations) >= DocThreshold: // 10,000 docs
-    flushMemtable(ctx, memtable)
+  for branch, muts in branchMutations:
+    flushBranch(ctx, branch, muts, seq)
 ```
 
-Memtable flush conditions:
-- Document count exceeds `DocThreshold` (default: 10,000 records).
-- Age of oldest unflushed record exceeds `TimeThreshold` (default: 10 seconds).
-- Graceful shutdown initiates: drains WAL to tail and flushes all memtables.
+Segment flush triggers:
+- Materialization occurs immediately per WAL sequence batch.
+- Batching occurs on the WAL write path (`BatchIngester`), maximizing object storage write capacity.
+- Graceful shutdown initiates: drains WAL to tail and flushes all pending sequences.
 
 ### Segment Flush and Atomic CAS Commit
 
@@ -451,7 +447,7 @@ Query Vector + Filter
 - Corpus: `datasets/cohere-wikipedia`
 - Total documents: 1,000,000 documents across 10 Parquet files.
 - Vector dimension: 1024 float32 values per document.
-- Flusher threshold: `DocThreshold = 10000` (10,000 docs per segment).
+- Batching threshold: Batch size of 10,000 docs per WAL sequence.
 - Continuous streaming into namespace `main` produces exactly:
   $$1,000,000 \text{ docs} / 10,000 \text{ docs/segment} = \mathbf{100} \text{ segment files}$$
 - Storage footprints:

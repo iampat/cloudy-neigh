@@ -19,29 +19,14 @@ import (
 )
 
 type Config struct {
-	DocThreshold  int
-	TimeThreshold time.Duration
-	PollInterval  time.Duration
+	PollInterval time.Duration
 }
 
 func withDefaults(c Config) Config {
-	if c.DocThreshold <= 0 {
-		c.DocThreshold = 10000
-	}
-	if c.TimeThreshold <= 0 {
-		c.TimeThreshold = 10 * time.Second
-	}
 	if c.PollInterval <= 0 {
 		c.PollInterval = 100 * time.Millisecond
 	}
 	return c
-}
-
-type memtable struct {
-	branch    string
-	mutations []*storagepb.DocumentMutation
-	firstAt   time.Time
-	lastSeq   uint64
 }
 
 const listLimit = 1000
@@ -51,7 +36,6 @@ type Flusher struct {
 	log   *logstream.Log
 	cfg   Config
 
-	memtables         map[string]*memtable
 	branchCheckpoints map[string]uint64
 
 	lastSegTime string
@@ -70,7 +54,6 @@ func NewFlusher(store objectstore.Store, log *logstream.Log, cfg Config) (*Flush
 		store:             store,
 		log:               log,
 		cfg:               withDefaults(cfg),
-		memtables:         make(map[string]*memtable),
 		branchCheckpoints: make(map[string]uint64),
 	}, nil
 }
@@ -131,12 +114,6 @@ func (f *Flusher) Run(ctx context.Context) error {
 		records, err := f.log.Read(ctx, seq)
 		if err != nil {
 			if errors.Is(err, logstream.ErrEndOfStream) {
-				if err := f.flushExpiredMemtables(ctx); err != nil {
-					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-						return f.shutdownFlush(seq)
-					}
-					return err
-				}
 				select {
 				case <-ctx.Done():
 					return f.shutdownFlush(seq)
@@ -178,7 +155,7 @@ func (f *Flusher) shutdownFlush(startSeq uint64) error {
 		records, err := f.log.Read(ctx, seq)
 		if err != nil {
 			if errors.Is(err, logstream.ErrEndOfStream) {
-				break
+				return nil
 			}
 			return fmt.Errorf("drain log seq %d: %w", seq, err)
 		}
@@ -187,11 +164,11 @@ func (f *Flusher) shutdownFlush(startSeq uint64) error {
 		}
 		seq++
 	}
-
-	return f.flushAll(ctx)
 }
 
 func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logstream.Record) error {
+	branchMutations := make(map[string][]*storagepb.DocumentMutation)
+
 	for _, rec := range records {
 		var walRec storagepb.WalRecord
 		if err := proto.Unmarshal(rec, &walRec); err != nil {
@@ -200,11 +177,11 @@ func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logs
 
 		if evt := walRec.GetBranchEvent(); evt != nil {
 			if evt.Type == storagepb.BranchLifecycleEvent_FORK {
-				if mt, ok := f.memtables[evt.ParentBranch]; ok && len(mt.mutations) > 0 {
-					if err := f.flushMemtable(ctx, mt); err != nil {
+				if muts := branchMutations[evt.ParentBranch]; len(muts) > 0 {
+					if err := f.flushBranch(ctx, evt.ParentBranch, muts, seq); err != nil {
 						return err
 					}
-					delete(f.memtables, evt.ParentBranch)
+					delete(branchMutations, evt.ParentBranch)
 				}
 				if lastSeq, ok := f.branchCheckpoints[evt.Branch]; !ok || seq > lastSeq {
 					f.branchCheckpoints[evt.Branch] = seq
@@ -222,78 +199,28 @@ func (f *Flusher) processRecords(ctx context.Context, seq uint64, records []logs
 			continue
 		}
 
-		mt, ok := f.memtables[mut.Branch]
-		if !ok {
-			mt = &memtable{
-				branch:  mut.Branch,
-				firstAt: time.Now(),
+		branchMutations[mut.Branch] = append(branchMutations[mut.Branch], mut)
+	}
+
+	for branch, muts := range branchMutations {
+		if len(muts) > 0 {
+			if err := f.flushBranch(ctx, branch, muts, seq); err != nil {
+				return err
 			}
-			f.memtables[mut.Branch] = mt
 		}
-		mt.mutations = append(mt.mutations, mut)
-		mt.lastSeq = seq
-	}
-
-	var toFlush []*memtable
-	for _, mt := range f.memtables {
-		if len(mt.mutations) >= f.cfg.DocThreshold {
-			toFlush = append(toFlush, mt)
-		}
-	}
-
-	for _, mt := range toFlush {
-		if err := f.flushMemtable(ctx, mt); err != nil {
-			return err
-		}
-		delete(f.memtables, mt.branch)
 	}
 	return nil
 }
 
-func (f *Flusher) flushExpiredMemtables(ctx context.Context) error {
-	now := time.Now()
-	var toFlush []*memtable
-	for _, mt := range f.memtables {
-		if len(mt.mutations) > 0 && now.Sub(mt.firstAt) >= f.cfg.TimeThreshold {
-			toFlush = append(toFlush, mt)
-		}
-	}
-
-	for _, mt := range toFlush {
-		if err := f.flushMemtable(ctx, mt); err != nil {
-			return err
-		}
-		delete(f.memtables, mt.branch)
-	}
-	return nil
-}
-
-func (f *Flusher) flushAll(ctx context.Context) error {
-	var toFlush []*memtable
-	for _, mt := range f.memtables {
-		if len(mt.mutations) > 0 {
-			toFlush = append(toFlush, mt)
-		}
-	}
-
-	for _, mt := range toFlush {
-		if err := f.flushMemtable(ctx, mt); err != nil {
-			return err
-		}
-		delete(f.memtables, mt.branch)
-	}
-	return nil
-}
-
-func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
-	if len(mt.mutations) == 0 {
+func (f *Flusher) flushBranch(ctx context.Context, branch string, mutations []*storagepb.DocumentMutation, seq uint64) error {
+	if len(mutations) == 0 {
 		return nil
 	}
 
 	encodeUploadStart := time.Now()
 	var buf bytes.Buffer
 	w := segment.NewWriter(&buf)
-	for _, mut := range mt.mutations {
+	for _, mut := range mutations {
 		if err := w.Write(mut); err != nil {
 			return fmt.Errorf("write segment record: %w", err)
 		}
@@ -307,7 +234,7 @@ func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
 	if err != nil {
 		return fmt.Errorf("generate segment id: %w", err)
 	}
-	segKey := segment.Key(mt.branch, segID)
+	segKey := segment.Key(branch, segID)
 	if _, err := f.store.Put(ctx, segKey, bytes.NewReader(data), objectstore.Condition{Absent: true}); err != nil {
 		return fmt.Errorf("upload segment %s: %w", segKey, err)
 	}
@@ -315,16 +242,14 @@ func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
 
 	segRef := &storagepb.SegmentRef{
 		SegmentId: segID,
-		DocCount:  uint64(len(mt.mutations)),
+		DocCount:  uint64(len(mutations)),
 		DocsSize:  int64(len(data)),
 		Key:       segKey,
 	}
 
-	endSeq := mt.lastSeq
-
 	casStart := time.Now()
 	for {
-		manifest, gen, err := kvfs.ResolveBranch(ctx, f.store, mt.branch)
+		manifest, gen, err := kvfs.ResolveBranch(ctx, f.store, branch)
 		if err != nil {
 			if errors.Is(err, objectstore.ErrNotFound) {
 				manifest = &storagepb.BranchManifest{
@@ -332,7 +257,7 @@ func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
 				}
 				gen = ""
 			} else {
-				return fmt.Errorf("resolve branch %s: %w", mt.branch, err)
+				return fmt.Errorf("resolve branch %s: %w", branch, err)
 			}
 		}
 
@@ -347,25 +272,25 @@ func (f *Flusher) flushMemtable(ctx context.Context, mt *memtable) error {
 			manifest.Segments = append(manifest.Segments, segRef)
 		}
 
-		if endSeq > manifest.CheckpointSeq {
-			manifest.CheckpointSeq = endSeq
+		if seq > manifest.CheckpointSeq {
+			manifest.CheckpointSeq = seq
 		}
 
-		_, err = kvfs.UpdateBranch(ctx, f.store, mt.branch, manifest, gen)
+		_, err = kvfs.UpdateBranch(ctx, f.store, branch, manifest, gen)
 		if err == nil {
-			f.branchCheckpoints[mt.branch] = endSeq
+			f.branchCheckpoints[branch] = seq
 			casDur := time.Since(casStart)
 
 			slog.Info("flush",
-				"branch", mt.branch,
-				"docs", len(mt.mutations),
+				"branch", branch,
+				"docs", len(mutations),
 				"encode_upload_dur", encodeUploadDur,
 				"cas_dur", casDur,
 			)
 			return nil
 		}
 		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
-			return fmt.Errorf("update branch %s: %w", mt.branch, err)
+			return fmt.Errorf("update branch %s: %w", branch, err)
 		}
 	}
 }

@@ -251,9 +251,7 @@ func TestQuery_EndToEnd(t *testing.T) {
 	ingestSrv, err := grpcapi.NewIngestServer(ingester)
 	require.NoError(t, err)
 
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
-		DocThreshold: 1000,
-	})
+	flusher, err := ingest.NewFlusher(store, log, ingest.Config{})
 	require.NoError(t, err)
 
 	_, err = ingestSrv.Upsert(ctx, &cloudyneighpb.UpsertRequest{
