@@ -10,6 +10,7 @@ const (
 	DefaultTenant    = "cloudy"
 	DefaultNamespace = "default"
 	DefaultBranch    = "main"
+	defaultEpoch     = "0"
 	refPrefix        = "refs/heads/"
 )
 
@@ -78,7 +79,16 @@ func (s Scope) Validate() error {
 }
 
 func (s Scope) Prefix() string {
-	return path.Join(s.Tenant, s.Namespace)
+	switch {
+	case s.Tenant != "" && s.Namespace != "":
+		return path.Join(s.Tenant, "ns", s.Namespace, defaultEpoch)
+	case s.Tenant != "":
+		return s.Tenant
+	case s.Namespace != "":
+		return path.Join("ns", s.Namespace, defaultEpoch)
+	default:
+		return ""
+	}
 }
 
 func (s Scope) Path(subpath string) string {
@@ -99,4 +109,15 @@ func (s Scope) BranchRef(branch string) string {
 
 func (s Scope) SegmentsPrefix() string {
 	return s.Path("segments")
+}
+
+func (s Scope) CatalogPath() string {
+	return CatalogPath(s.Tenant)
+}
+
+func CatalogPath(tenant string) string {
+	if tenant == "" {
+		return "ns.json"
+	}
+	return path.Join(tenant, "ns.json")
 }

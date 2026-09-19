@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package cloudyneigh.namespace.v1;
+
+option go_package = "github.com/iampat/cloudy-neigh/proto/namespace/v1;namespacepb";
+
+enum NamespaceStatus {
+  NAMESPACE_STATUS_UNSPECIFIED = 0;
+  NAMESPACE_STATUS_ACTIVE = 1;
+  NAMESPACE_STATUS_DELETED = 2;
+}
+
+message NamespaceMetadata {
+  NamespaceStatus status = 1;
+  uint64 epoch = 2;
+  int64 created_at = 3;
+  int64 deleted_at = 4;
+}
+
+message TenantCatalog {
+  string tenant = 1;
+  uint64 version = 2;
+  map<string, NamespaceMetadata> namespaces = 3;
+}
