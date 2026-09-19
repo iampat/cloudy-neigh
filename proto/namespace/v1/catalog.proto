@@ -6,8 +6,8 @@ option go_package = "github.com/iampat/cloudy-neigh/proto/namespace/v1;namespace
 
 enum NamespaceStatus {
   NAMESPACE_STATUS_UNSPECIFIED = 0;
-  ACTIVE = 1;
-  DELETED = 2;
+  NAMESPACE_STATUS_ACTIVE = 1;
+  NAMESPACE_STATUS_DELETED = 2;
 }
 
 message NamespaceMetadata {

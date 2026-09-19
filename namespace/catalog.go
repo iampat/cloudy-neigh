@@ -109,7 +109,7 @@ func CreateNamespace(ctx context.Context, store objectstore.Store, tenant, name 
 
 		catalog.Version++
 		meta := &namespacepb.NamespaceMetadata{
-			Status:    namespacepb.NamespaceStatus_ACTIVE,
+			Status:    namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE,
 			Epoch:     0,
 			CreatedAt: createdAt,
 		}
@@ -150,12 +150,12 @@ func DeleteNamespace(ctx context.Context, store objectstore.Store, tenant, name 
 		if !ok {
 			return nil, generation, ErrNamespaceNotFound
 		}
-		if meta.Status == namespacepb.NamespaceStatus_DELETED {
+		if meta.Status == namespacepb.NamespaceStatus_NAMESPACE_STATUS_DELETED {
 			return proto.Clone(meta).(*namespacepb.NamespaceMetadata), generation, nil
 		}
 
 		catalog.Version++
-		meta.Status = namespacepb.NamespaceStatus_DELETED
+		meta.Status = namespacepb.NamespaceStatus_NAMESPACE_STATUS_DELETED
 		meta.DeletedAt = deletedAt
 
 		newGen, err := putTenantCatalog(ctx, store, catalog, generation)
@@ -192,7 +192,7 @@ func (c *CatalogCache) LookupNamespace(ctx context.Context, tenant, name string)
 	}
 
 	if meta, ok := c.lookupCached(tenant, name); ok {
-		if meta.Status != namespacepb.NamespaceStatus_ACTIVE {
+		if meta.Status != namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE {
 			return nil, ErrNamespaceDeleted
 		}
 		return meta, nil
@@ -206,7 +206,7 @@ func (c *CatalogCache) LookupNamespace(ctx context.Context, tenant, name string)
 	if !ok {
 		return nil, ErrNamespaceNotFound
 	}
-	if meta.Status != namespacepb.NamespaceStatus_ACTIVE {
+	if meta.Status != namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE {
 		return nil, ErrNamespaceDeleted
 	}
 	return proto.Clone(meta).(*namespacepb.NamespaceMetadata), nil
