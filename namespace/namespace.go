@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"strconv"
 )
 
 const (
 	DefaultTenant    = "cloudy"
 	DefaultNamespace = "default"
 	DefaultBranch    = "main"
+	defaultEpoch     = "0"
 	refPrefix        = "refs/heads/"
 )
 
@@ -54,11 +54,10 @@ func ValidateBranch(branch string) error {
 type Scope struct {
 	Tenant    string
 	Namespace string
-	Epoch     uint64
 }
 
-func NewScope(tenant, ns string, epoch uint64) (Scope, error) {
-	s := Scope{Tenant: tenant, Namespace: ns, Epoch: epoch}
+func NewScope(tenant, ns string) (Scope, error) {
+	s := Scope{Tenant: tenant, Namespace: ns}
 	if err := s.Validate(); err != nil {
 		return Scope{}, err
 	}
@@ -80,14 +79,13 @@ func (s Scope) Validate() error {
 }
 
 func (s Scope) Prefix() string {
-	epochStr := strconv.FormatUint(s.Epoch, 10)
 	switch {
 	case s.Tenant != "" && s.Namespace != "":
-		return path.Join(s.Tenant, "ns", s.Namespace, epochStr)
+		return path.Join(s.Tenant, "ns", s.Namespace, defaultEpoch)
 	case s.Tenant != "":
 		return s.Tenant
 	case s.Namespace != "":
-		return path.Join("ns", s.Namespace, epochStr)
+		return path.Join("ns", s.Namespace, defaultEpoch)
 	default:
 		return ""
 	}
