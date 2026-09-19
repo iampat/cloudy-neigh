@@ -1,0 +1,24 @@
+load("@protobuf//bazel:proto_library.bzl", "proto_library")
+load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//proto:def.bzl", "go_proto_library")
+
+proto_library(
+    name = "namespacepb_proto",
+    srcs = ["catalog.proto"],
+    visibility = ["//visibility:public"],
+)
+
+go_proto_library(
+    name = "namespacepb_go_proto",
+    compilers = ["@rules_go//proto:go_proto"],
+    importpath = "github.com/iampat/cloudy-neigh/proto/namespace/v1",
+    proto = ":namespacepb_proto",
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "namespace",
+    embed = [":namespacepb_go_proto"],
+    importpath = "github.com/iampat/cloudy-neigh/proto/namespace/v1",
+    visibility = ["//visibility:public"],
+)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strconv"
 )
 
 const (
@@ -53,10 +54,11 @@ func ValidateBranch(branch string) error {
 type Scope struct {
 	Tenant    string
 	Namespace string
+	Epoch     uint64
 }
 
-func NewScope(tenant, ns string) (Scope, error) {
-	s := Scope{Tenant: tenant, Namespace: ns}
+func NewScope(tenant, ns string, epoch uint64) (Scope, error) {
+	s := Scope{Tenant: tenant, Namespace: ns, Epoch: epoch}
 	if err := s.Validate(); err != nil {
 		return Scope{}, err
 	}
@@ -78,7 +80,17 @@ func (s Scope) Validate() error {
 }
 
 func (s Scope) Prefix() string {
-	return path.Join(s.Tenant, s.Namespace)
+	epochStr := strconv.FormatUint(s.Epoch, 10)
+	switch {
+	case s.Tenant != "" && s.Namespace != "":
+		return path.Join(s.Tenant, "ns", s.Namespace, epochStr)
+	case s.Tenant != "":
+		return s.Tenant
+	case s.Namespace != "":
+		return path.Join("ns", s.Namespace, epochStr)
+	default:
+		return ""
+	}
 }
 
 func (s Scope) Path(subpath string) string {
@@ -99,4 +111,15 @@ func (s Scope) BranchRef(branch string) string {
 
 func (s Scope) SegmentsPrefix() string {
 	return s.Path("segments")
+}
+
+func (s Scope) CatalogPath() string {
+	return CatalogPath(s.Tenant)
+}
+
+func CatalogPath(tenant string) string {
+	if tenant == "" {
+		return "ns.json"
+	}
+	return path.Join(tenant, "ns.json")
 }

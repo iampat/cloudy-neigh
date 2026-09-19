@@ -2,17 +2,33 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "namespace",
-    srcs = ["namespace.go"],
+    srcs = [
+        "catalog.go",
+        "namespace.go",
+    ],
     importpath = "github.com/iampat/cloudy-neigh/namespace",
     visibility = ["//visibility:public"],
+    deps = [
+        "//objectstore",
+        "//proto/namespace/v1:namespace",
+        "@org_golang_google_protobuf//encoding/protojson",
+        "@org_golang_google_protobuf//proto",
+    ],
 )
 
 go_test(
     name = "namespace_test",
-    srcs = ["namespace_test.go"],
+    srcs = [
+        "catalog_test.go",
+        "namespace_test.go",
+    ],
     deps = [
         ":namespace",
+        "//objectstore",
+        "//proto/namespace/v1:namespace",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@org_golang_google_protobuf//encoding/protojson",
+        "@org_golang_google_protobuf//proto",
     ],
 )

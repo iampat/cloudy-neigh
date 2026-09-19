@@ -68,47 +68,52 @@ func TestScope_ZeroValue(t *testing.T) {
 	require.NoError(t, s.Validate())
 
 	assert.Equal(t, "", s.Prefix())
+	assert.Equal(t, "ns.json", s.CatalogPath())
 	assert.Equal(t, "wal", s.WALPrefix())
 	assert.Equal(t, "refs/heads/main", s.BranchRef("main"))
 	assert.Equal(t, "segments", s.SegmentsPrefix())
 	assert.Equal(t, "custom/path", s.Path("custom/path"))
 }
 
-func TestScope_WithTenantAndNamespace(t *testing.T) {
-	s, err := namespace.NewScope(namespace.DefaultTenant, "wiki")
+func TestScope_StorageHierarchy(t *testing.T) {
+	s, err := namespace.NewScope("acme-corp", "catalog", 0)
 	require.NoError(t, err)
 	require.NoError(t, s.Validate())
 
-	assert.Equal(t, "cloudy/wiki", s.Prefix())
-	assert.Equal(t, "cloudy/wiki/wal", s.WALPrefix())
-	assert.Equal(t, "cloudy/wiki/refs/heads/main", s.BranchRef("main"))
-	assert.Equal(t, "cloudy/wiki/segments", s.SegmentsPrefix())
-	assert.Equal(t, "cloudy/wiki/custom", s.Path("custom"))
+	assert.Equal(t, "acme-corp/ns/catalog/0", s.Prefix())
+	assert.Equal(t, "acme-corp/ns.json", s.CatalogPath())
+	assert.Equal(t, "acme-corp/ns/catalog/0/wal", s.WALPrefix())
+	assert.Equal(t, "acme-corp/ns/catalog/0/refs/heads/main", s.BranchRef("main"))
+	assert.Equal(t, "acme-corp/ns/catalog/0/refs/heads/experiment", s.BranchRef("experiment"))
+	assert.Equal(t, "acme-corp/ns/catalog/0/segments", s.SegmentsPrefix())
+	assert.Equal(t, "acme-corp/ns/catalog/0/custom", s.Path("custom"))
 }
 
 func TestScope_TenantOnly(t *testing.T) {
-	s, err := namespace.NewScope("tenant1", "")
+	s, err := namespace.NewScope("tenant1", "", 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, "tenant1", s.Prefix())
+	assert.Equal(t, "tenant1/ns.json", s.CatalogPath())
 	assert.Equal(t, "tenant1/wal", s.WALPrefix())
 	assert.Equal(t, "tenant1/refs/heads/main", s.BranchRef("main"))
 }
 
 func TestScope_NamespaceOnly(t *testing.T) {
-	s, err := namespace.NewScope("", "wiki")
+	s, err := namespace.NewScope("", "wiki", 1)
 	require.NoError(t, err)
 
-	assert.Equal(t, "wiki", s.Prefix())
-	assert.Equal(t, "wiki/wal", s.WALPrefix())
-	assert.Equal(t, "wiki/refs/heads/main", s.BranchRef("main"))
+	assert.Equal(t, "ns/wiki/1", s.Prefix())
+	assert.Equal(t, "ns.json", s.CatalogPath())
+	assert.Equal(t, "ns/wiki/1/wal", s.WALPrefix())
+	assert.Equal(t, "ns/wiki/1/refs/heads/main", s.BranchRef("main"))
 }
 
 func TestScope_ValidationErrors(t *testing.T) {
-	_, err := namespace.NewScope("1bad", "wiki")
+	_, err := namespace.NewScope("1bad", "wiki", 0)
 	assert.ErrorIs(t, err, namespace.ErrInvalidName)
 
-	_, err = namespace.NewScope("tenant", "1bad")
+	_, err = namespace.NewScope("tenant", "1bad", 0)
 	assert.ErrorIs(t, err, namespace.ErrInvalidName)
 
 	invalidScope := namespace.Scope{Tenant: "1bad", Namespace: "wiki"}
