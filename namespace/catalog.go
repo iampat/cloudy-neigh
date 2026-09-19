@@ -52,7 +52,27 @@ func ReadTenantCatalog(ctx context.Context, store objectstore.Store, tenant stri
 	if err := ValidateTenant(tenant); err != nil {
 		return nil, "", err
 	}
-	return readTenantCatalog(ctx, store, tenant)
+	rc, obj, err := store.Get(ctx, CatalogPath(tenant))
+	if err != nil {
+		return nil, "", err
+	}
+	defer rc.Close()
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, "", fmt.Errorf("namespace: read catalog %s: %w", tenant, err)
+	}
+	var catalog namespacepb.TenantCatalog
+	if err := unmarshalOpts.Unmarshal(data, &catalog); err != nil {
+		return nil, "", fmt.Errorf("namespace: unmarshal catalog %s: %w", tenant, err)
+	}
+	if catalog.Tenant != tenant {
+		return nil, "", fmt.Errorf("namespace: catalog tenant %q does not match key tenant %q", catalog.Tenant, tenant)
+	}
+	if catalog.Namespaces == nil {
+		catalog.Namespaces = make(map[string]*namespacepb.NamespaceMetadata)
+	}
+	return &catalog, obj.Generation, nil
 }
 
 func ReadTenantCatalogIfGeneration(ctx context.Context, store objectstore.Store, tenant, generation string) (*namespacepb.TenantCatalog, string, error) {
@@ -274,7 +294,7 @@ func (c *CatalogCache) snapshotTenants() []string {
 }
 
 func readCatalogOrEmpty(ctx context.Context, store objectstore.Store, tenant string) (*namespacepb.TenantCatalog, string, error) {
-	catalog, generation, err := readTenantCatalog(ctx, store, tenant)
+	catalog, generation, err := ReadTenantCatalog(ctx, store, tenant)
 	if err == nil {
 		return catalog, generation, nil
 	}
@@ -285,30 +305,6 @@ func readCatalogOrEmpty(ctx context.Context, store objectstore.Store, tenant str
 		Tenant:     tenant,
 		Namespaces: make(map[string]*namespacepb.NamespaceMetadata),
 	}, "", nil
-}
-
-func readTenantCatalog(ctx context.Context, store objectstore.Store, tenant string) (*namespacepb.TenantCatalog, string, error) {
-	rc, obj, err := store.Get(ctx, CatalogPath(tenant))
-	if err != nil {
-		return nil, "", err
-	}
-	defer rc.Close()
-
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		return nil, "", fmt.Errorf("namespace: read catalog %s: %w", tenant, err)
-	}
-	var catalog namespacepb.TenantCatalog
-	if err := unmarshalOpts.Unmarshal(data, &catalog); err != nil {
-		return nil, "", fmt.Errorf("namespace: unmarshal catalog %s: %w", tenant, err)
-	}
-	if catalog.Tenant != tenant {
-		return nil, "", fmt.Errorf("namespace: catalog tenant %q does not match key tenant %q", catalog.Tenant, tenant)
-	}
-	if catalog.Namespaces == nil {
-		catalog.Namespaces = make(map[string]*namespacepb.NamespaceMetadata)
-	}
-	return &catalog, obj.Generation, nil
 }
 
 func putTenantCatalog(ctx context.Context, store objectstore.Store, catalog *namespacepb.TenantCatalog, generation string) (string, error) {
