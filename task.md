@@ -22,9 +22,9 @@
 - Expose `DefaultNamespace = "default"` and `DefaultBranch = "main"` constants and `BranchKey` helper in `namespace/namespace.go`.
 
 ### Phase 2: Storage & Ingestion Pipeline
-- `ingest.BatchIngester`:
+- `ingest.Ingester`:
   - `Fork`: Verify parent exists in storage. Check target is absent. Write target manifest via `kvfs.CreateBranch`.
-  - Append `BranchLifecycleEvent{Type: FORK}` to WAL stream for deterministic ordering.
+  - Append `BranchLifecycleEvent{Type: FORK}` to WAL stream for deterministic ordering. Roll back branch creation if append fails.
 - `ingest.Flusher`:
   - Consume `BranchLifecycleEvent_FORK` from WAL stream.
   - Flush any active parent memtable mutations to segments.

@@ -2,6 +2,9 @@
 
 ### Added
 
+- `grpcapi.IngestService.Fork`: RPC to fork a branch within a namespace with WAL sequencing.
+- `ingest.Ingester`: synchronous batch ingestion appending client document batches directly to the WAL.
+- Automatic namespace creation on first document flush in `ingest.Flusher`.
 - `grpcapi`: IngestService with Upsert and Delete WAL appends. A namespace
   package adds Validate helpers and a Scope hierarchy.
 - `cmd/cloudy`: CLI with `ingest` and `query` subcommands. `ingest` hosts
@@ -50,6 +53,9 @@
 
 ### Changed
 
+- `cmd/cloudy`: renamed `-listen` to `-addr` and `-url` to `-storage-root`.
+- `cmd/cloudy`: internalized `walStream` and set `maxMsgSize` as a code constant.
+- `ingest.Flusher`: simplified flusher to materialize segments directly per WAL sequence and drain partial sequences on shutdown.
 - `query.Table`: replaced chunked copy-on-write slices with flat contiguous vector storage.
 - `query.Loader`: stream segments directly into table builders without intermediate slice buffers.
 - `logstream.Log`: removed lock held across network I/O in Append.
@@ -61,11 +67,15 @@
 
 ### Removed
 
+- `ingest.BatchIngester`: removed server-side batch buffering, actor goroutine, and timer loops.
+- `cmd/cloudy`: removed `-batch-docs`, `-batch-interval`, `-stream`, and `-max-msg-size` flags.
 - `query.QueryExecutor`: deleted redundant query executor abstraction.
 - `query/distance`: deleted dead SIMD intrinsics and fallback stubs.
 
 ### Fixed
 
+- `ingest.Flusher`: fixed cancellation handling to retry the active sequence on shutdown rather than skipping records.
+- `ingest.Ingester`: roll back created KVFS branch if appending the fork event fails.
 - `cloudy ingest`: gRPC GracefulStop bounded by a 5-second timeout with a
   hard-stop fallback. The server stops when the flusher stops.
 - `recordio.Reader`: a non-EOF read error inside a payload or footer now

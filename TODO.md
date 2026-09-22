@@ -2,8 +2,8 @@
 
 - [X] Audit codebase for instances of premature optimization. Always compare with a vanilla baseline first.
   - Example: `Table` switched from chunked copy-on-write slices to a flat contiguous `[]float32` array. PR 134 eliminated dead SIMD intrinsics, QueryExecutor, Table mutex, and Loader buffering.
-- [ ] Replace the actor goroutine and per-request channels in BatchIngester with group commit.
-      Use a mutex-protected batch queue with a shared completion channel.
+- [X] Eliminate server-side batch buffering in Ingester. Replaced BatchIngester actor goroutine and channels with direct synchronous WAL Append.
+- [X] Add Fork RPC to IngestService with namespace scoping and WAL event sequencing.
 - [ ] Refactor the storage layer.
   - [ ] Replace the cloud SDK with a shim around GCS. Use the atomic-file
         package from Tailscale.

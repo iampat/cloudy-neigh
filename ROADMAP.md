@@ -117,8 +117,8 @@ Establish the minimal functional search engine. A user can run a single node, in
 - **Object storage abstraction (Done)**: Layer 0 `objectstore.Store` with GCS, local disk, and in-memory backends.
 - **Write-ahead log (Done)**: Layer 1 `logstream` append-only WAL over `recordio` and `objectstore`.
 - **Branching key-value engine (Done)**: Layer 2 `kvfs` CAS blob storage, protobuf schemas, and manifest snapshots.
-- **Memtable and flush (Done)**: In-memory write buffer with background flush of immutable segments to object storage.
-- **gRPC service (Done)**: Implement basic `Write` and `Query` RPC endpoints.
+- **Memtable and flush (Done)**: Direct synchronous WAL ingestion with background flusher materializing immutable segments to object storage.
+- **gRPC service (Done)**: Implement `Upsert`, `Delete`, `Fork`, and `Query` RPC endpoints.
 - **Exact k-NN search (Done)**: Brute-force vector distance computation for Cosine, Dot Product, and Euclidean (L2) metrics.
 - **Attribute filtering (Done)**: Exact match equality predicate on scalar document attributes.
 
@@ -209,8 +209,8 @@ Support multi-vector document representations and modern retrieval models.
 
 Provide Git-like dataset branching and point-in-time snapshot isolation.
 
-- **Branch head references**: Atomic branch pointers in object storage (`refs/heads/<branch>`) referencing immutable manifests.
-- **Zero-copy namespace branching**: Instant creation of isolated branch copies for testing and staging.
+- **Branch head references (Done)**: Atomic branch pointers in object storage (`refs/heads/<branch>`) referencing immutable manifests.
+- **Zero-copy namespace branching (Done)**: Instant creation of isolated branch copies via `Fork` RPC without copying segments.
 - **Point-in-time queries**: Pin queries to specific historical snapshot versions.
 - **Garbage collection (GC)**: Background service to clean up unreferenced blobs and superseded manifest files.
 
