@@ -2,6 +2,9 @@ package ingest_test
 
 import (
 	"context"
+	"errors"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/ingest"
@@ -140,4 +143,43 @@ func TestIngester_Fork(t *testing.T) {
 	assert.Equal(t, storagepb.BranchLifecycleEvent_FORK, evt.Type)
 	assert.Equal(t, "child", evt.Branch)
 	assert.Equal(t, "parent", evt.ParentBranch)
+}
+
+type failAppendStore struct {
+	objectstore.Store
+	failKey string
+}
+
+func (s *failAppendStore) Put(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) (string, error) {
+	if strings.Contains(key, s.failKey) {
+		return "", errors.New("simulated append failure")
+	}
+	return s.Store.Put(ctx, key, r, cond)
+}
+
+func TestIngester_Fork_AppendFailureRollback(t *testing.T) {
+	ctx := context.Background()
+	memStore, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	defer memStore.Close()
+
+	store := &failAppendStore{
+		Store:   memStore,
+		failKey: "wal",
+	}
+
+	log, err := logstream.New(store, "wal")
+	require.NoError(t, err)
+
+	in, err := ingest.NewIngester(store, log)
+	require.NoError(t, err)
+
+	_, err = kvfs.UpdateBranch(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	require.NoError(t, err)
+
+	err = in.Fork(ctx, "parent", "child")
+	require.Error(t, err)
+
+	_, _, err = kvfs.ResolveBranch(ctx, store, "child")
+	require.ErrorIs(t, err, objectstore.ErrNotFound)
 }

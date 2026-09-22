@@ -129,7 +129,7 @@ func (f *Flusher) Run(ctx context.Context) error {
 
 		if err := f.processRecords(ctx, seq, records); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return f.shutdownFlush(seq + 1)
+				return f.shutdownFlush(seq)
 			}
 			return err
 		}

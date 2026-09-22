@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -416,4 +417,101 @@ func TestForkEvent(t *testing.T) {
 	cancel()
 	err = <-flusherErrCh
 	require.NoError(t, err)
+}
+
+type cancelOnBranchStore struct {
+	objectstore.Store
+	mu        sync.Mutex
+	cancel    context.CancelFunc
+	armed     bool
+	doneFirst bool
+}
+
+func (s *cancelOnBranchStore) Arm() {
+	s.mu.Lock()
+	s.armed = true
+	s.mu.Unlock()
+}
+
+func (s *cancelOnBranchStore) Put(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) (string, error) {
+	s.mu.Lock()
+	if s.armed && strings.HasPrefix(key, "refs/heads/") {
+		if !s.doneFirst {
+			s.doneFirst = true
+			s.mu.Unlock()
+			gen, err := s.Store.Put(ctx, key, r, cond)
+			s.cancel()
+			return gen, err
+		}
+	}
+	s.mu.Unlock()
+	return s.Store.Put(ctx, key, r, cond)
+}
+
+func TestPartialSequenceShutdownFlush(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	memStore, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	defer memStore.Close()
+
+	store := &cancelOnBranchStore{
+		Store:  memStore,
+		cancel: cancel,
+	}
+
+	log, err := logstream.New(store, "wal")
+	require.NoError(t, err)
+
+	_, err = kvfs.UpdateBranch(ctx, store, "branch-1", &storagepb.BranchManifest{CheckpointSeq: 0}, "")
+	require.NoError(t, err)
+	_, err = kvfs.UpdateBranch(ctx, store, "branch-2", &storagepb.BranchManifest{CheckpointSeq: 0}, "")
+	require.NoError(t, err)
+
+	walRec1 := &storagepb.WalRecord{
+		Record: &storagepb.WalRecord_Mutation{
+			Mutation: &storagepb.DocumentMutation{
+				Branch: "branch-1",
+				DocId:  "doc-1",
+				Op:     storagepb.MutationOp_PUT,
+			},
+		},
+	}
+	walRec2 := &storagepb.WalRecord{
+		Record: &storagepb.WalRecord_Mutation{
+			Mutation: &storagepb.DocumentMutation{
+				Branch: "branch-2",
+				DocId:  "doc-2",
+				Op:     storagepb.MutationOp_PUT,
+			},
+		},
+	}
+	b1, err := proto.Marshal(walRec1)
+	require.NoError(t, err)
+	b2, err := proto.Marshal(walRec2)
+	require.NoError(t, err)
+
+	_, err = log.Append(ctx, []logstream.Record{b1, b2})
+	require.NoError(t, err)
+
+	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+		PollInterval: 10 * time.Millisecond,
+	})
+	require.NoError(t, err)
+
+	store.Arm()
+	err = flusher.Run(ctx)
+	require.NoError(t, err)
+
+	drainCtx := context.Background()
+	m1, _, err := kvfs.ResolveBranch(drainCtx, store, "branch-1")
+	require.NoError(t, err)
+	m2, _, err := kvfs.ResolveBranch(drainCtx, store, "branch-2")
+	require.NoError(t, err)
+
+	assert.Equal(t, uint64(1), m1.CheckpointSeq)
+	assert.Len(t, m1.Segments, 1)
+	assert.Equal(t, uint64(1), m2.CheckpointSeq)
+	assert.Len(t, m2.Segments, 1)
 }

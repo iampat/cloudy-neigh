@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
@@ -114,9 +115,14 @@ func (in *Ingester) Fork(ctx context.Context, source, target string) error {
 		},
 	}
 	recBytes, err := proto.Marshal(eventRec)
-	if err != nil {
-		return fmt.Errorf("marshal wal record: %w", err)
+	if err == nil {
+		_, err = in.log.Append(ctx, []logstream.Record{recBytes})
 	}
-	_, err = in.log.Append(ctx, []logstream.Record{recBytes})
-	return err
+	if err != nil {
+		delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer delCancel()
+		_ = kvfs.DeleteBranch(delCtx, in.store, target)
+		return err
+	}
+	return nil
 }
