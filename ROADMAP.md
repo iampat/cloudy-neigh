@@ -114,13 +114,13 @@ publishes the numbers for it, and a reader must be able to reproduce them.
 
 Establish the minimal functional search engine. A user can run a single node, ingest documents, store them in object storage, and execute exact search queries.
 
-- **Object storage abstraction (Done)**: Layer 0 `objectstore.Store` with GCS, local disk, and in-memory backends.
-- **Write-ahead log (Done)**: Layer 1 `logstream` append-only WAL over `recordio` and `objectstore`.
-- **Branching key-value engine (Done)**: Layer 2 `kvfs` CAS blob storage, protobuf schemas, and manifest snapshots.
-- **Memtable and flush (Done)**: Direct synchronous WAL ingestion with background flusher materializing immutable segments to object storage.
-- **gRPC service (Done)**: Implement `Upsert`, `Delete`, `Fork`, and `Query` RPC endpoints.
-- **Exact k-NN search (Done)**: Brute-force vector distance computation for Cosine, Dot Product, and Euclidean (L2) metrics.
-- **Attribute filtering (Done)**: Exact match equality predicate on scalar document attributes.
+- **Object storage abstraction (Done)**: Layer 0 `objectstore.Store` with GCS, local disk, and in-memory backends. [#41, #66, #71, #74, #86]
+- **Write-ahead log (Done)**: Layer 1 `logstream` append-only WAL over `recordio` and `objectstore`. [#34, #57, #70, #72, #81, #87]
+- **Branching key-value engine (Done)**: Layer 2 `kvfs` CAS blob storage, protobuf schemas, and manifest snapshots. [#77, #78, #79, #80, #83, #84, #88]
+- **Memtable and flush (Done)**: Direct synchronous WAL ingestion with background flusher materializing immutable segments to object storage. [#99, #100, #103, #134, #140]
+- **gRPC service (Done)**: Implement `Upsert`, `Delete`, `Fork`, and `Query` RPC endpoints. [#97, #100, #102, #105, #106, #112, #138, #141]
+- **Exact k-NN search (Done)**: Brute-force vector distance computation for Cosine, Dot Product, and Euclidean (L2) metrics. [#107, #108, #110, #112, #133, #134]
+- **Attribute filtering (Done)**: Exact match equality predicate on scalar document attributes. [#97, #107, #110]
 
 **User Value**: A runnable single-node engine that persists and queries vector data over local disk, AWS S3, or Google Cloud Storage.
 
@@ -131,7 +131,7 @@ Establish the minimal functional search engine. A user can run a single node, in
 Serve a warm query from a local read instead of a cloud round trip.
 
 - **Two-tier cache hierarchy**: RAM cache for hot metadata and NVMe SSD cache for immutable index segments.
-- **Single-flight request coalescing**: Deduplicate concurrent object fetch requests during cache misses.
+- **Single-flight request coalescing**: Deduplicate concurrent object fetch requests during cache misses. [#84]
 - **Asynchronous read-ahead**: Background prefetch for sequential segment reads during scan operations.
 - **Cache warming API**: Implement the `WarmCache` pre-flight endpoint to preload namespace data on demand.
 
@@ -209,8 +209,8 @@ Support multi-vector document representations and modern retrieval models.
 
 Provide Git-like dataset branching and point-in-time snapshot isolation.
 
-- **Branch head references (Done)**: Atomic branch pointers in object storage (`refs/heads/<branch>`) referencing immutable manifests.
-- **Zero-copy namespace branching (Done)**: Instant creation of isolated branch copies via `Fork` RPC without copying segments.
+- **Branch head references (Done)**: Atomic branch pointers in object storage (`refs/heads/<branch>`) referencing immutable manifests. [#78, #79]
+- **Zero-copy namespace branching (Done)**: Instant creation of isolated branch copies via `Fork` RPC without copying segments. [#79, #138, #139]
 - **Point-in-time queries**: Pin queries to specific historical snapshot versions.
 - **Garbage collection (GC)**: Background service to clean up unreferenced blobs and superseded manifest files.
 

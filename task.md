@@ -2,14 +2,14 @@
 
 ## Namespace & Branch Operations
 
-- [X] Automatic namespace creation on ingest write.
+- [X] Automatic namespace creation on ingest write. [#140]
   - Namespaces are created empty on initial document ingestion when WAL records are flushed to storage.
   - No explicit `CreateNamespace` RPC is needed.
-- [X] Add Fork RPC to allow clients to fork an existing branch to create a new branch.
+- [X] Add Fork RPC to allow clients to fork an existing branch to create a new branch. [#138]
   - Scoped by namespace: `namespace`, `source_branch`, and `target_branch`.
   - Fails with `codes.NotFound` if the parent branch does not exist in object storage at call time.
   - Sequenced via WAL for linearizability across mutations.
-- [X] Support default namespace and branch scoping:
+- [X] Support default namespace and branch scoping: [#138, #139]
   - If `namespace` is not set in `Upsert`, `Fork`, or `Delete`, default to `"default"`.
   - If `branch` is not set in `Upsert`, `Delete`, `Query`, or `Fork.source_branch`, default to `"main"`.
 
