@@ -24,11 +24,14 @@ import (
 	"google.golang.org/grpc"
 )
 
+const (
+	maxMsgSize = 64 * 1024 * 1024
+	walStream  = "wal"
+)
+
 type ingestConfig struct {
-	listen       string
+	addr         string
 	url          string
-	stream       string
-	maxMsgSize   int
 	pollInterval time.Duration
 	debug        bool
 }
@@ -37,10 +40,8 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
 
 	var cfg ingestConfig
-	fs.StringVar(&cfg.listen, "listen", ":50051", "address:port to listen on")
+	fs.StringVar(&cfg.addr, "addr", ":50051", "address:port to listen on")
 	fs.StringVar(&cfg.url, "url", "file:///tmp/cloudy-demo?create_dir=true", "object storage URL")
-	fs.StringVar(&cfg.stream, "stream", "wal", "WAL stream name")
-	fs.IntVar(&cfg.maxMsgSize, "max-msg-size", 64*1024*1024, "maximum message size in bytes")
 	fs.DurationVar(&cfg.pollInterval, "poll-interval", 100*time.Millisecond, "WAL poll interval")
 	fs.BoolVar(&cfg.debug, "debug", false, "enable debug logging")
 
@@ -50,17 +51,11 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 	if len(fs.Args()) > 0 {
 		return ingestConfig{}, fmt.Errorf("unexpected arguments: %v", fs.Args())
 	}
-	if cfg.listen == "" {
-		return ingestConfig{}, errors.New("-listen cannot be empty")
+	if cfg.addr == "" {
+		return ingestConfig{}, errors.New("-addr cannot be empty")
 	}
 	if cfg.url == "" {
 		return ingestConfig{}, errors.New("-url cannot be empty")
-	}
-	if cfg.stream == "" {
-		return ingestConfig{}, errors.New("-stream cannot be empty")
-	}
-	if cfg.maxMsgSize <= 0 {
-		return ingestConfig{}, errors.New("-max-msg-size must be positive")
 	}
 	if cfg.pollInterval <= 0 {
 		return ingestConfig{}, errors.New("-poll-interval must be positive")
@@ -81,7 +76,7 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
-	log, err := logstream.New(store, cfg.stream)
+	log, err := logstream.New(store, walStream)
 	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("open logstream: %w", err)
@@ -108,15 +103,15 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 	}
 
 	grpcServer := grpc.NewServer(
-		grpc.MaxRecvMsgSize(cfg.maxMsgSize),
-		grpc.MaxSendMsgSize(cfg.maxMsgSize),
+		grpc.MaxRecvMsgSize(maxMsgSize),
+		grpc.MaxSendMsgSize(maxMsgSize),
 	)
 	cloudyneighpb.RegisterIngestServiceServer(grpcServer, srv)
 
-	lis, err := net.Listen("tcp", cfg.listen)
+	lis, err := net.Listen("tcp", cfg.addr)
 	if err != nil {
 		store.Close()
-		return nil, fmt.Errorf("listen on %s: %w", cfg.listen, err)
+		return nil, fmt.Errorf("listen on %s: %w", cfg.addr, err)
 	}
 
 	return &ingestServer{
@@ -216,16 +211,15 @@ func runIngest(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("ingest server listening", "addr", srv.Addr().String(), "stream", cfg.stream, "url", cfg.url)
+	slog.Info("ingest server listening", "addr", srv.Addr().String(), "wal", walStream, "url", cfg.url)
 
 	return srv.Serve(ctx)
 }
 
 type queryConfig struct {
-	listen       string
+	addr         string
 	url          string
 	syncInterval time.Duration
-	maxMsgSize   int
 	debug        bool
 }
 
@@ -233,10 +227,9 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 
 	var cfg queryConfig
-	fs.StringVar(&cfg.listen, "listen", ":50052", "address:port to listen on")
+	fs.StringVar(&cfg.addr, "addr", ":50052", "address:port to listen on")
 	fs.StringVar(&cfg.url, "url", "file:///tmp/cloudy-demo?create_dir=true", "object storage URL")
 	fs.DurationVar(&cfg.syncInterval, "sync-interval", 2*time.Second, "background sync interval")
-	fs.IntVar(&cfg.maxMsgSize, "max-msg-size", 64*1024*1024, "maximum message size in bytes")
 	fs.BoolVar(&cfg.debug, "debug", false, "enable debug logging")
 
 	if err := fs.Parse(args); err != nil {
@@ -245,17 +238,14 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 	if len(fs.Args()) > 0 {
 		return queryConfig{}, fmt.Errorf("unexpected arguments: %v", fs.Args())
 	}
-	if cfg.listen == "" {
-		return queryConfig{}, errors.New("-listen cannot be empty")
+	if cfg.addr == "" {
+		return queryConfig{}, errors.New("-addr cannot be empty")
 	}
 	if cfg.url == "" {
 		return queryConfig{}, errors.New("-url cannot be empty")
 	}
 	if cfg.syncInterval <= 0 {
 		return queryConfig{}, errors.New("-sync-interval must be positive")
-	}
-	if cfg.maxMsgSize <= 0 {
-		return queryConfig{}, errors.New("-max-msg-size must be positive")
 	}
 	return cfg, nil
 }
@@ -286,15 +276,15 @@ func newQueryServer(ctx context.Context, cfg queryConfig) (*queryServer, error) 
 	}
 
 	grpcServer := grpc.NewServer(
-		grpc.MaxRecvMsgSize(cfg.maxMsgSize),
-		grpc.MaxSendMsgSize(cfg.maxMsgSize),
+		grpc.MaxRecvMsgSize(maxMsgSize),
+		grpc.MaxSendMsgSize(maxMsgSize),
 	)
 	cloudyneighpb.RegisterQueryServiceServer(grpcServer, srv)
 
-	lis, err := net.Listen("tcp", cfg.listen)
+	lis, err := net.Listen("tcp", cfg.addr)
 	if err != nil {
 		store.Close()
-		return nil, fmt.Errorf("listen on %s: %w", cfg.listen, err)
+		return nil, fmt.Errorf("listen on %s: %w", cfg.addr, err)
 	}
 
 	return &queryServer{
