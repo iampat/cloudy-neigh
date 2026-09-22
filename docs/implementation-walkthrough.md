@@ -149,7 +149,7 @@ lo ──▶ lo+1 ──▶ lo+2 ──▶ lo+4 ──▶ lo+8 ──▶ ... ─
 3. Check `store.Exists(ctx, segmentKey(high))` until finding an absent key.
 4. Run binary search across `[low, high]` to locate the head in $O(\log N)$ calls.
 
-## 4. Ingestion Server & Batcher: `grpcapi.IngestServer` and `ingest.BatchIngester`
+## 4. Ingestion Server: `grpcapi.IngestServer` and `ingest.Ingester`
 
 `IngestServer` is decoupled from storage through the `Ingester` interface.
 No serialization or WAL implementation details reside inside `grpcapi`.
@@ -158,31 +158,27 @@ No serialization or WAL implementation details reside inside `grpcapi`.
 type Ingester interface {
 	Upsert(ctx context.Context, namespace string, records []*cloudyneighpb.Record) error
 	Delete(ctx context.Context, namespace string, ids []string) error
+	Fork(ctx context.Context, source, target string) error
 }
 ```
 
-### Ingestion Flow and Server-Side Batching
+### Ingestion Flow and Direct Batch Processing
 
 ```
 Client (batch=200) ──▶ IngestServer ──▶ Ingester.Upsert()
-                           │                 │
-                           │ delegates       ▼
-                           │            BatchIngester (queue)
-                           │                 │
-                           │                 ├── batch size ≥ 1000 docs
-                           │                 │   OR time ≥ 10ms
-                           │                 ▼
-                           │            logstream.Log.Append()
-                           │                 │
-                           ◀── waits ────────┘ (200 OK after WAL commit)
+                                             │
+                                             │ synchronous append
+                                             ▼
+                                        logstream.Log.Append()
+                                             │
+                                             ▼ (200 OK after WAL commit)
 ```
 
-1. Client sends small batches (e.g. 200 records) to `IngestService.Upsert`.
+1. Client sends batch requests (e.g. 200 records) to `IngestService.Upsert`.
 2. `IngestServer` validates namespace and record IDs, then delegates to `ingester.Upsert`.
-3. `ingest.BatchIngester` buffers incoming mutations across concurrent requests.
-4. When pending documents reach `MaxDocs` (default 1,000) or `MaxInterval` elapses (default 10ms), the batcher serializes all mutations into `WalRecord` envelopes and appends them to `logstream.Log`.
-5. Callers block on individual completion channels until the WAL append commits to object storage.
-6. If the WAL write fails, all callers in that batch receive the error. Client requests receive success only after durability is guaranteed.
+3. `ingest.Ingester` marshals the batch into `WalRecord` envelopes and appends them directly to `logstream.Log`.
+4. The client call returns success once the batch commits to object storage.
+5. If the WAL write fails, the client immediately receives the error. Client requests receive success only after durability is guaranteed.
 
 ## 5. Materialization and Flusher: `ingest.Flusher`
 
@@ -218,7 +214,7 @@ readLoop:
 
 Segment flush triggers:
 - Materialization occurs immediately per WAL sequence batch.
-- Batching occurs on the WAL write path (`BatchIngester`), maximizing object storage write capacity.
+- Batching occurs at the client request boundary, maximizing object storage write efficiency.
 - Graceful shutdown initiates: drains WAL to tail and flushes all pending sequences.
 
 ### Segment Flush and Atomic CAS Commit
@@ -473,7 +469,7 @@ Query Vector + Filter
 ### Ingestion Throughput (Batch Size = 200)
 
 - Client: `scripts/demoload.py` with `--batch_size=200`
-- Server: `cloudy ingest` with `--batch-docs=1000 --batch-interval=10ms`
+- Server: `cloudy ingest`
 - Throughput: **1,377 documents / second** sustained across gRPC into WAL and segments.
 
 ### Query Latency (10,000 Documents, 1024-dim Vectors)

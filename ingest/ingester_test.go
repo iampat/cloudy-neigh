@@ -3,7 +3,6 @@ package ingest_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/iampat/cloudy-neigh/ingest"
 	"github.com/iampat/cloudy-neigh/kvfs"
@@ -13,25 +12,24 @@ import (
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 )
 
-func TestNewBatchIngester_NilStore(t *testing.T) {
-	_, err := ingest.NewBatchIngester(nil, nil, ingest.BatchConfig{})
+func TestNewIngester_NilStore(t *testing.T) {
+	_, err := ingest.NewIngester(nil, nil)
 	assert.ErrorIs(t, err, ingest.ErrNilStore)
 }
 
-func TestNewBatchIngester_NilLog(t *testing.T) {
+func TestNewIngester_NilLog(t *testing.T) {
 	store, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(t, err)
 	defer store.Close()
 
-	_, err = ingest.NewBatchIngester(store, nil, ingest.BatchConfig{})
+	_, err = ingest.NewIngester(store, nil)
 	assert.ErrorIs(t, err, ingest.ErrNilLog)
 }
 
-func TestBatchIngester_BatchDocThreshold(t *testing.T) {
+func TestIngester_Upsert(t *testing.T) {
 	store, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(t, err)
 	defer store.Close()
@@ -39,38 +37,40 @@ func TestBatchIngester_BatchDocThreshold(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	b, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
-		MaxDocs:     10,
-		MaxInterval: 1 * time.Second,
-	})
+	in, err := ingest.NewIngester(store, log)
 	require.NoError(t, err)
-	defer b.Close()
 
 	ctx := context.Background()
-	var g errgroup.Group
-
-	for i := 0; i < 5; i++ {
-		docID := string(rune('a' + i))
-		g.Go(func() error {
-			return b.Upsert(ctx, "main", []*cloudyneighpb.Record{
-				{Id: docID + "1"},
-				{Id: docID + "2"},
-			})
-		})
+	records := []*cloudyneighpb.Record{
+		{Id: "doc-1"},
+		{Id: "doc-2"},
+		{Id: "doc-3"},
 	}
 
-	require.NoError(t, g.Wait())
+	require.NoError(t, in.Upsert(ctx, "main", records))
 
 	tail, err := log.Tail(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(1), tail)
 
-	records, err := log.Read(ctx, 1)
+	walRecords, err := log.Read(ctx, 1)
 	require.NoError(t, err)
-	assert.Len(t, records, 10)
+	require.Len(t, walRecords, 3)
+
+	for i, r := range walRecords {
+		var walRec storagepb.WalRecord
+		require.NoError(t, proto.Unmarshal(r, &walRec))
+		mut := walRec.GetMutation()
+		require.NotNil(t, mut)
+		assert.Equal(t, "main", mut.Branch)
+		assert.Equal(t, storagepb.MutationOp_PUT, mut.Op)
+		assert.Equal(t, records[i].Id, mut.DocId)
+	}
+
+	require.NoError(t, in.Upsert(ctx, "main", nil))
 }
 
-func TestBatchIngester_BatchTimeThreshold(t *testing.T) {
+func TestIngester_Delete(t *testing.T) {
 	store, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(t, err)
 	defer store.Close()
@@ -78,35 +78,35 @@ func TestBatchIngester_BatchTimeThreshold(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	b, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
-		MaxDocs:     1000,
-		MaxInterval: 20 * time.Millisecond,
-	})
+	in, err := ingest.NewIngester(store, log)
 	require.NoError(t, err)
-	defer b.Close()
 
 	ctx := context.Background()
-	start := time.Now()
-	err = b.Upsert(ctx, "main", []*cloudyneighpb.Record{
-		{Id: "doc-1"},
-	})
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, time.Since(start), 15*time.Millisecond)
+	ids := []string{"doc-1", "doc-2"}
+	require.NoError(t, in.Delete(ctx, "main", ids))
 
 	tail, err := log.Tail(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(1), tail)
 
-	records, err := log.Read(ctx, 1)
+	walRecords, err := log.Read(ctx, 1)
 	require.NoError(t, err)
-	require.Len(t, records, 1)
+	require.Len(t, walRecords, 2)
 
-	var walRec storagepb.WalRecord
-	require.NoError(t, proto.Unmarshal(records[0], &walRec))
-	assert.Equal(t, "doc-1", walRec.GetMutation().DocId)
+	for i, r := range walRecords {
+		var walRec storagepb.WalRecord
+		require.NoError(t, proto.Unmarshal(r, &walRec))
+		mut := walRec.GetMutation()
+		require.NotNil(t, mut)
+		assert.Equal(t, "main", mut.Branch)
+		assert.Equal(t, storagepb.MutationOp_DELETE, mut.Op)
+		assert.Equal(t, ids[i], mut.DocId)
+	}
+
+	require.NoError(t, in.Delete(ctx, "main", nil))
 }
 
-func TestBatchIngester_Delete(t *testing.T) {
+func TestIngester_Fork(t *testing.T) {
 	store, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(t, err)
 	defer store.Close()
@@ -114,49 +114,16 @@ func TestBatchIngester_Delete(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	b, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
-		MaxDocs:     2,
-		MaxInterval: 1 * time.Second,
-	})
+	in, err := ingest.NewIngester(store, log)
 	require.NoError(t, err)
-	defer b.Close()
 
 	ctx := context.Background()
-	err = b.Delete(ctx, "main", []string{"doc-1", "doc-2"})
-	require.NoError(t, err)
-
-	records, err := log.Read(ctx, 1)
-	require.NoError(t, err)
-	require.Len(t, records, 2)
-
-	var walRec storagepb.WalRecord
-	require.NoError(t, proto.Unmarshal(records[0], &walRec))
-	assert.Equal(t, storagepb.MutationOp_DELETE, walRec.GetMutation().Op)
-	assert.Equal(t, "doc-1", walRec.GetMutation().DocId)
-}
-
-func TestBatchIngester_Fork(t *testing.T) {
-	store, err := objectstore.Open(context.Background(), "mem://")
-	require.NoError(t, err)
-	defer store.Close()
-
-	log, err := logstream.New(store, "wal")
-	require.NoError(t, err)
-
-	b, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
-		MaxDocs:     1,
-		MaxInterval: 10 * time.Millisecond,
-	})
-	require.NoError(t, err)
-	defer b.Close()
-
-	ctx := context.Background()
-	assert.Error(t, b.Fork(ctx, "nonexistent", "child"))
+	assert.Error(t, in.Fork(ctx, "nonexistent", "child"))
 
 	_, err = kvfs.UpdateBranch(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
-	require.NoError(t, b.Fork(ctx, "parent", "child"))
-	assert.Error(t, b.Fork(ctx, "parent", "child"))
+	require.NoError(t, in.Fork(ctx, "parent", "child"))
+	assert.Error(t, in.Fork(ctx, "parent", "child"))
 
 	tail, err := log.Tail(ctx)
 	require.NoError(t, err)

@@ -388,12 +388,8 @@ func TestForkEvent(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	b, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
-		MaxDocs:     10,
-		MaxInterval: 10 * time.Millisecond,
-	})
+	b, err := ingest.NewIngester(store, log)
 	require.NoError(t, err)
-	defer b.Close()
 
 	_, err = kvfs.UpdateBranch(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 0}, "")
 	require.NoError(t, err)
