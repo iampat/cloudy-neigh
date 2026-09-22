@@ -241,19 +241,13 @@ func TestQuery_EndToEnd(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	ingester, err := ingest.NewBatchIngester(store, log, ingest.BatchConfig{
-		MaxDocs:     1,
-		MaxInterval: 0,
-	})
+	ingester, err := ingest.NewIngester(store, log)
 	require.NoError(t, err)
-	t.Cleanup(func() { ingester.Close() })
 
 	ingestSrv, err := grpcapi.NewIngestServer(ingester)
 	require.NoError(t, err)
 
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
-		DocThreshold: 1000,
-	})
+	flusher, err := ingest.NewFlusher(store, log, ingest.Config{})
 	require.NoError(t, err)
 
 	_, err = ingestSrv.Upsert(ctx, &cloudyneighpb.UpsertRequest{
