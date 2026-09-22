@@ -31,7 +31,7 @@ const (
 
 type ingestConfig struct {
 	addr         string
-	url          string
+	storageRoot  string
 	pollInterval time.Duration
 	debug        bool
 }
@@ -41,7 +41,7 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 
 	var cfg ingestConfig
 	fs.StringVar(&cfg.addr, "addr", ":50051", "address:port to listen on")
-	fs.StringVar(&cfg.url, "url", "file:///tmp/cloudy-demo?create_dir=true", "object storage URL")
+	fs.StringVar(&cfg.storageRoot, "storage-root", "file:///tmp/cloudy-demo?create_dir=true", "storage root URI")
 	fs.DurationVar(&cfg.pollInterval, "poll-interval", 100*time.Millisecond, "WAL poll interval")
 	fs.BoolVar(&cfg.debug, "debug", false, "enable debug logging")
 
@@ -54,8 +54,8 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 	if cfg.addr == "" {
 		return ingestConfig{}, errors.New("-addr cannot be empty")
 	}
-	if cfg.url == "" {
-		return ingestConfig{}, errors.New("-url cannot be empty")
+	if cfg.storageRoot == "" {
+		return ingestConfig{}, errors.New("-storage-root cannot be empty")
 	}
 	if cfg.pollInterval <= 0 {
 		return ingestConfig{}, errors.New("-poll-interval must be positive")
@@ -71,7 +71,7 @@ type ingestServer struct {
 }
 
 func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, error) {
-	store, err := objectstore.Open(ctx, cfg.url)
+	store, err := objectstore.Open(ctx, cfg.storageRoot)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
@@ -211,14 +211,14 @@ func runIngest(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("ingest server listening", "addr", srv.Addr().String(), "wal", walStream, "url", cfg.url)
+	slog.Info("ingest server listening", "addr", srv.Addr().String(), "wal", walStream, "storage_root", cfg.storageRoot)
 
 	return srv.Serve(ctx)
 }
 
 type queryConfig struct {
 	addr         string
-	url          string
+	storageRoot  string
 	syncInterval time.Duration
 	debug        bool
 }
@@ -228,7 +228,7 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 
 	var cfg queryConfig
 	fs.StringVar(&cfg.addr, "addr", ":50052", "address:port to listen on")
-	fs.StringVar(&cfg.url, "url", "file:///tmp/cloudy-demo?create_dir=true", "object storage URL")
+	fs.StringVar(&cfg.storageRoot, "storage-root", "file:///tmp/cloudy-demo?create_dir=true", "storage root URI")
 	fs.DurationVar(&cfg.syncInterval, "sync-interval", 2*time.Second, "background sync interval")
 	fs.BoolVar(&cfg.debug, "debug", false, "enable debug logging")
 
@@ -241,8 +241,8 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 	if cfg.addr == "" {
 		return queryConfig{}, errors.New("-addr cannot be empty")
 	}
-	if cfg.url == "" {
-		return queryConfig{}, errors.New("-url cannot be empty")
+	if cfg.storageRoot == "" {
+		return queryConfig{}, errors.New("-storage-root cannot be empty")
 	}
 	if cfg.syncInterval <= 0 {
 		return queryConfig{}, errors.New("-sync-interval must be positive")
@@ -258,7 +258,7 @@ type queryServer struct {
 }
 
 func newQueryServer(ctx context.Context, cfg queryConfig) (*queryServer, error) {
-	store, err := objectstore.Open(ctx, cfg.url)
+	store, err := objectstore.Open(ctx, cfg.storageRoot)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
@@ -341,7 +341,7 @@ func runQuery(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("query server listening", "addr", srv.Addr().String(), "url", cfg.url, "kernel", distance.Implementation())
+	slog.Info("query server listening", "addr", srv.Addr().String(), "storage_root", cfg.storageRoot, "kernel", distance.Implementation())
 
 	return srv.Serve(ctx)
 }
