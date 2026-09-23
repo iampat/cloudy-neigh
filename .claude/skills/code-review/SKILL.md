@@ -25,6 +25,10 @@ Flag redundant abstractions as high-severity findings:
 - Simple wrapper functions that only forward to another package. Ask to inline the call.
 - Single-caller helper functions. Ask to inline them at the call site.
 - Redundant error aliases and wrapper types that add no logic.
+- Redundant constructor variants (e.g. `NewXWithY` vs `NewX`) when one constructor suffices.
+- Configuration fallback chains and synthetic arguments. Flag functions that branch across execution modes by inspecting optional config fields.
+- Functions that synthesize missing dependencies deep in execution instead of failing fast on invalid inputs.
+- Unjustified fallback mechanisms and clever compatibility shims. Simplicity is more important than cleverness. Fallbacks complicate code reasoning and break future features. Allow a fallback only when it is explicit and strictly required to deliver user value.
 
 Generated code is out of scope. Protoc output lives in `bazel-bin` and never
 reaches the repository. Do not review it, do not lint it, and do not apply the

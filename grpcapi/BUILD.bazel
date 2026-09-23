@@ -29,7 +29,6 @@ go_test(
     deps = [
         ":grpcapi",
         "//ingest",
-        "//logstream",
         "//manifest",
         "//namespace",
         "//objectstore",

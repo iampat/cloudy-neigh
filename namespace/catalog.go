@@ -231,7 +231,6 @@ func (c *CatalogCache) InvalidateTenant(tenant string) {
 
 func (c *CatalogCache) Run(ctx context.Context) error {
 	ticker := time.NewTicker(c.syncInterval)
-	defer ticker.Stop()
 
 	for {
 		select {

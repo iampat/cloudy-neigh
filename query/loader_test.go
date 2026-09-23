@@ -575,9 +575,9 @@ func appendWALRecord(t *testing.T, ctx context.Context, log *logstream.Log, bran
 	require.NoError(t, err)
 }
 
-func flushBranch(t *testing.T, ctx context.Context, store objectstore.Store, log *logstream.Log, branch string, expectedSegCount int) {
+func flushBranch(t *testing.T, ctx context.Context, store objectstore.Store, branch string, expectedSegCount int) {
 	t.Helper()
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -590,7 +590,6 @@ func flushBranch(t *testing.T, ctx context.Context, store objectstore.Store, log
 	}()
 
 	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
 	timeout := time.After(5 * time.Second)
 
 	for {
@@ -616,17 +615,20 @@ func TestLoader_ForkBranch_Inheritance(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	log, err := logstream.New(store, "wal")
+	mainBranch := namespace.BranchRef("", "", "main")
+	stagingBranch := namespace.BranchRef("", "", "staging")
+
+	log, err := logstream.New(store, namespace.Scope{}.WALPrefix())
 	require.NoError(t, err)
 
-	appendWALRecord(t, ctx, log, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
-	appendWALRecord(t, ctx, log, "main", "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
+	appendWALRecord(t, ctx, log, mainBranch, "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
+	appendWALRecord(t, ctx, log, mainBranch, "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
 
-	flushBranch(t, ctx, store, log, "main", 2)
+	flushBranch(t, ctx, store, mainBranch, 2)
 
-	parentM, _, err := manifest.Read(ctx, store, "main")
+	parentM, _, err := manifest.Read(ctx, store, mainBranch)
 	require.NoError(t, err)
-	_, err = manifest.Write(ctx, store, "staging", parentM, "")
+	_, err = manifest.Write(ctx, store, stagingBranch, parentM, "")
 	require.NoError(t, err)
 
 	var table atomic.Pointer[query.Table]
@@ -634,7 +636,7 @@ func TestLoader_ForkBranch_Inheritance(t *testing.T) {
 	loader, err := query.NewLoader(store, &table)
 	require.NoError(t, err)
 
-	loaded, err := loader.Sync(ctx, "staging")
+	loaded, err := loader.Sync(ctx, stagingBranch)
 	require.NoError(t, err)
 	require.Equal(t, 2, loaded)
 
@@ -659,14 +661,14 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	log, err := logstream.New(store, "wal")
+	log, err := logstream.New(store, namespace.Scope{}.WALPrefix())
 	require.NoError(t, err)
 
 	mainBranch := namespace.BranchRef("", "", "main")
 	stagingBranch := namespace.BranchRef("", "", "staging")
 
 	appendWALRecord(t, ctx, log, mainBranch, "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
-	flushBranch(t, ctx, store, log, mainBranch, 1)
+	flushBranch(t, ctx, store, mainBranch, 1)
 
 	parentM, _, err := manifest.Read(ctx, store, mainBranch)
 	require.NoError(t, err)
@@ -674,7 +676,7 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 	require.NoError(t, err)
 
 	appendWALRecord(t, ctx, log, stagingBranch, "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
-	flushBranch(t, ctx, store, log, stagingBranch, 2)
+	flushBranch(t, ctx, store, stagingBranch, 2)
 
 	var stagingTable atomic.Pointer[query.Table]
 	stagingTable.Store(query.NewTable())

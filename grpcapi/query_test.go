@@ -11,7 +11,6 @@ import (
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -145,7 +144,7 @@ func TestQuery_Validation(t *testing.T) {
 
 	client, eng := setupQueryTestEnv(t, store)
 
-	mainBranch := namespace.BranchRef("", "main", "")
+	mainBranch := namespace.BranchRef("", "default", "main")
 	writeSegment(t, ctx, store, mainBranch, "seg-1", []*storagepb.DocumentMutation{
 		{
 			Branch: mainBranch,
@@ -196,7 +195,7 @@ func TestQuery_Validation(t *testing.T) {
 		{
 			name: "empty query vector",
 			req: &cloudyneighpb.QueryRequest{
-				Namespace: "main",
+				Namespace: "default",
 				Vector:    nil,
 				TopK:      10,
 			},
@@ -204,7 +203,7 @@ func TestQuery_Validation(t *testing.T) {
 		{
 			name: "top_k is zero",
 			req: &cloudyneighpb.QueryRequest{
-				Namespace: "main",
+				Namespace: "default",
 				Vector:    []float32{1.0, 2.0, 3.0},
 				TopK:      0,
 			},
@@ -212,7 +211,7 @@ func TestQuery_Validation(t *testing.T) {
 		{
 			name: "zero query vector",
 			req: &cloudyneighpb.QueryRequest{
-				Namespace: "main",
+				Namespace: "default",
 				Vector:    []float32{0.0, 0.0, 0.0},
 				TopK:      10,
 			},
@@ -220,7 +219,7 @@ func TestQuery_Validation(t *testing.T) {
 		{
 			name: "dimension mismatch from search",
 			req: &cloudyneighpb.QueryRequest{
-				Namespace: "main",
+				Namespace: "default",
 				Vector:    []float32{1.0, 2.0},
 				TopK:      10,
 			},
@@ -244,20 +243,17 @@ func TestQuery_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	log, err := logstream.New(store, "wal")
-	require.NoError(t, err)
-
-	ingester, err := ingest.NewIngester(store, log)
+	ingester, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	ingestSrv, err := grpcapi.NewIngestServer(ingester)
 	require.NoError(t, err)
 
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{})
+	flusher, err := ingest.NewFlusher(store, ingest.Config{})
 	require.NoError(t, err)
 
 	_, err = ingestSrv.Upsert(ctx, &cloudyneighpb.UpsertRequest{
-		Namespace: "main",
+		Namespace: "default",
 		Records: []*cloudyneighpb.Record{
 			{
 				Id: "doc-1",
@@ -299,7 +295,7 @@ func TestQuery_EndToEnd(t *testing.T) {
 	require.NoError(t, eng.SyncOnce(ctx))
 
 	resp, err := client.Query(ctx, &cloudyneighpb.QueryRequest{
-		Namespace: "main",
+		Namespace: "default",
 		Vector:    []float32{1.0, 0.0},
 		TopK:      2,
 	})
@@ -309,7 +305,7 @@ func TestQuery_EndToEnd(t *testing.T) {
 	require.Equal(t, "doc-2", resp.Hits[1].Record.Id)
 
 	resp, err = client.Query(ctx, &cloudyneighpb.QueryRequest{
-		Namespace: "main",
+		Namespace: "default",
 		Vector:    []float32{1.0, 0.0},
 		TopK:      10,
 		Filter: &cloudyneighpb.EqualityFilter{
@@ -322,7 +318,7 @@ func TestQuery_EndToEnd(t *testing.T) {
 	require.Equal(t, "doc-3", resp.Hits[0].Record.Id)
 
 	_, err = ingestSrv.Delete(ctx, &cloudyneighpb.DeleteRequest{
-		Namespace: "main",
+		Namespace: "default",
 		Ids:       []string{"doc-1"},
 	})
 	require.NoError(t, err)
@@ -334,7 +330,7 @@ func TestQuery_EndToEnd(t *testing.T) {
 	require.NoError(t, eng.SyncOnce(ctx))
 
 	resp, err = client.Query(ctx, &cloudyneighpb.QueryRequest{
-		Namespace: "main",
+		Namespace: "default",
 		Vector:    []float32{1.0, 0.0},
 		TopK:      2,
 	})
@@ -375,7 +371,7 @@ func TestQuery_ConcurrentSyncAndQuery(t *testing.T) {
 					return
 				default:
 					resp, err := client.Query(ctx, &cloudyneighpb.QueryRequest{
-						Namespace: "main",
+						Namespace: "default",
 						Vector:    []float32{1.0, 0.0},
 						TopK:      5,
 					})
@@ -402,7 +398,7 @@ func TestQuery_ConcurrentSyncAndQuery(t *testing.T) {
 		payload, err := proto.Marshal(rec)
 		require.NoError(t, err)
 
-		mainBranch := namespace.BranchRef("", "main", "")
+		mainBranch := namespace.BranchRef("", "default", "main")
 		mut := &storagepb.DocumentMutation{
 			Branch:  mainBranch,
 			DocId:   rec.Id,
@@ -425,7 +421,7 @@ func TestQuery_ConcurrentSyncAndQuery(t *testing.T) {
 	require.NoError(t, eng.SyncOnce(ctx))
 
 	resp, err := client.Query(ctx, &cloudyneighpb.QueryRequest{
-		Namespace: "main",
+		Namespace: "default",
 		Vector:    []float32{1.0, 0.0},
 		TopK:      100,
 	})
