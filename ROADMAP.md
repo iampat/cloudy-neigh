@@ -228,8 +228,9 @@ Provide Git-like dataset branching and point-in-time snapshot isolation.
 Scale dataset size and query throughput across multiple compute nodes.
 
 - **Namespace sharding**: Fixed and dynamic shard partitioning for high-volume namespaces.
+- **Multi-tenant log stream routing (Done)**: Route log streams under tenant prefixes without root fallbacks. [#144]
 - **Cross-tenant isolation**: Enforce strict tenant isolation across ingestion routing, query execution, local caches, and storage keys.
-- **Tenant control-plane API**: Expose administrative RPCs to create, list, and delete tenants and namespaces in root `tenants.json`.
+- **Tenant control-plane API**: Expose administrative RPCs to create, list, and delete tenants and namespaces in root `tenants.json`. [#144]
 - **Distributed query coordinator**: Scatter-gather execution across shards with merged ranking.
 - **Consistent routing**: Topology-aware request routing and shard mapping.
 - **Online resharding**: Rebalance and split shards with zero read downtime.

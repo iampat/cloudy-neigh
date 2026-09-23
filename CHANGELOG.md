@@ -2,6 +2,7 @@
 
 ### Added
 
+- Multi-tenant log stream routing and root `tenants.json` catalog management. [#144]
 - `manifest`: lightweight branch manifest storage with generation-matched CAS updates. [#142]
 - `namespace`: branch catalog tracking in `branches.json` with CAS updates. [#142]
 - `grpcapi.IngestService.Fork`: RPC to fork a branch within a namespace with WAL sequencing. [#138]
@@ -55,6 +56,9 @@
 
 ### Changed
 
+- Inlined table mutations directly on `Table` and added nil guard to `Table.Clone`. [#147]
+- Simplified `BranchLifecycleEvent.Type` enum and removed unused fields from `SegmentRef`. [#146]
+- `ingest`: routed log streams under tenant prefixes and removed root catalog fallbacks. [#144]
 - Replaced `kvfs` package with `manifest` package for branch manifest reads and CAS writes. [#142]
 - Flattened segment storage under `<tenant>/ns/<namespace>/segments/` without branch subdirectories. [#142]
 - Unified storage layout and key paths under explicit tenant and namespace prefixes. [#142]
@@ -73,6 +77,8 @@
 
 ### Removed
 
+- `query.Table.Builder`: deleted redundant forwarding builder wrapper and constructors. [#147]
+- `storage.proto`: deleted unused `BlockEntry` and `SegmentFooter` schemas and fields. [#146]
 - `kvfs`: deleted key-value filesystem package in favor of `manifest` package. [#142]
 - `query`: deleted `getOrCreateBranch` and `branchState` wrappers. [#142]
 - `ingest.BatchIngester`: removed server-side batch buffering, actor goroutine, and timer loops. [#140]
