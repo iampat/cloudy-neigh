@@ -50,7 +50,6 @@ func appendDoc(t *testing.T, ctx context.Context, log *logstream.Log, branch, do
 func waitForManifest(t *testing.T, ctx context.Context, store objectstore.Store, branch string, cond func(*storagepb.BranchManifest) bool) *storagepb.BranchManifest {
 	t.Helper()
 	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
 	timeout := time.After(5 * time.Second)
 
 	for {

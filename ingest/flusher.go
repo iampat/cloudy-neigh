@@ -21,15 +21,17 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const defaultPollInterval = 100 * time.Millisecond
+
 type Config struct {
 	PollInterval time.Duration
 }
 
 type Flusher struct {
-	store objectstore.Store
-	cfg   Config
+	mu sync.Mutex
 
-	mu       sync.Mutex
+	store    objectstore.Store
+	cfg      Config
 	flushers map[string]*streamFlusher
 	cancels  map[string]context.CancelFunc
 }
@@ -39,7 +41,7 @@ func NewFlusher(store objectstore.Store, cfg Config) (*Flusher, error) {
 		return nil, errors.New("ingest: nil store")
 	}
 	if cfg.PollInterval <= 0 {
-		cfg.PollInterval = 100 * time.Millisecond
+		cfg.PollInterval = defaultPollInterval
 	}
 
 	return &Flusher{
@@ -69,7 +71,6 @@ func (f *Flusher) Run(ctx context.Context) error {
 	}
 
 	ticker := time.NewTicker(f.cfg.PollInterval)
-	defer ticker.Stop()
 
 	for {
 		select {
@@ -111,15 +112,6 @@ func (f *Flusher) discoverStreams(ctx context.Context) ([]streamTarget, error) {
 			targets = append(targets, target)
 		}
 	}
-
-	defaultScope := namespace.Scope{
-		Tenant:    namespace.DefaultTenant,
-		Namespace: namespace.DefaultNamespace,
-	}
-	add(streamTarget{
-		scope:     defaultScope,
-		walPrefix: defaultScope.WALPrefix(),
-	})
 
 	startAfter := ""
 	for {

@@ -590,7 +590,6 @@ func flushBranch(t *testing.T, ctx context.Context, store objectstore.Store, bra
 	}()
 
 	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
 	timeout := time.After(5 * time.Second)
 
 	for {
