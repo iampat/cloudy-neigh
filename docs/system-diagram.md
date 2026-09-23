@@ -37,8 +37,8 @@ and branch manifests to object storage.
    ┌─────────────────────────────────────────────────────────────┐
    │                    Cloud Object Storage                     │
    │                                                             │
-   │  wal/                     segments/          refs/heads/    │
-   │  <020d_seq>.recordio      <id>.seg           <ns>_<branch>  │
+   │  wal/                   segments/        <ns>/refs/head/    │
+   │  <020d_seq>.recordio    <branch>/<id>    <branch>           │
    └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -81,8 +81,8 @@ object storage.
 │     ingest.Flusher      │ Routes mutations into in-memory memtables
 └──────┬──────────────────┘
        │ Flush on sequence commit or shutdown
-       ├──▶ Writes segments/<id>.seg via segment.Writer
-       └──▶ Updates refs/heads/<ns>_<branch> via CAS (Absent: true or GenMatch)
+       ├──▶ Writes segments/<branch>/<020d_seq>.recordio via segment.Writer
+       └──▶ Updates <ns>/refs/head/<branch> via CAS (Absent: true or GenMatch)
 ```
 
 ### Ingestion Execution Flow
@@ -96,10 +96,10 @@ grpcapi.IngestServer.Upsert
       objectstore.Store.Put (wal/<020d_seq>.recordio)
 ingest.Flusher.Run (Background goroutine)
   logstream.Log.ReadSeq
-  ingest.Flusher.applyMutation (in-memory branch memtable)
+  ingest.Flusher.processRecords
   ingest.Flusher.flushBranch
-    segment.Writer.Write (segments/<id>.seg)
-    objectstore.Store.Put (refs/heads/<ns>_<branch>, if-generation-match)
+    segment.Writer.Write (segments/<branch>/<020d_seq>.recordio)
+    objectstore.Store.Put (<ns>/refs/head/<branch>, if-generation-match)
 ```
 
 ---
@@ -127,7 +127,7 @@ distances and scalar attribute filters.
        │ Sync / Load manifests
        ▼
 ┌─────────────────────────┐
-│      query.Loader       │ Reads refs/heads/<ns>_<branch> and segments
+│      query.Loader       │ Reads <ns>/refs/head/<branch> and segments
 └──────┬──────────────────┘
        │ Stream segment records into table
        ▼
@@ -147,8 +147,8 @@ distances and scalar attribute filters.
 grpcapi.QueryServer.Query
   query.Engine.Query
     query.Loader.SyncBranch
-      objectstore.Store.Get (refs/heads/<ns>_<branch>)
-      segment.Reader.Open (segments/<id>.seg)
+      objectstore.Store.Get (<ns>/refs/head/<branch>)
+      segment.Reader.Open (segments/<branch>/<id>.recordio)
       query.Table.Add (appends vectors into flat []float32)
     query.Table.Search
       query/distance.DotProduct / Cosine / L2Squared
@@ -171,14 +171,17 @@ segments.
 │   ├── 00000000000000000002.recordio
 │   └── 00000000000000000003.recordio
 ├── segments/
-│   ├── 01J8ABCDEF0123456789.seg
-│   ├── 01J8ABCDEF0123456790.seg
-│   └── 01J8ABCDEF0123456791.seg
-└── refs/
-    └── heads/
-        ├── main
-        ├── dev
-        └── <namespace>_<branch>
+│   └── <namespace>/
+│       └── refs/
+│           └── head/
+│               └── <branch>/
+│                   ├── 00000000000000000001.recordio
+│                   └── 00000000000000000002.recordio
+└── <namespace>/
+    └── refs/
+        └── head/
+            ├── main
+            └── <branch>
 ```
 
 ### Storage Invariants
@@ -189,7 +192,7 @@ segments.
    vector and document data. Segments are shared across forked branches
    without data duplication.
 3. **Branch heads advance monotonically**: Manifest commits update
-   `refs/heads/<branch>` using conditional creates (`Absent: true`) or
+   `<namespace>/refs/head/<branch>` using conditional creates (`Absent: true`) or
    generation-matched updates (`if-generation-match`).
 
 ---
