@@ -78,7 +78,7 @@ object storage.
        ▲
        │ Tail WAL (seq >= checkpoint_seq + 1)
 ┌──────┴──────────────────┐
-│     ingest.Flusher      │ Routes mutations into in-memory memtables
+│     ingest.Flusher      │ Buffers mutations per sequence in memory
 └──────┬──────────────────┘
        │ Flush on sequence commit or shutdown
        ├──▶ Writes segments/<seg_id>.recordio via segment.Writer
@@ -90,12 +90,12 @@ object storage.
 ```text
 grpcapi.IngestServer.Upsert
   namespace.Scope
-  ingest.Ingester.Append
+  ingest.Ingester.Upsert
     logstream.Log.Append
       recordio.Writer.WriteRecord
       objectstore.Store.Put (wal/<020d_seq>.recordio)
 ingest.Flusher.Run (Background goroutine)
-  logstream.Log.ReadSeq
+  logstream.Log.Read
   ingest.Flusher.processRecords
   ingest.Flusher.flushBranch
     segment.Writer.Write (segments/<seg_id>.recordio)
@@ -146,10 +146,10 @@ distances and scalar attribute filters.
 ```text
 grpcapi.QueryServer.Query
   query.Engine.Query
-    query.Loader.SyncBranch
+    query.Loader.Sync
       manifest.Read (refs/head/<branch>)
-      segment.Reader.Open (segments/<id>.recordio)
-      query.Table.Add (appends vectors into flat []float32)
+      segment.NewReader (segments/<id>.recordio)
+      query.Table.Upsert (appends vectors into flat []float32)
     query.Table.Search
       query/distance.DotProduct / Cosine / L2Squared
       evaluate attribute equality predicates
@@ -193,6 +193,9 @@ Each namespace contains:
 - `branches.json`: catalog of active branches in the namespace.
 - `refs/head/`: protobuf manifest files tracking checkpoint sequence and segment
   IDs per branch.
+
+The dev server CLI (`cmd/cloudy`) currently uses a single root `wal/` prefix
+pending per-tenant log stream routing.
 
 ### Storage Invariants
 
