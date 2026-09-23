@@ -19,3 +19,6 @@ allowed-tools: Bash
   transcripts before opening or updating a PR.
 - Never include a "Generated with Claude Code" footer or a Claude session
   link in a PR description.
+- Keep `ROADMAP.md`, `TODO.md`, and `CHANGELOG.md` updated when creating or
+  updating a pull request. Mark completed items with `[X]` and append PR
+  numbers formatted as `[#1234]`.

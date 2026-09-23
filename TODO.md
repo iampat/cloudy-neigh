@@ -9,7 +9,7 @@
 - [X] Add Fork RPC to IngestService with namespace scoping and WAL event sequencing. [#138]
 - [ ] Support capturing unflushed parent mutations before Fork manifest creation. Sequence the fork event in the flusher, flush active parent mutations to a segment, and create the child manifest at that exact sequence boundary.
 - [ ] Background compaction worker to merge flat immutable segments across branches and purge tombstoned rows.
-- [X] Move multi-tenant log stream routing into the `ingest` library. `cmd/cloudy` acts strictly as an assembly root using dependency injection, without hardcoded stream names or paths.
+- [X] Move multi-tenant log stream routing into the `ingest` library. `cmd/cloudy` acts strictly as an assembly root using dependency injection, without hardcoded stream names or paths. [#144]
 - [ ] Implement tenant management mechanism and control-plane API to register, list, and delete tenants in root tenants.json with CAS updates.
 - [ ] Implement cross-tenant isolation across ingestion, query execution, local cache tiers, and storage keys.
 - [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
@@ -45,7 +45,7 @@
   - [ ] Propagate `os.Hostname()` errors in `walbench` instead of dropping them (`cmd/walbench/main.go:130-132`).
   - [ ] Fix demoload script exceeding `max_docs` configuration.
 - [ ] Remove forwarding wrappers, redundant types, and single-caller helpers.
-  - [ ] Delete `Table.Builder` forwarding wrapper and constructors (`query/table.go:397-426`). Mutate cloned `Table` directly.
+  - [X] Delete `Table.Builder` forwarding wrapper and constructors (`query/table.go:397-426`). Mutate cloned `Table` directly. [#147]
   - [ ] Clean up distance kernel forwarders (`query/distance/distance_fallback.go:9-39`, `distance_simd.go:20-34`, `distance.go:42-44`). Delete `*Portable` forwarders and `NormalizeInPlace` wrapper.
   - [ ] Delete `segment.Writer` lifecycle wrappers (`segment/writer.go:45-51`). Call `recordio.Writer` directly.
   - [ ] Unify redundant name validators (`namespace/namespace.go:43-53`). Export single `ValidateName`.
@@ -73,12 +73,11 @@
   - [ ] Remove unreachable Euclidean and Dot Product branches in `query/table.go:273-290` until exposed by Query API.
   - [ ] Fix test goroutines calling `t.Errorf` directly. Propagate test failures to main test goroutines safely.
 - [ ] Prune unused protobuf schemas, fields, and speculative metadata.
-  - [ ] Delete unused messages `BlockEntry` and `SegmentFooter` from `proto/storage/v1/storage.proto:56-68`.
-  - [ ] Prune unused and write-only fields from `SegmentRef` in `proto/storage/v1/storage.proto:40-46` (`min_doc_id`, `max_doc_id`, `doc_count`, `level`, `vectors_size`, `postings_size`, `docs_size`). Reserve tags 2 to 8.
+  - [X] Delete unused messages `BlockEntry` and `SegmentFooter` from `proto/storage/v1/storage.proto`. [#146]
+  - [X] Prune unused fields from `SegmentRef` in `proto/storage/v1/storage.proto` (`min_doc_id`, `max_doc_id`, `level`, `vectors_size`, `postings_size`). [#146]
   - [ ] Delete write-only `schema_version` from `BranchManifest` in `proto/storage/v1/storage.proto:52` and reserve tag 2.
-  - [ ] Comment out unused `BranchLifecycleEvent.DELETE` enum value in `proto/storage/v1/storage.proto:24`.
+  - [X] Comment out unused `BranchLifecycleEvent.DELETE` enum value in `proto/storage/v1/storage.proto`. [#146]
   - [ ] Delete unreferenced schema file `proto/namespace/v1/catalog.proto` alongside `namespace/catalog.go`.
-  - [ ] Delete dead commented fields (`int_value`, `float_value`, `bool_value`, `bytes_value`) from `AttributeValue` in `proto/cloudyneigh/v1/index.proto:14-17`.
   - [ ] Delete unused `DistanceMetric` enum from `proto/cloudyneigh/v1/index.proto:52-57` or wire it into `QueryRequest`.
   - [ ] Remove redundant echo fields `upserted_count` and `deleted_count` from `UpsertResponse` and `DeleteResponse` in `proto/cloudyneigh/v1/index.proto:34, 44`.
 - [ ] Refactor the storage layer. [#47]
