@@ -25,13 +25,6 @@ type Config struct {
 	PollInterval time.Duration
 }
 
-func withDefaults(c Config) Config {
-	if c.PollInterval <= 0 {
-		c.PollInterval = 100 * time.Millisecond
-	}
-	return c
-}
-
 type Flusher struct {
 	store objectstore.Store
 	cfg   Config
@@ -45,12 +38,13 @@ func NewFlusher(store objectstore.Store, cfg Config) (*Flusher, error) {
 	if store == nil {
 		return nil, errors.New("ingest: nil store")
 	}
+	if cfg.PollInterval <= 0 {
+		cfg.PollInterval = 100 * time.Millisecond
+	}
 
 	return &Flusher{
-		store:    store,
-		cfg:      withDefaults(cfg),
-		flushers: make(map[string]*streamFlusher),
-		cancels:  make(map[string]context.CancelFunc),
+		store: store,
+		cfg:   cfg,
 	}, nil
 }
 
