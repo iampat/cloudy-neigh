@@ -171,13 +171,13 @@ func parseStreamTarget(key string) (streamTarget, string, bool) {
 
 func (f *Flusher) startStream(ctx context.Context, g *errgroup.Group, target streamTarget) error {
 	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if _, exists := f.flushers[target.walPrefix]; exists {
-		f.mu.Unlock()
 		return nil
 	}
 	log, err := logstream.New(f.store, target.walPrefix)
 	if err != nil {
-		f.mu.Unlock()
 		return err
 	}
 	sf := &streamFlusher{
@@ -191,7 +191,6 @@ func (f *Flusher) startStream(ctx context.Context, g *errgroup.Group, target str
 	streamCtx, cancel := context.WithCancel(ctx)
 	f.flushers[target.walPrefix] = sf
 	f.cancels[target.walPrefix] = cancel
-	f.mu.Unlock()
 
 	g.Go(func() error {
 		return sf.Run(streamCtx)
