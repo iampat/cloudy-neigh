@@ -21,6 +21,11 @@ guideline file.
 Skip what the toolchain already enforces. The Tooling section of
 `docs/guidelines/go.md` names the tools.
 
+Flag redundant abstractions as high-severity findings:
+- Simple wrapper functions that only forward to another package. Ask to inline the call.
+- Single-caller helper functions. Ask to inline them at the call site.
+- Redundant error aliases and wrapper types that add no logic.
+
 Generated code is out of scope. Protoc output lives in `bazel-bin` and never
 reaches the repository. Do not review it, do not lint it, and do not apply the
 comment rules to it. A source-level tool that cannot load a generated package
