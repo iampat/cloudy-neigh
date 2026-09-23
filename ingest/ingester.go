@@ -38,32 +38,36 @@ func NewIngester(store objectstore.Store) (*Ingester, error) {
 	}, nil
 }
 
-func (in *Ingester) getOrCreateLog(walPrefix string) (*logstream.Log, error) {
-	in.mu.Lock()
-	defer in.mu.Unlock()
+func (ing *Ingester) Store() objectstore.Store {
+	return ing.store
+}
 
-	if l, ok := in.logs[walPrefix]; ok {
+func (ing *Ingester) getOrCreateLog(walPrefix string) (*logstream.Log, error) {
+	ing.mu.Lock()
+	defer ing.mu.Unlock()
+
+	if l, ok := ing.logs[walPrefix]; ok {
 		return l, nil
 	}
-	l, err := logstream.New(in.store, walPrefix)
+	l, err := logstream.New(ing.store, walPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("create logstream %s: %w", walPrefix, err)
 	}
-	in.logs[walPrefix] = l
+	ing.logs[walPrefix] = l
 	return l, nil
 }
 
-func (in *Ingester) Log(branchRef string) (*logstream.Log, error) {
+func (ing *Ingester) Log(branchRef string) (*logstream.Log, error) {
 	scope, _ := namespace.ScopeFromRef(branchRef)
-	return in.getOrCreateLog(scope.WALPrefix())
+	return ing.getOrCreateLog(scope.WALPrefix())
 }
 
-func (in *Ingester) Upsert(ctx context.Context, branch string, records []*cloudyneighpb.Record) error {
+func (ing *Ingester) Upsert(ctx context.Context, branch string, records []*cloudyneighpb.Record) error {
 	if len(records) == 0 {
 		return nil
 	}
 	scope, _ := namespace.ScopeFromRef(branch)
-	log, err := in.getOrCreateLog(scope.WALPrefix())
+	log, err := ing.getOrCreateLog(scope.WALPrefix())
 	if err != nil {
 		return err
 	}
@@ -94,12 +98,12 @@ func (in *Ingester) Upsert(ctx context.Context, branch string, records []*cloudy
 	return err
 }
 
-func (in *Ingester) Delete(ctx context.Context, branch string, ids []string) error {
+func (ing *Ingester) Delete(ctx context.Context, branch string, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
 	scope, _ := namespace.ScopeFromRef(branch)
-	log, err := in.getOrCreateLog(scope.WALPrefix())
+	log, err := ing.getOrCreateLog(scope.WALPrefix())
 	if err != nil {
 		return err
 	}
@@ -125,27 +129,27 @@ func (in *Ingester) Delete(ctx context.Context, branch string, ids []string) err
 	return err
 }
 
-func (in *Ingester) Fork(ctx context.Context, source, target string) error {
+func (ing *Ingester) Fork(ctx context.Context, source, target string) error {
 	targetScope, _ := namespace.ScopeFromRef(target)
 
-	parentManifest, _, err := manifest.Read(ctx, in.store, source)
+	parentManifest, _, err := manifest.Read(ctx, ing.store, source)
 	if err != nil {
 		return err
 	}
-	if _, _, err := manifest.Read(ctx, in.store, target); err == nil {
+	if _, _, err := manifest.Read(ctx, ing.store, target); err == nil {
 		return manifest.ErrBranchAlreadyExists
 	} else if !errors.Is(err, objectstore.ErrNotFound) {
 		return err
 	}
-	if _, err := manifest.Write(ctx, in.store, target, parentManifest, ""); err != nil {
+	if _, err := manifest.Write(ctx, ing.store, target, parentManifest, ""); err != nil {
 		if errors.Is(err, objectstore.ErrPreconditionFailed) {
 			return manifest.ErrBranchAlreadyExists
 		}
 		return err
 	}
-	_ = targetScope.AddBranch(ctx, in.store, target)
+	_ = targetScope.AddBranch(ctx, ing.store, target)
 	if targetScope.BranchesPath() != namespace.BranchesFile {
-		_ = namespace.AddBranch(ctx, in.store, "", target)
+		_ = namespace.AddBranch(ctx, ing.store, "", target)
 	}
 
 	eventRec := &storagepb.WalRecord{
@@ -160,7 +164,7 @@ func (in *Ingester) Fork(ctx context.Context, source, target string) error {
 	recBytes, err := proto.Marshal(eventRec)
 	if err == nil {
 		var log *logstream.Log
-		log, err = in.getOrCreateLog(targetScope.WALPrefix())
+		log, err = ing.getOrCreateLog(targetScope.WALPrefix())
 		if err == nil {
 			_, err = log.Append(ctx, []logstream.Record{recBytes})
 		}
@@ -168,10 +172,10 @@ func (in *Ingester) Fork(ctx context.Context, source, target string) error {
 	if err != nil {
 		delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer delCancel()
-		_ = in.store.Delete(delCtx, target)
-		_ = targetScope.RemoveBranch(delCtx, in.store, target)
+		_ = ing.store.Delete(delCtx, target)
+		_ = targetScope.RemoveBranch(delCtx, ing.store, target)
 		if targetScope.BranchesPath() != namespace.BranchesFile {
-			_ = namespace.RemoveBranch(delCtx, in.store, "", target)
+			_ = namespace.RemoveBranch(delCtx, ing.store, "", target)
 		}
 		return err
 	}

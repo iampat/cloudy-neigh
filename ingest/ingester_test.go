@@ -30,7 +30,7 @@ func TestIngester_Upsert(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	in, err := ingest.NewIngester(store)
+	ing, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -40,9 +40,9 @@ func TestIngester_Upsert(t *testing.T) {
 		{Id: "doc-3"},
 	}
 
-	require.NoError(t, in.Upsert(ctx, "main", records))
+	require.NoError(t, ing.Upsert(ctx, "main", records))
 
-	log, err := in.Log("main")
+	log, err := ing.Log("main")
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -63,7 +63,7 @@ func TestIngester_Upsert(t *testing.T) {
 		assert.Equal(t, records[i].Id, mut.DocId)
 	}
 
-	require.NoError(t, in.Upsert(ctx, "main", nil))
+	require.NoError(t, ing.Upsert(ctx, "main", nil))
 }
 
 func TestIngester_Delete(t *testing.T) {
@@ -71,14 +71,14 @@ func TestIngester_Delete(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	in, err := ingest.NewIngester(store)
+	ing, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	ids := []string{"doc-1", "doc-2"}
-	require.NoError(t, in.Delete(ctx, "main", ids))
+	require.NoError(t, ing.Delete(ctx, "main", ids))
 
-	log, err := in.Log("main")
+	log, err := ing.Log("main")
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -99,7 +99,7 @@ func TestIngester_Delete(t *testing.T) {
 		assert.Equal(t, ids[i], mut.DocId)
 	}
 
-	require.NoError(t, in.Delete(ctx, "main", nil))
+	require.NoError(t, ing.Delete(ctx, "main", nil))
 }
 
 func TestIngester_Fork(t *testing.T) {
@@ -107,18 +107,18 @@ func TestIngester_Fork(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	in, err := ingest.NewIngester(store)
+	ing, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	assert.Error(t, in.Fork(ctx, "parent", "child"))
+	assert.Error(t, ing.Fork(ctx, "parent", "child"))
 
 	_, err = manifest.Write(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
-	require.NoError(t, in.Fork(ctx, "parent", "child"))
-	assert.Error(t, in.Fork(ctx, "parent", "child"))
+	require.NoError(t, ing.Fork(ctx, "parent", "child"))
+	assert.Error(t, ing.Fork(ctx, "parent", "child"))
 
-	log, err := in.Log("child")
+	log, err := ing.Log("child")
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -143,7 +143,7 @@ func TestIngester_MultiTenantRouting(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	in, err := ingest.NewIngester(store)
+	ing, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -153,14 +153,14 @@ func TestIngester_MultiTenantRouting(t *testing.T) {
 	scopeA, _ := namespace.ScopeFromRef(branchA)
 	scopeB, _ := namespace.ScopeFromRef(branchB)
 
-	require.NoError(t, in.Upsert(ctx, branchA, []*cloudyneighpb.Record{{Id: "a-1"}}))
-	require.NoError(t, in.Upsert(ctx, branchB, []*cloudyneighpb.Record{{Id: "b-1"}, {Id: "b-2"}}))
+	require.NoError(t, ing.Upsert(ctx, branchA, []*cloudyneighpb.Record{{Id: "a-1"}}))
+	require.NoError(t, ing.Upsert(ctx, branchB, []*cloudyneighpb.Record{{Id: "b-1"}, {Id: "b-2"}}))
 
-	logA, err := in.Log(branchA)
+	logA, err := ing.Log(branchA)
 	require.NoError(t, err)
 	assert.Equal(t, scopeA.WALPrefix(), "tenant-a/ns/ns-1/wal")
 
-	logB, err := in.Log(branchB)
+	logB, err := ing.Log(branchB)
 	require.NoError(t, err)
 	assert.Equal(t, scopeB.WALPrefix(), "tenant-b/ns/ns-2/wal")
 
@@ -178,7 +178,7 @@ func TestIngester_ConcurrentMultiTenant(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	in, err := ingest.NewIngester(store)
+	ing, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -193,7 +193,7 @@ func TestIngester_ConcurrentMultiTenant(t *testing.T) {
 		go func(br string) {
 			defer wg.Done()
 			for j := 0; j < writesPerTenant; j++ {
-				err := in.Upsert(ctx, br, []*cloudyneighpb.Record{
+				err := ing.Upsert(ctx, br, []*cloudyneighpb.Record{
 					{Id: fmt.Sprintf("doc-%d", j)},
 				})
 				if err != nil {
@@ -207,7 +207,7 @@ func TestIngester_ConcurrentMultiTenant(t *testing.T) {
 	for i := 0; i < numTenants; i++ {
 		tenantID := fmt.Sprintf("tenant-%d", i)
 		branch := namespace.BranchRef(tenantID, "default", "main")
-		log, err := in.Log(branch)
+		log, err := ing.Log(branch)
 		require.NoError(t, err)
 
 		tail, err := log.Tail(ctx)
@@ -239,13 +239,13 @@ func TestIngester_Fork_AppendFailureRollback(t *testing.T) {
 		failKey: "wal",
 	}
 
-	in, err := ingest.NewIngester(store)
+	ing, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	_, err = manifest.Write(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
-	err = in.Fork(ctx, "parent", "child")
+	err = ing.Fork(ctx, "parent", "child")
 	require.Error(t, err)
 
 	_, _, err = manifest.Read(ctx, store, "child")

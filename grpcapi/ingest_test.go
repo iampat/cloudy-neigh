@@ -25,7 +25,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *ingest.Ingester, objectstore.Store) {
+func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *ingest.Ingester) {
 	t.Helper()
 	store, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *ingest.Inge
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 
-	return cloudyneighpb.NewIngestServiceClient(conn), ingester, store
+	return cloudyneighpb.NewIngestServiceClient(conn), ingester
 }
 
 func TestNewIngestServer_NilIngester(t *testing.T) {
@@ -71,7 +71,7 @@ func stringAttr(s string) *cloudyneighpb.AttributeValue {
 }
 
 func TestUpsert_Success(t *testing.T) {
-	client, in, _ := setupTestEnv(t)
+	client, ing := setupTestEnv(t)
 	ctx := context.Background()
 
 	rec1 := &cloudyneighpb.Record{
@@ -102,7 +102,7 @@ func TestUpsert_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.UpsertedCount)
 
-	log, err := in.Log(namespace.BranchRef("", "main", ""))
+	log, err := ing.Log(namespace.BranchRef("", "main", ""))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -136,7 +136,7 @@ func TestUpsert_Success(t *testing.T) {
 }
 
 func TestUpsert_EmptyRecords(t *testing.T) {
-	client, in, _ := setupTestEnv(t)
+	client, ing := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
@@ -146,7 +146,7 @@ func TestUpsert_EmptyRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), resp.UpsertedCount)
 
-	log, err := in.Log(namespace.BranchRef("", "main", ""))
+	log, err := ing.Log(namespace.BranchRef("", "main", ""))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -155,7 +155,7 @@ func TestUpsert_EmptyRecords(t *testing.T) {
 }
 
 func TestUpsert_Validation(t *testing.T) {
-	client, _, _ := setupTestEnv(t)
+	client, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	validRec := &cloudyneighpb.Record{Id: "doc-1"}
@@ -206,7 +206,7 @@ func TestUpsert_Validation(t *testing.T) {
 }
 
 func TestUpsert_DefaultNamespace(t *testing.T) {
-	client, in, _ := setupTestEnv(t)
+	client, ing := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
@@ -216,7 +216,7 @@ func TestUpsert_DefaultNamespace(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), resp.UpsertedCount)
 
-	log, err := in.Log(namespace.BranchRef("", "", ""))
+	log, err := ing.Log(namespace.BranchRef("", "", ""))
 	require.NoError(t, err)
 
 	records, err := log.Read(ctx, 1)
@@ -230,7 +230,7 @@ func TestUpsert_DefaultNamespace(t *testing.T) {
 }
 
 func TestDelete_Success(t *testing.T) {
-	client, in, _ := setupTestEnv(t)
+	client, ing := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -240,7 +240,7 @@ func TestDelete_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.DeletedCount)
 
-	log, err := in.Log(namespace.BranchRef("", "main", ""))
+	log, err := ing.Log(namespace.BranchRef("", "main", ""))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -266,7 +266,7 @@ func TestDelete_Success(t *testing.T) {
 }
 
 func TestDelete_Empty(t *testing.T) {
-	client, in, _ := setupTestEnv(t)
+	client, ing := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -276,7 +276,7 @@ func TestDelete_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), resp.DeletedCount)
 
-	log, err := in.Log(namespace.BranchRef("", "main", ""))
+	log, err := ing.Log(namespace.BranchRef("", "main", ""))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -285,7 +285,7 @@ func TestDelete_Empty(t *testing.T) {
 }
 
 func TestDelete_Validation(t *testing.T) {
-	client, _, _ := setupTestEnv(t)
+	client, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -320,7 +320,7 @@ func TestDelete_Validation(t *testing.T) {
 }
 
 func TestDelete_DefaultNamespace(t *testing.T) {
-	client, in, _ := setupTestEnv(t)
+	client, ing := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -330,7 +330,7 @@ func TestDelete_DefaultNamespace(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), resp.DeletedCount)
 
-	log, err := in.Log(namespace.BranchRef("", "", ""))
+	log, err := ing.Log(namespace.BranchRef("", "", ""))
 	require.NoError(t, err)
 
 	records, err := log.Read(ctx, 1)
@@ -345,7 +345,7 @@ func TestDelete_DefaultNamespace(t *testing.T) {
 }
 
 func TestFork(t *testing.T) {
-	client, in, store := setupTestEnv(t)
+	client, ing := setupTestEnv(t)
 	ctx := context.Background()
 
 	_, err := client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -358,7 +358,7 @@ func TestFork(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.NotFound, st.Code())
 
-	_, err = manifest.Write(ctx, store, namespace.BranchRef("", "wiki", "parent"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, ing.Store(), namespace.BranchRef("", "wiki", "parent"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -398,7 +398,7 @@ func TestFork(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.AlreadyExists, st.Code())
 
-	log, err := in.Log(namespace.BranchRef("", "wiki", "child"))
+	log, err := ing.Log(namespace.BranchRef("", "wiki", "child"))
 	require.NoError(t, err)
 
 	records, err := log.Read(ctx, 1)
@@ -413,7 +413,7 @@ func TestFork(t *testing.T) {
 	assert.Equal(t, namespace.BranchRef("", "wiki", "child"), evt.Branch)
 	assert.Equal(t, namespace.BranchRef("", "wiki", "parent"), evt.ParentBranch)
 
-	_, err = manifest.Write(ctx, store, namespace.BranchRef("", "", "main"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, ing.Store(), namespace.BranchRef("", "", "main"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -425,7 +425,7 @@ func TestFork(t *testing.T) {
 }
 
 func TestUpsert_CanceledContext(t *testing.T) {
-	client, _, _ := setupTestEnv(t)
+	client, _ := setupTestEnv(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
