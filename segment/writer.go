@@ -5,27 +5,15 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/iampat/cloudy-neigh/namespace"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"github.com/iampat/cloudy-neigh/recordio"
 	"google.golang.org/protobuf/proto"
 )
 
-const KeyPattern = "segments/%s/%s.recordio"
+const KeyPattern = "segments/%s.recordio"
 
-func Key(branch, segID string) string {
-	return fmt.Sprintf(KeyPattern, branch, segID)
-}
-
-func RefKey(branch string, ref *storagepb.SegmentRef) string {
-	switch {
-	case ref.GetKey() != "":
-		return ref.GetKey()
-	case ref.GetSegmentId() != "":
-		return Key(branch, ref.GetSegmentId())
-	default:
-		return ""
-	}
+func Key(segID string) string {
+	return fmt.Sprintf(KeyPattern, segID)
 }
 
 var ErrNilMutation = errors.New("segment: nil mutation")
@@ -42,9 +30,6 @@ func NewWriter(w io.Writer) *Writer {
 func (w *Writer) Write(m *storagepb.DocumentMutation) error {
 	if m == nil {
 		return ErrNilMutation
-	}
-	if err := namespace.ValidateBranch(m.Branch); err != nil {
-		return err
 	}
 	var err error
 	w.buf, err = proto.MarshalOptions{}.MarshalAppend(w.buf[:0], m)

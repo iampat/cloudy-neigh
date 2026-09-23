@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -123,7 +123,7 @@ func TestIngester_Fork(t *testing.T) {
 	ctx := context.Background()
 	assert.Error(t, in.Fork(ctx, "nonexistent", "child"))
 
-	_, err = kvfs.UpdateBranch(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 	require.NoError(t, in.Fork(ctx, "parent", "child"))
 	assert.Error(t, in.Fork(ctx, "parent", "child"))
@@ -174,12 +174,12 @@ func TestIngester_Fork_AppendFailureRollback(t *testing.T) {
 	in, err := ingest.NewIngester(store, log)
 	require.NoError(t, err)
 
-	_, err = kvfs.UpdateBranch(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	err = in.Fork(ctx, "parent", "child")
 	require.Error(t, err)
 
-	_, _, err = kvfs.ResolveBranch(ctx, store, "child")
+	_, _, err = manifest.Read(ctx, store, "child")
 	require.ErrorIs(t, err, objectstore.ErrNotFound)
 }

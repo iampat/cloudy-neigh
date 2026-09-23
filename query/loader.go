@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/iampat/cloudy-neigh/kvfs"
+	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -40,9 +40,13 @@ func NewLoader(store objectstore.Store, table *atomic.Pointer[Table]) (*Loader, 
 	}, nil
 }
 
+func (l *Loader) Table() *Table {
+	return l.table.Load()
+}
+
 func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 	syncStart := time.Now()
-	manifest, gen, err := kvfs.ResolveBranch(ctx, l.store, branch)
+	manifest, gen, err := manifest.Read(ctx, l.store, branch)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
 			return 0, nil
@@ -92,7 +96,10 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 }
 
 func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.SegmentRef, b *Builder) error {
-	segKey := segment.RefKey(branch, seg)
+	segKey := seg.GetKey()
+	if segKey == "" {
+		return fmt.Errorf("query: segment ref missing key: %s", seg.GetSegmentId())
+	}
 
 	loadStart := time.Now()
 	rc, _, err := l.store.Get(ctx, segKey)

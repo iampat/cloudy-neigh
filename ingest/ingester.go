@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/manifest"
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -93,17 +94,22 @@ func (in *Ingester) Delete(ctx context.Context, namespace string, ids []string) 
 }
 
 func (in *Ingester) Fork(ctx context.Context, source, target string) error {
-	if _, _, err := kvfs.ResolveBranch(ctx, in.store, source); err != nil {
+	parentManifest, _, err := manifest.Read(ctx, in.store, source)
+	if err != nil {
 		return err
 	}
-	if _, _, err := kvfs.ResolveBranch(ctx, in.store, target); err == nil {
-		return kvfs.ErrBranchAlreadyExists
+	if _, _, err := manifest.Read(ctx, in.store, target); err == nil {
+		return manifest.ErrBranchAlreadyExists
 	} else if !errors.Is(err, objectstore.ErrNotFound) {
 		return err
 	}
-	if _, _, err := kvfs.CreateBranch(ctx, in.store, target, source); err != nil {
+	if _, err := manifest.Write(ctx, in.store, target, parentManifest, ""); err != nil {
+		if errors.Is(err, objectstore.ErrPreconditionFailed) {
+			return manifest.ErrBranchAlreadyExists
+		}
 		return err
 	}
+	_ = namespace.AddBranch(ctx, in.store, "", target)
 
 	eventRec := &storagepb.WalRecord{
 		Record: &storagepb.WalRecord_BranchEvent{
@@ -121,7 +127,8 @@ func (in *Ingester) Fork(ctx context.Context, source, target string) error {
 	if err != nil {
 		delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer delCancel()
-		_ = kvfs.DeleteBranch(delCtx, in.store, target)
+		_ = in.store.Delete(delCtx, target)
+		_ = namespace.RemoveBranch(delCtx, in.store, "", target)
 		return err
 	}
 	return nil

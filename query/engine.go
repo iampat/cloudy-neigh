@@ -9,12 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/iampat/cloudy-neigh/kvfs"
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 )
-
-const listLimit = 1000
 
 type Request struct {
 	Namespace    string
@@ -24,16 +22,11 @@ type Request struct {
 	Filter       *cloudyneighpb.EqualityFilter
 }
 
-type branchState struct {
-	table  atomic.Pointer[Table]
-	loader *Loader
-}
-
 type Engine struct {
 	store        objectstore.Store
 	syncInterval time.Duration
 	mu           sync.Mutex
-	branches     map[string]*branchState
+	loaders      map[string]*Loader
 }
 
 func NewEngine(store objectstore.Store, syncInterval time.Duration) (*Engine, error) {
@@ -46,60 +39,41 @@ func NewEngine(store objectstore.Store, syncInterval time.Duration) (*Engine, er
 	return &Engine{
 		store:        store,
 		syncInterval: syncInterval,
-		branches:     make(map[string]*branchState),
+		loaders:      make(map[string]*Loader),
 	}, nil
 }
 
-func (e *Engine) getOrCreateBranch(branch string) (*branchState, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if b, ok := e.branches[branch]; ok {
-		return b, nil
-	}
-
-	b := &branchState{}
-	b.table.Store(NewTable())
-	loader, err := NewLoader(e.store, &b.table)
-	if err != nil {
-		return nil, fmt.Errorf("create loader: %w", err)
-	}
-	b.loader = loader
-	e.branches[branch] = b
-	return b, nil
-}
-
 func (e *Engine) SyncOnce(ctx context.Context) error {
-	var startAfter string
-	for {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	branches, err := namespace.ListBranches(ctx, e.store, "")
+	if err != nil {
+		return fmt.Errorf("list branches: %w", err)
+	}
+
+	for _, branch := range branches {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		branches, err := kvfs.ListBranches(ctx, e.store, startAfter, listLimit)
-		if err != nil {
-			return fmt.Errorf("list branches: %w", err)
-		}
-		if len(branches) == 0 {
-			break
-		}
-
-		for _, branch := range branches {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			b, err := e.getOrCreateBranch(branch)
-			if err != nil {
-				slog.Error("create loader failed", "branch", branch, "err", err)
-				continue
-			}
-			if _, err := b.loader.Sync(ctx, branch); err != nil {
-				slog.Error("sync branch failed", "branch", branch, "err", err)
+		e.mu.Lock()
+		loader, ok := e.loaders[branch]
+		if !ok {
+			var table atomic.Pointer[Table]
+			table.Store(NewTable())
+			var err error
+			loader, err = NewLoader(e.store, &table)
+			if err == nil {
+				e.loaders[branch] = loader
 			}
 		}
-
-		if len(branches) < listLimit {
-			break
+		e.mu.Unlock()
+		if loader == nil {
+			continue
 		}
-		startAfter = branches[len(branches)-1]
+		if _, err := loader.Sync(ctx, branch); err != nil {
+			slog.Error("sync branch failed", "branch", branch, "err", err)
+		}
 	}
 	return nil
 }
@@ -140,12 +114,12 @@ func (e *Engine) Query(ctx context.Context, req Request) ([]*cloudyneighpb.Score
 	}
 
 	e.mu.Lock()
-	b, ok := e.branches[req.Namespace]
+	loader, ok := e.loaders[req.Namespace]
 	e.mu.Unlock()
 	if !ok {
 		return nil, SearchStats{}, nil
 	}
 
-	table := b.table.Load()
+	table := loader.Table()
 	return table.Search(col, req.Vector, req.TopK, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, req.Filter)
 }

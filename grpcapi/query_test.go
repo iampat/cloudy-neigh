@@ -11,8 +11,9 @@ import (
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/manifest"
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -36,25 +37,29 @@ func writeSegment(t *testing.T, ctx context.Context, store objectstore.Store, br
 		require.NoError(t, w.Write(m))
 	}
 	require.NoError(t, w.Close())
-	segKey := segment.Key(branch, segID)
+	scope, _ := namespace.ScopeFromRef(branch)
+	segKey := scope.SegmentKey(segID)
 	_, err := store.Put(ctx, segKey, bytes.NewReader(buf.Bytes()), objectstore.Condition{Absent: true})
 	require.NoError(t, err)
 }
 
 func updateManifest(t *testing.T, ctx context.Context, store objectstore.Store, branch string, segIDs []string, expectedGen string) string {
 	t.Helper()
+	scope, _ := namespace.ScopeFromRef(branch)
 	var segs []*storagepb.SegmentRef
 	for _, id := range segIDs {
 		segs = append(segs, &storagepb.SegmentRef{
 			SegmentId: id,
+			Key:       scope.SegmentKey(id),
 		})
 	}
 	m := &storagepb.BranchManifest{
 		SchemaVersion: 1,
 		Segments:      segs,
 	}
-	gen, err := kvfs.UpdateBranch(ctx, store, branch, m, expectedGen)
+	gen, err := manifest.Write(ctx, store, branch, m, expectedGen)
 	require.NoError(t, err)
+	_ = namespace.AddBranch(ctx, store, "", branch)
 	return gen
 }
 
@@ -140,9 +145,10 @@ func TestQuery_Validation(t *testing.T) {
 
 	client, eng := setupQueryTestEnv(t, store)
 
-	writeSegment(t, ctx, store, "main", "seg-1", []*storagepb.DocumentMutation{
+	mainBranch := namespace.BranchRef("", "main", "")
+	writeSegment(t, ctx, store, mainBranch, "seg-1", []*storagepb.DocumentMutation{
 		{
-			Branch: "main",
+			Branch: mainBranch,
 			DocId:  "doc-1",
 			Op:     storagepb.MutationOp_PUT,
 			Payload: func() []byte {
@@ -156,7 +162,7 @@ func TestQuery_Validation(t *testing.T) {
 			}(),
 		},
 	})
-	updateManifest(t, ctx, store, "main", []string{"seg-1"}, "")
+	updateManifest(t, ctx, store, mainBranch, []string{"seg-1"}, "")
 	require.NoError(t, eng.SyncOnce(ctx))
 
 	tests := []struct {
@@ -396,15 +402,16 @@ func TestQuery_ConcurrentSyncAndQuery(t *testing.T) {
 		payload, err := proto.Marshal(rec)
 		require.NoError(t, err)
 
+		mainBranch := namespace.BranchRef("", "main", "")
 		mut := &storagepb.DocumentMutation{
-			Branch:  "main",
+			Branch:  mainBranch,
 			DocId:   rec.Id,
 			Op:      storagepb.MutationOp_PUT,
 			Payload: payload,
 		}
-		writeSegment(t, ctx, store, "main", segID, []*storagepb.DocumentMutation{mut})
+		writeSegment(t, ctx, store, mainBranch, segID, []*storagepb.DocumentMutation{mut})
 		segIDs = append(segIDs, segID)
-		gen = updateManifest(t, ctx, store, "main", segIDs, gen)
+		gen = updateManifest(t, ctx, store, mainBranch, segIDs, gen)
 	}
 
 	close(done)

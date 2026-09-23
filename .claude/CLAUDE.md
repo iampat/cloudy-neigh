@@ -168,6 +168,7 @@ not trust memory over the help output.
   `MODULE.bazel` stale, and a stale `use_repo` call breaks the build.
 - After a PR merges: go to `main`, rebase on `origin`, then delete the merged
   branch local and remote. One turn, no questions.
+- Keep it simple, stupid (KISS). Do not add validation, wrappers, or helpers for internal invariants that external callers cannot violate.
 - Do not solve a problem we do not have. Leave out a limit, a constraint, or a
   mitigation until the problem appears. Delete a `CONSIDER` that guards a case
   nobody met.

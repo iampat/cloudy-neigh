@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/manifest"
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -28,7 +29,7 @@ func writeSegment(t *testing.T, store objectstore.Store, branch, segID string, m
 		require.NoError(t, w.Write(m))
 	}
 	require.NoError(t, w.Close())
-	segKey := segment.Key(branch, segID)
+	segKey := segment.Key(segID)
 	_, err := store.Put(context.Background(), segKey, bytes.NewReader(buf.Bytes()), objectstore.Condition{Absent: true})
 	require.NoError(t, err)
 }
@@ -70,13 +71,14 @@ func updateManifest(t *testing.T, store objectstore.Store, branch string, segIDs
 	for _, id := range segIDs {
 		segs = append(segs, &storagepb.SegmentRef{
 			SegmentId: id,
+			Key:       segment.Key(id),
 		})
 	}
 	m := &storagepb.BranchManifest{
 		SchemaVersion: 1,
 		Segments:      segs,
 	}
-	gen, err := kvfs.UpdateBranch(context.Background(), store, branch, m, expectedGen)
+	gen, err := manifest.Write(context.Background(), store, branch, m, expectedGen)
 	require.NoError(t, err)
 	return gen
 }
@@ -196,11 +198,8 @@ func TestLoader_Validation(t *testing.T) {
 	_, err = query.NewLoader(store, nil)
 	require.Error(t, err)
 
-	loader, err := query.NewLoader(store, &table)
+	_, err = query.NewLoader(store, &table)
 	require.NoError(t, err)
-
-	_, err = loader.Sync(ctx, "invalid/branch/name")
-	require.Error(t, err)
 }
 
 func TestLoader_DeleteTombstones(t *testing.T) {
@@ -328,7 +327,7 @@ func TestLoader_GenerationSkip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
-	segKey := segment.Key("main", "seg-1")
+	segKey := segment.Key("seg-1")
 	err = store.Delete(ctx, segKey)
 	require.NoError(t, err)
 
@@ -351,7 +350,7 @@ func TestLoader_GenerationAdvancesOnlyOnCleanPass(t *testing.T) {
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-1", []float32{1.0}, nil),
 	})
-	segBadKey := segment.Key("main", "seg-bad")
+	segBadKey := segment.Key("seg-bad")
 	var buf bytes.Buffer
 	w := segment.NewWriter(&buf)
 	require.NoError(t, w.Write(&storagepb.DocumentMutation{
@@ -601,7 +600,7 @@ func flushBranch(t *testing.T, ctx context.Context, store objectstore.Store, log
 		case <-timeout:
 			t.Fatalf("timed out waiting for branch %s manifest", branch)
 		case <-ticker.C:
-			m, _, err := kvfs.ResolveBranch(ctx, store, branch)
+			m, _, err := manifest.Read(ctx, store, branch)
 			if err == nil && len(m.Segments) >= expectedSegCount {
 				cancel()
 				require.NoError(t, <-errCh)
@@ -625,7 +624,9 @@ func TestLoader_ForkBranch_Inheritance(t *testing.T) {
 
 	flushBranch(t, ctx, store, log, "main", 2)
 
-	_, _, err = kvfs.CreateBranch(ctx, store, "staging", "main")
+	parentM, _, err := manifest.Read(ctx, store, "main")
+	require.NoError(t, err)
+	_, err = manifest.Write(ctx, store, "staging", parentM, "")
 	require.NoError(t, err)
 
 	var table atomic.Pointer[query.Table]
@@ -661,21 +662,26 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 	log, err := logstream.New(store, "wal")
 	require.NoError(t, err)
 
-	appendWALRecord(t, ctx, log, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
-	flushBranch(t, ctx, store, log, "main", 1)
+	mainBranch := namespace.BranchRef("", "", "main")
+	stagingBranch := namespace.BranchRef("", "", "staging")
 
-	_, _, err = kvfs.CreateBranch(ctx, store, "staging", "main")
+	appendWALRecord(t, ctx, log, mainBranch, "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
+	flushBranch(t, ctx, store, log, mainBranch, 1)
+
+	parentM, _, err := manifest.Read(ctx, store, mainBranch)
+	require.NoError(t, err)
+	_, err = manifest.Write(ctx, store, stagingBranch, parentM, "")
 	require.NoError(t, err)
 
-	appendWALRecord(t, ctx, log, "staging", "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
-	flushBranch(t, ctx, store, log, "staging", 2)
+	appendWALRecord(t, ctx, log, stagingBranch, "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
+	flushBranch(t, ctx, store, log, stagingBranch, 2)
 
 	var stagingTable atomic.Pointer[query.Table]
 	stagingTable.Store(query.NewTable())
 	stagingLoader, err := query.NewLoader(store, &stagingTable)
 	require.NoError(t, err)
 
-	loaded, err := stagingLoader.Sync(ctx, "staging")
+	loaded, err := stagingLoader.Sync(ctx, stagingBranch)
 	require.NoError(t, err)
 	require.Equal(t, 2, loaded)
 
@@ -690,7 +696,7 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 	mainLoader, err := query.NewLoader(store, &mainTable)
 	require.NoError(t, err)
 
-	loadedMain, err := mainLoader.Sync(ctx, "main")
+	loadedMain, err := mainLoader.Sync(ctx, mainBranch)
 	require.NoError(t, err)
 	require.Equal(t, 1, loadedMain)
 
@@ -701,7 +707,7 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 	require.False(t, okMain2)
 }
 
-func TestLoader_ManifestWithoutKeyFallback(t *testing.T) {
+func TestLoader_ManifestMissingKeyError(t *testing.T) {
 	ctx := context.Background()
 	store, err := objectstore.Open(ctx, "mem://")
 	require.NoError(t, err)
@@ -720,7 +726,7 @@ func TestLoader_ManifestWithoutKeyFallback(t *testing.T) {
 			},
 		},
 	}
-	_, err = kvfs.UpdateBranch(ctx, store, "main", m, "")
+	_, err = manifest.Write(ctx, store, "main", m, "")
 	require.NoError(t, err)
 
 	var table atomic.Pointer[query.Table]
@@ -728,13 +734,8 @@ func TestLoader_ManifestWithoutKeyFallback(t *testing.T) {
 	loader, err := query.NewLoader(store, &table)
 	require.NoError(t, err)
 
-	loaded, err := loader.Sync(ctx, "main")
-	require.NoError(t, err)
-	require.Equal(t, 1, loaded)
-
-	rec, ok := table.Load().Get("doc-legacy")
-	require.True(t, ok)
-	require.True(t, proto.Equal(stringAttr("legacy"), rec.Attributes["title"]))
+	_, err = loader.Sync(ctx, "main")
+	require.Error(t, err)
 }
 
 func TestLoader_BatchSegmentLoading(t *testing.T) {

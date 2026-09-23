@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/iampat/cloudy-neigh/kvfs"
+	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -51,16 +51,7 @@ func resolveBranch(ns, rawBranch string) (string, error) {
 			return "", status.Errorf(codes.InvalidArgument, "grpcapi: invalid branch: %v", err)
 		}
 	}
-	if rawBranch == "" {
-		if ns == "" {
-			return namespace.DefaultNamespace, nil
-		}
-		return ns, nil
-	}
-	if ns == "" || ns == namespace.DefaultNamespace {
-		return rawBranch, nil
-	}
-	return ns + "_" + rawBranch, nil
+	return namespace.BranchRef("", ns, rawBranch), nil
 }
 
 func resolveForkBranches(ns, rawSrc, rawTarget string) (string, string, error) {
@@ -206,7 +197,7 @@ func (s *IngestServer) Fork(ctx context.Context, req *cloudyneighpb.ForkRequest)
 			}
 			return nil, status.Errorf(codes.NotFound, "grpcapi: source branch not found: %s", srcBranch)
 		}
-		if errors.Is(err, kvfs.ErrBranchAlreadyExists) {
+		if errors.Is(err, manifest.ErrBranchAlreadyExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "grpcapi: target branch already exists: %s", req.TargetBranch)
 		}
 		return nil, status.Errorf(codes.Internal, "grpcapi: fork: %v", err)
