@@ -27,6 +27,8 @@ func testBranch(name string) string {
 	return namespace.BranchRef("", "", name)
 }
 
+const defaultWAL = "cloudy/ns/default/wal"
+
 func appendDoc(t *testing.T, ctx context.Context, log *logstream.Log, branch, docID string, payload []byte) uint64 {
 	t.Helper()
 	walRec := &storagepb.WalRecord{
@@ -100,7 +102,7 @@ func TestBatchFlush(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	log, err := logstream.New(store, "wal")
+	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
 	br := testBranch("main")
@@ -164,7 +166,7 @@ func TestMultiBranchBatchFlush(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	log, err := logstream.New(store, "wal")
+	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
 	mainBr := testBranch("main")
@@ -224,7 +226,7 @@ func TestRestartResume(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	log, err := logstream.New(store, "wal")
+	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
 	mainBr := testBranch("main")
@@ -325,7 +327,7 @@ func TestCASRetryPreconditionFailed(t *testing.T) {
 		conflictOn: br,
 	}
 
-	log, err := logstream.New(store, "wal")
+	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
 	appendDoc(t, ctx, log, br, "doc-1", []byte("val-1"))
@@ -361,7 +363,7 @@ func TestGracefulShutdownFlush(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	log, err := logstream.New(store, "wal")
+	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
 	br := testBranch("main")
@@ -473,7 +475,7 @@ func TestPartialSequenceShutdownFlush(t *testing.T) {
 		cancel: cancel,
 	}
 
-	log, err := logstream.New(store, "wal")
+	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
 	b1 := testBranch("branch-1")

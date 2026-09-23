@@ -615,17 +615,20 @@ func TestLoader_ForkBranch_Inheritance(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	log, err := logstream.New(store, "wal")
+	mainBranch := namespace.BranchRef("", "", "main")
+	stagingBranch := namespace.BranchRef("", "", "staging")
+
+	log, err := logstream.New(store, namespace.Scope{}.WALPrefix())
 	require.NoError(t, err)
 
-	appendWALRecord(t, ctx, log, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
-	appendWALRecord(t, ctx, log, "main", "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
+	appendWALRecord(t, ctx, log, mainBranch, "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
+	appendWALRecord(t, ctx, log, mainBranch, "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
 
-	flushBranch(t, ctx, store, "main", 2)
+	flushBranch(t, ctx, store, mainBranch, 2)
 
-	parentM, _, err := manifest.Read(ctx, store, "main")
+	parentM, _, err := manifest.Read(ctx, store, mainBranch)
 	require.NoError(t, err)
-	_, err = manifest.Write(ctx, store, "staging", parentM, "")
+	_, err = manifest.Write(ctx, store, stagingBranch, parentM, "")
 	require.NoError(t, err)
 
 	var table atomic.Pointer[query.Table]
@@ -633,7 +636,7 @@ func TestLoader_ForkBranch_Inheritance(t *testing.T) {
 	loader, err := query.NewLoader(store, &table)
 	require.NoError(t, err)
 
-	loaded, err := loader.Sync(ctx, "staging")
+	loaded, err := loader.Sync(ctx, stagingBranch)
 	require.NoError(t, err)
 	require.Equal(t, 2, loaded)
 
@@ -658,7 +661,7 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	log, err := logstream.New(store, "wal")
+	log, err := logstream.New(store, namespace.Scope{}.WALPrefix())
 	require.NoError(t, err)
 
 	mainBranch := namespace.BranchRef("", "", "main")

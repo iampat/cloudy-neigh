@@ -160,12 +160,6 @@ func parseStreamTarget(key string) (streamTarget, string, bool) {
 			}
 		}
 	}
-	if strings.HasPrefix(key, "wal/") {
-		return streamTarget{
-			scope:     namespace.Scope{},
-			walPrefix: "wal",
-		}, "wal/~", true
-	}
 	return streamTarget{}, key, false
 }
 
@@ -216,32 +210,9 @@ type streamFlusher struct {
 }
 
 func (s *streamFlusher) initCheckpoints(ctx context.Context) (uint64, error) {
-	var branches []string
-	var err error
-	if s.walPrefix == "wal" && s.scope == (namespace.Scope{}) {
-		branches, err = namespace.ListBranches(ctx, s.store, "")
-	} else {
-		branches, err = s.scope.ListBranches(ctx, s.store)
-	}
+	branches, err := s.scope.ListBranches(ctx, s.store)
 	if err != nil {
 		return 0, fmt.Errorf("list branches: %w", err)
-	}
-
-	rootBranches, _, _ := namespace.ReadBranchesJSON(ctx, s.store, namespace.BranchesFile)
-	for _, rb := range rootBranches {
-		bScope, _ := namespace.ScopeFromRef(rb)
-		if bScope == s.scope {
-			found := false
-			for _, b := range branches {
-				if b == rb {
-					found = true
-					break
-				}
-			}
-			if !found {
-				branches = append(branches, rb)
-			}
-		}
 	}
 
 	var minCheckpoint uint64
@@ -445,9 +416,6 @@ func (s *streamFlusher) flushBranch(ctx context.Context, branch string, mutation
 		_, err = manifest.Write(ctx, s.store, branch, m, gen)
 		if err == nil {
 			_ = scope.AddBranch(ctx, s.store, branch)
-			if scope.BranchesPath() != namespace.BranchesFile {
-				_ = namespace.AddBranch(ctx, s.store, "", branch)
-			}
 			s.branchCheckpoints[branch] = seq
 			casDur := time.Since(casStart)
 

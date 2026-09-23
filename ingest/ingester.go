@@ -148,9 +148,6 @@ func (ing *Ingester) Fork(ctx context.Context, source, target string) error {
 		return err
 	}
 	_ = targetScope.AddBranch(ctx, ing.store, target)
-	if targetScope.BranchesPath() != namespace.BranchesFile {
-		_ = namespace.AddBranch(ctx, ing.store, "", target)
-	}
 
 	eventRec := &storagepb.WalRecord{
 		Record: &storagepb.WalRecord_BranchEvent{
@@ -174,9 +171,6 @@ func (ing *Ingester) Fork(ctx context.Context, source, target string) error {
 		defer delCancel()
 		_ = ing.store.Delete(delCtx, target)
 		_ = targetScope.RemoveBranch(delCtx, ing.store, target)
-		if targetScope.BranchesPath() != namespace.BranchesFile {
-			_ = namespace.RemoveBranch(delCtx, ing.store, "", target)
-		}
 		return err
 	}
 	return nil
