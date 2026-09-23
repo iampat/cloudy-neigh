@@ -7,11 +7,11 @@
   - Example: `Table` switched from chunked copy-on-write slices to a flat contiguous `[]float32` array. PR 134 eliminated dead SIMD intrinsics, QueryExecutor, Table mutex, and Loader buffering. [#133, #134]
 - [X] Eliminate server-side batch buffering in Ingester. Replaced BatchIngester actor goroutine and channels with direct synchronous WAL Append. [#140]
 - [X] Add Fork RPC to IngestService with namespace scoping and WAL event sequencing. [#138]
-- [ ] Support capturing unflushed parent mutations before Fork manifest creation. Currently Fork clones the committed storage manifest at call time. [#137]
-- [ ] Background compaction worker to merge flat immutable segments across branches.
+- [ ] Support capturing unflushed parent mutations before Fork manifest creation. Sequence the fork event in the flusher, flush active parent mutations to a segment, and create the child manifest at that exact sequence boundary.
+- [ ] Background compaction worker to merge flat immutable segments across branches and purge tombstoned rows.
+- [ ] Move multi-tenant log stream routing into the `ingest` library. `cmd/cloudy` acts strictly as an assembly root using dependency injection, without hardcoded stream names or paths.
 - [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
 - [ ] Expose branch deletion RPC in IngestService to remove branch pointers and update `branches.json`.
-- [ ] Route WAL log streams per tenant and namespace in `cmd/cloudy` server CLI.
 - [ ] Refactor the storage layer. [#47]
   - [ ] Replace the cloud SDK with a shim around GCS. Use the atomic-file
         package from Tailscale. [#47]
