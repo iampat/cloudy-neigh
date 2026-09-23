@@ -36,9 +36,9 @@ and branch manifests to object storage.
                  ▼                                 ▼
    ┌─────────────────────────────────────────────────────────────┐
    │                    Cloud Object Storage                     │
-   │                                                             │
-   │  wal/                   segments/        <ns>/refs/head/    │
-   │  <020d_seq>.recordio    <branch>/<id>    <branch>           │
+   │           <storage-root>/<tenant>/ns/<namespace>/           │
+   │  wal/                   segments/<branch>/    refs/head/    │
+   │  <020d_seq>.recordio    <020d_seq>.recordio   <branch>      │
    └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -82,7 +82,7 @@ object storage.
 └──────┬──────────────────┘
        │ Flush on sequence commit or shutdown
        ├──▶ Writes segments/<branch>/<020d_seq>.recordio via segment.Writer
-       └──▶ Updates <ns>/refs/head/<branch> via CAS (Absent: true or GenMatch)
+       └──▶ Updates refs/head/<branch> via CAS (Absent: true or GenMatch)
 ```
 
 ### Ingestion Execution Flow
@@ -99,7 +99,7 @@ ingest.Flusher.Run (Background goroutine)
   ingest.Flusher.processRecords
   ingest.Flusher.flushBranch
     segment.Writer.Write (segments/<branch>/<020d_seq>.recordio)
-    objectstore.Store.Put (<ns>/refs/head/<branch>, if-generation-match)
+    objectstore.Store.Put (refs/head/<branch>, if-generation-match)
 ```
 
 ---
@@ -127,7 +127,7 @@ distances and scalar attribute filters.
        │ Sync / Load manifests
        ▼
 ┌─────────────────────────┐
-│      query.Loader       │ Reads <ns>/refs/head/<branch> and segments
+│      query.Loader       │ Reads refs/head/<branch> and segments
 └──────┬──────────────────┘
        │ Stream segment records into table
        ▼
@@ -147,7 +147,7 @@ distances and scalar attribute filters.
 grpcapi.QueryServer.Query
   query.Engine.Query
     query.Loader.SyncBranch
-      objectstore.Store.Get (<ns>/refs/head/<branch>)
+      objectstore.Store.Get (refs/head/<branch>)
       segment.Reader.Open (segments/<branch>/<id>.recordio)
       query.Table.Add (appends vectors into flat []float32)
     query.Table.Search
@@ -166,23 +166,28 @@ segments.
 
 ```text
 <storage-root>/
-├── wal/
-│   ├── 00000000000000000001.recordio
-│   ├── 00000000000000000002.recordio
-│   └── 00000000000000000003.recordio
-├── segments/
-│   └── <namespace>/
-│       └── refs/
-│           └── head/
-│               └── <branch>/
-│                   ├── 00000000000000000001.recordio
-│                   └── 00000000000000000002.recordio
-└── <namespace>/
-    └── refs/
-        └── head/
-            ├── main
-            └── <branch>
+└── <tenant>/
+    └── ns/
+        └── <namespace>/
+            ├── wal/
+            │   ├── 00000000000000000001.recordio
+            │   ├── 00000000000000000002.recordio
+            │   └── 00000000000000000003.recordio
+            ├── segments/
+            │   └── <branch>/
+            │       ├── 00000000000000000001.recordio
+            │       └── 00000000000000000002.recordio
+            └── refs/
+                └── head/
+                    ├── main
+                    └── <branch>
 ```
+
+Each tenant has its own folder. Inside it, `ns/` holds that tenant's namespaces.
+Each namespace has three folders:
+- `wal/`: the write-ahead log files.
+- `segments/<branch>/`: data files, grouped by branch.
+- `refs/head/`: one file per branch (like main) pointing to its latest state.
 
 ### Storage Invariants
 
@@ -192,8 +197,9 @@ segments.
    vector and document data. Segments are shared across forked branches
    without data duplication.
 3. **Branch heads advance monotonically**: Manifest commits update
-   `<namespace>/refs/head/<branch>` using conditional creates (`Absent: true`) or
-   generation-matched updates (`if-generation-match`).
+   `<tenant>/ns/<namespace>/refs/head/<branch>` using conditional
+   creates (`Absent: true`) or generation-matched updates
+   (`if-generation-match`).
 
 ---
 
