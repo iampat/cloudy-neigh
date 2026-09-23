@@ -14,6 +14,73 @@
 - [ ] Implement cross-tenant isolation across ingestion, query execution, local cache tiers, and storage keys.
 - [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
 - [ ] Expose branch deletion RPC in IngestService to remove branch pointers and update `branches.json`.
+- [ ] Fix storage durability and error handling bugs.
+  - [ ] Make flusher segment upload idempotent during replay. Ignore `ErrPreconditionFailed` when the segment key exists in storage (`ingest/flusher.go:375`).
+  - [ ] Add `Sync()` and parent directory fsync to local store mutations (`objectstore/local.go:305, 317, 353`). Prevent data loss across power loss and crashes.
+  - [ ] Return lock errors from `objectstore.diskLock.lock` (`objectstore/local.go:39-54`). Do not fall back to process mutex when directory access or flock fails.
+  - [ ] Prevent GCS `Put` committing truncated objects on copy failure (`objectstore/gcs.go:125-132`). Cancel writer context before closing.
+  - [ ] Guard against integer overflow in memory store range reads (`objectstore/mem.go:85-89`). Clamp end offset to object size.
+  - [ ] Restrict local store `List` walk to the requested prefix path (`objectstore/local.go:368-415`). Do not walk the entire storage root.
+- [ ] Fix ingestion and flusher concurrency and lifecycle bugs.
+  - [ ] Monitor flusher stream workers with `errgroup.WithContext` (`ingest/flusher.go:54, 190`). Stop all workers and exit `Run` on worker crash.
+  - [ ] Remove `shutdownFlush` drain after context cancellation (`ingest/flusher.go:241-306`). WAL is durable, and restarting resumes from checkpoints.
+  - [ ] Remove redundant mutex and cancel map from `Flusher` (`ingest/flusher.go:31-36, 195-201`). Stream dispatch runs on a single goroutine.
+  - [ ] Propagate `scope.AddBranch` errors during flusher segment commit and ingester fork (`ingest/flusher.go:418`, `ingest/ingester.go:150`).
+  - [ ] Validate vector dimensions at gRPC ingestion boundary (`grpcapi/ingest.go:102-111`). Reject mismatched dimensions before WAL append.
+  - [ ] Validate record size against `DefaultMaxRecordSize` before log append (`logstream/log.go:54`, `recordio/writer.go:71-76`). Reject records over 64 MiB.
+- [ ] Fix query engine and loader integrity bugs.
+  - [ ] Fix query engine root branch discovery bug (`query/engine.go:50`, `namespace/branch.go:114-126`). Replace root `branches.json` reads with scoped `<tenant>/ns/<namespace>/branches.json` discovery.
+  - [ ] Prevent query loader from publishing partial segment mutations on failure (`query/loader.go:73-77`). Clone table before loading segments and publish atomically only after all segments load.
+  - [ ] Pass `context.Context` to `Table.Search` and propagate cancellation to gRPC error codes (`query/table.go:314`, `grpcapi/query.go:62-70`).
+  - [ ] Return not found error when query loader is missing instead of returning empty results (`query/engine.go:118-120`).
+  - [ ] Fix catalog cache race overwriting newer versions (`namespace/catalog.go:268-283`). Verify version under mutex before updating cache.
+  - [ ] Reject unknown fields during catalog JSON decoding (`namespace/catalog.go:28`). Remove `DiscardUnknown: true` to prevent data loss on rewrites.
+- [ ] Eliminate configuration fallbacks and compatibility shims.
+  - [ ] Eliminate duplicate free functions in `namespace` (`BranchRef`, `SegmentKey`, `BranchesPath`, `CatalogPath`, `ListBranches`, `AddBranch`, `RemoveBranch`). Require explicit `Scope` arguments and resolve defaults once at gRPC boundary.
+  - [ ] Reject malformed or bare branch references in `ScopeFromRef` (`namespace/namespace.go:78-87`). Require canonical reference formats instead of returning empty fallback scopes.
+  - [ ] Reject malformed storage URLs in `objectstore.Open` (`objectstore/open.go:22-39`). Require canonical `file:///path` and `gs://bucket`.
+  - [ ] Remove `create_dir=true` default and driver directory creation in `objectstore.Open` (`objectstore/open.go:29-33`).
+  - [ ] Fail fast on non-positive intervals in `NewFlusher` and `NewCatalogCache` (`ingest/flusher.go:43`, `namespace/catalog.go:176`).
+  - [ ] Split `walbench` into explicit `bench` and `sanity` subcommands (`cmd/walbench/main.go:114-116`). Do not switch execution modes on optional flags.
+  - [ ] Propagate `os.Hostname()` errors in `walbench` instead of dropping them (`cmd/walbench/main.go:130-132`).
+  - [ ] Fix demoload script exceeding `max_docs` configuration.
+- [ ] Remove forwarding wrappers, redundant types, and single-caller helpers.
+  - [ ] Delete `Table.Builder` forwarding wrapper and constructors (`query/table.go:397-426`). Mutate cloned `Table` directly.
+  - [ ] Clean up distance kernel forwarders (`query/distance/distance_fallback.go:9-39`, `distance_simd.go:20-34`, `distance.go:42-44`). Delete `*Portable` forwarders and `NormalizeInPlace` wrapper.
+  - [ ] Delete `segment.Writer` lifecycle wrappers (`segment/writer.go:45-51`). Call `recordio.Writer` directly.
+  - [ ] Unify redundant name validators (`namespace/namespace.go:43-53`). Export single `ValidateName`.
+  - [ ] Delete `objectstore.Store.Exists` method (`objectstore/objectstore.go:40`). Callers inspect `Stat` errors.
+  - [ ] Delete `objectstore.gcsStore.bkt()` forwarding helper (`objectstore/gcs.go:26-28`). Store `*storage.BucketHandle` on struct.
+  - [ ] Replace `logstream.Record` named type (`logstream/log.go:22`) with standard `[]byte` and `[][]byte`.
+  - [ ] Delete duplicate `distance.ErrDimensionMismatch` sentinel (`query/distance/distance.go:9`). Keep `query.ErrDimensionMismatch`.
+  - [ ] Delete dead sentinels `ErrNilLog`, `recordio.ErrUnexpectedEOF`, and `ErrBufferTooSmall`.
+  - [ ] Replace memory store mtime-based generation formatting (`objectstore/mem.go:127, 150`) with an atomic integer string.
+  - [ ] Delete single-caller helper `recordio.mask` (`recordio/crc.go:29-31`). Inline into `computeMaskedCRC`.
+  - [ ] Delete single-caller helper `resolveForkBranches` in `grpcapi/ingest.go:57-81`. Inline into `Fork`.
+  - [ ] Delete single-caller helper `parseStreamTarget` in `ingest/flusher.go:149-164`. Inline into `discoverStreams`.
+  - [ ] Delete single-caller helper `loadSegment` in `query/loader.go:98`. Inline into `Loader.Sync`.
+  - [ ] Delete `query/loader.go:43-45` `Table()` forwarding getter. Call `loader.table.Load()` directly.
+  - [ ] Inline server setup single-caller helpers in `cmd/cloudy/main.go:35-119, 216-292`.
+  - [ ] Remove test-only accessors `Store()` and `Log()` from `ingest.Ingester` (`ingest/ingester.go:41-43, 60-63`).
+- [ ] KISS: prune internal invariant checks, unreachable modes, and dead code.
+  - [ ] Remove defensive constructor nil checks for internal dependencies wired in `main.go` (`grpcapi/ingest.go:31`, `grpcapi/query.go:23`, `ingest/ingester.go:32`, `query/engine.go:33`, `query/loader.go:30`).
+  - [ ] Remove redundant slice bounds checks and lazy map initialization in `query/table.go:83-87, 132, 139, 229`.
+  - [ ] Delete `Condition.validate` in `objectstore/objectstore.go:26-31`.
+  - [ ] Delete speculative files `namespace/catalog.go` and `namespace/tenant.go` until required by RPC handlers.
+  - [ ] Delete redundant `NewScope` constructor (`namespace/namespace.go:94-100`).
+  - [ ] Delete unused RecordIO options and traversal methods: `Skip`, `Offset`, `LastValidOffset`, `Reset`, and functional options (`recordio/scanner.go`, `recordio/writer.go`).
+  - [ ] Delete `Writer.Sync` capability sniffing in `recordio/writer.go:123-128`.
+  - [ ] Remove unreachable Euclidean and Dot Product branches in `query/table.go:273-290` until exposed by Query API.
+  - [ ] Fix test goroutines calling `t.Errorf` directly. Propagate test failures to main test goroutines safely.
+- [ ] Prune unused protobuf schemas, fields, and speculative metadata.
+  - [ ] Delete unused messages `BlockEntry` and `SegmentFooter` from `proto/storage/v1/storage.proto:56-68`.
+  - [ ] Prune unused and write-only fields from `SegmentRef` in `proto/storage/v1/storage.proto:40-46` (`min_doc_id`, `max_doc_id`, `doc_count`, `level`, `vectors_size`, `postings_size`, `docs_size`). Reserve tags 2 to 8.
+  - [ ] Delete write-only `schema_version` from `BranchManifest` in `proto/storage/v1/storage.proto:52` and reserve tag 2.
+  - [ ] Comment out unused `BranchLifecycleEvent.DELETE` enum value in `proto/storage/v1/storage.proto:24`.
+  - [ ] Delete unreferenced schema file `proto/namespace/v1/catalog.proto` alongside `namespace/catalog.go`.
+  - [ ] Delete dead commented fields (`int_value`, `float_value`, `bool_value`, `bytes_value`) from `AttributeValue` in `proto/cloudyneigh/v1/index.proto:14-17`.
+  - [ ] Delete unused `DistanceMetric` enum from `proto/cloudyneigh/v1/index.proto:52-57` or wire it into `QueryRequest`.
+  - [ ] Remove redundant echo fields `upserted_count` and `deleted_count` from `UpsertResponse` and `DeleteResponse` in `proto/cloudyneigh/v1/index.proto:34, 44`.
 - [ ] Refactor the storage layer. [#47]
   - [ ] Replace the cloud SDK with a shim around GCS. Use the atomic-file
         package from Tailscale. [#47]

@@ -120,6 +120,8 @@ Establish the minimal functional search engine. A user can run a single node, in
 - **Memtable and flush (Done)**: Direct synchronous WAL ingestion with background flusher materializing immutable segments to object storage. [#99, #100, #103, #134, #140, #142]
 - **gRPC service (Done)**: Implement `Upsert`, `Delete`, `Fork`, and `Query` RPC endpoints. [#97, #100, #102, #105, #106, #112, #138, #141, #142]
 - **Exact k-NN search (Done)**: Brute-force vector distance computation for Cosine, Dot Product, and Euclidean (L2) metrics. [#107, #108, #110, #112, #133, #134]
+- **Distance metric API configuration**: Expose metric selection (Cosine, Dot Product, Euclidean L2) in the public `Query` RPC.
+- **Large record streaming**: Chunked streaming ingestion for documents exceeding single-record log limits.
 - **Attribute filtering (Done)**: Exact match equality predicate on scalar document attributes. [#97, #107, #110]
 
 **User Value**: A runnable single-node engine that persists and queries vector data over local disk, AWS S3, or Google Cloud Storage.
@@ -211,6 +213,8 @@ Provide Git-like dataset branching and point-in-time snapshot isolation.
 
 - **Branch head references (Done)**: Atomic branch pointers in object storage (`refs/head/<branch>`) referencing immutable manifests. [#78, #79, #142]
 - **Branch catalog (Done)**: Active branch catalog in `branches.json` per namespace with CAS updates. [#142]
+- **Dynamic branch discovery**: Discover and synchronize namespace-scoped branches in the query engine from `branches.json`.
+- **Branch deletion RPC**: Expose administrative RPC in `IngestService` to remove branch pointers and update `branches.json`.
 - **Zero-copy namespace branching (Done)**: Instant creation of isolated branch copies with `Fork` RPC without copying segments. [#79, #138, #139, #140, #142]
 - **Point-in-time queries**: Pin queries to specific historical snapshot versions.
 - **Garbage collection (GC)**: Background service to clean up unreferenced blobs and superseded manifest files.
@@ -225,6 +229,7 @@ Scale dataset size and query throughput across multiple compute nodes.
 
 - **Namespace sharding**: Fixed and dynamic shard partitioning for high-volume namespaces.
 - **Cross-tenant isolation**: Enforce strict tenant isolation across ingestion routing, query execution, local caches, and storage keys.
+- **Tenant control-plane API**: Expose administrative RPCs to create, list, and delete tenants and namespaces in root `tenants.json`.
 - **Distributed query coordinator**: Scatter-gather execution across shards with merged ranking.
 - **Consistent routing**: Topology-aware request routing and shard mapping.
 - **Online resharding**: Rebalance and split shards with zero read downtime.
