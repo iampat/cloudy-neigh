@@ -48,14 +48,14 @@
   - [X] Delete `Table.Builder` forwarding wrapper and constructors (`query/table.go:397-426`). Mutate cloned `Table` directly. [#147]
   - [ ] Clean up distance kernel forwarders (`query/distance/distance_fallback.go:9-39`, `distance_simd.go:20-34`, `distance.go:42-44`). Delete `*Portable` forwarders and `NormalizeInPlace` wrapper.
   - [ ] Delete `segment.Writer` lifecycle wrappers (`segment/writer.go:45-51`). Call `recordio.Writer` directly.
-  - [ ] Unify redundant name validators (`namespace/namespace.go:43-53`). Export single `ValidateName`.
+  - [X] Unify redundant name validators (`namespace/namespace.go:43-53`). Export single `ValidateName`. [#149]
   - [ ] Delete `objectstore.Store.Exists` method (`objectstore/objectstore.go:40`). Callers inspect `Stat` errors.
   - [ ] Delete `objectstore.gcsStore.bkt()` forwarding helper (`objectstore/gcs.go:26-28`). Store `*storage.BucketHandle` on struct.
   - [ ] Replace `logstream.Record` named type (`logstream/log.go:22`) with standard `[]byte` and `[][]byte`.
   - [ ] Delete duplicate `distance.ErrDimensionMismatch` sentinel (`query/distance/distance.go:9`). Keep `query.ErrDimensionMismatch`.
-  - [ ] Delete dead sentinels `ErrNilLog`, `recordio.ErrUnexpectedEOF`, and `ErrBufferTooSmall`.
+  - [X] Delete dead sentinels `ErrNilLog`, `recordio.ErrUnexpectedEOF`, and `ErrBufferTooSmall`. [#149]
   - [ ] Replace memory store mtime-based generation formatting (`objectstore/mem.go:127, 150`) with an atomic integer string.
-  - [ ] Delete single-caller helper `recordio.mask` (`recordio/crc.go:29-31`). Inline into `computeMaskedCRC`.
+  - [X] Delete single-caller helper `recordio.mask` (`recordio/crc.go:29-31`). Inline into `computeMaskedCRC`. [#149]
   - [ ] Delete single-caller helper `resolveForkBranches` in `grpcapi/ingest.go:57-81`. Inline into `Fork`.
   - [ ] Delete single-caller helper `parseStreamTarget` in `ingest/flusher.go:149-164`. Inline into `discoverStreams`.
   - [ ] Delete single-caller helper `loadSegment` in `query/loader.go:98`. Inline into `Loader.Sync`.

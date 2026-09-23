@@ -19,17 +19,12 @@ var (
 	ErrTornWrite       = errors.New("recordio: incomplete record at stream tail (torn write)")
 	ErrHeaderCorrupted = errors.New("recordio: header length CRC mismatch mid-stream")
 	ErrDataCorrupted   = errors.New("recordio: payload data CRC mismatch mid-stream")
-	ErrUnexpectedEOF   = errors.New("recordio: unexpected EOF within record")
 	ErrRecordTooLarge  = errors.New("recordio: record size exceeds max limit")
-	ErrBufferTooSmall  = errors.New("recordio: user destination buffer too small for record")
 )
 
 var castagnoliTable = crc32.MakeTable(crc32.Castagnoli)
 
-func mask(crc uint32) uint32 {
-	return ((crc >> 15) | (crc << 17)) + maskDelta
-}
-
 func computeMaskedCRC(data []byte) uint32 {
-	return mask(crc32.Checksum(data, castagnoliTable))
+	crc := crc32.Checksum(data, castagnoliTable)
+	return ((crc >> 15) | (crc << 17)) + maskDelta
 }

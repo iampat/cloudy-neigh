@@ -61,7 +61,7 @@ func ListTenants(ctx context.Context, store objectstore.Store) ([]string, error)
 }
 
 func AddTenant(ctx context.Context, store objectstore.Store, tenant string) error {
-	if err := ValidateTenant(tenant); err != nil {
+	if err := ValidateName(tenant); err != nil {
 		return err
 	}
 	for {

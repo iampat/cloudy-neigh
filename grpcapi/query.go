@@ -33,7 +33,7 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: nil request")
 	}
-	if err := namespace.ValidateNamespace(req.Namespace); err != nil {
+	if err := namespace.ValidateName(req.Namespace); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "grpcapi: invalid namespace: %v", err)
 	}
 

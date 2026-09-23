@@ -17,7 +17,7 @@ const (
 
 var ErrInvalidName = errors.New("namespace: invalid name")
 
-func validate(name string) error {
+func ValidateName(name string) error {
 	if name == "" {
 		return fmt.Errorf("%w: empty name", ErrInvalidName)
 	}
@@ -38,18 +38,6 @@ func validate(name string) error {
 		}
 	}
 	return nil
-}
-
-func ValidateTenant(tenant string) error {
-	return validate(tenant)
-}
-
-func ValidateNamespace(ns string) error {
-	return validate(ns)
-}
-
-func ValidateBranch(branch string) error {
-	return validate(branch)
 }
 
 func BranchRef(tenant, ns, branch string) string {
@@ -101,12 +89,12 @@ func NewScope(tenant, ns string) (Scope, error) {
 
 func (s Scope) Validate() error {
 	if s.Tenant != "" {
-		if err := ValidateTenant(s.Tenant); err != nil {
+		if err := ValidateName(s.Tenant); err != nil {
 			return err
 		}
 	}
 	if s.Namespace != "" {
-		if err := ValidateNamespace(s.Namespace); err != nil {
+		if err := ValidateName(s.Namespace); err != nil {
 			return err
 		}
 	}

@@ -49,7 +49,7 @@ func ReadTenantCatalog(ctx context.Context, store objectstore.Store, tenant stri
 	if store == nil {
 		return nil, "", ErrNilStore
 	}
-	if err := ValidateTenant(tenant); err != nil {
+	if err := ValidateName(tenant); err != nil {
 		return nil, "", err
 	}
 	rc, obj, err := store.Get(ctx, CatalogPath(tenant))
@@ -90,10 +90,10 @@ func CreateNamespace(ctx context.Context, store objectstore.Store, tenant, name 
 	if store == nil {
 		return nil, "", ErrNilStore
 	}
-	if err := ValidateTenant(tenant); err != nil {
+	if err := ValidateName(tenant); err != nil {
 		return nil, "", err
 	}
-	if err := ValidateNamespace(name); err != nil {
+	if err := ValidateName(name); err != nil {
 		return nil, "", err
 	}
 	createdAt := max(now.Unix(), 0)
@@ -130,10 +130,10 @@ func DeleteNamespace(ctx context.Context, store objectstore.Store, tenant, name 
 	if store == nil {
 		return nil, "", ErrNilStore
 	}
-	if err := ValidateTenant(tenant); err != nil {
+	if err := ValidateName(tenant); err != nil {
 		return nil, "", err
 	}
-	if err := ValidateNamespace(name); err != nil {
+	if err := ValidateName(name); err != nil {
 		return nil, "", err
 	}
 	deletedAt := max(now.Unix(), 0)
@@ -184,10 +184,10 @@ func NewCatalogCache(store objectstore.Store, syncInterval time.Duration) (*Cata
 }
 
 func (c *CatalogCache) LookupNamespace(ctx context.Context, tenant, name string) (*namespacepb.NamespaceMetadata, error) {
-	if err := ValidateTenant(tenant); err != nil {
+	if err := ValidateName(tenant); err != nil {
 		return nil, err
 	}
-	if err := ValidateNamespace(name); err != nil {
+	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
 
@@ -213,7 +213,7 @@ func (c *CatalogCache) LookupNamespace(ctx context.Context, tenant, name string)
 }
 
 func (c *CatalogCache) RefreshTenant(ctx context.Context, tenant string) (*namespacepb.TenantCatalog, string, error) {
-	if err := ValidateTenant(tenant); err != nil {
+	if err := ValidateName(tenant); err != nil {
 		return nil, "", err
 	}
 	entry, err := c.refreshTenant(ctx, tenant)
