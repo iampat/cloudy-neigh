@@ -96,13 +96,13 @@ func TestUpsert_Success(t *testing.T) {
 	}
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
-		Namespace: "main",
+		Namespace: "default",
 		Records:   []*cloudyneighpb.Record{rec1, rec2},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.UpsertedCount)
 
-	log, err := ing.Log(namespace.BranchRef("", "main", ""))
+	log, err := ing.Log(namespace.BranchRef("", "default", ""))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -115,7 +115,7 @@ func TestUpsert_Success(t *testing.T) {
 
 	var walRec1 storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[0], &walRec1))
-	assert.Equal(t, namespace.BranchRef("", "main", ""), walRec1.GetMutation().Branch)
+	assert.Equal(t, namespace.BranchRef("", "default", ""), walRec1.GetMutation().Branch)
 	assert.Equal(t, "doc-1", walRec1.GetMutation().DocId)
 	assert.Equal(t, storagepb.MutationOp_PUT, walRec1.GetMutation().Op)
 
@@ -127,7 +127,7 @@ func TestUpsert_Success(t *testing.T) {
 
 	var walRec2 storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[1], &walRec2))
-	assert.Equal(t, namespace.BranchRef("", "main", ""), walRec2.GetMutation().Branch)
+	assert.Equal(t, namespace.BranchRef("", "default", ""), walRec2.GetMutation().Branch)
 	assert.Equal(t, "doc-2", walRec2.GetMutation().DocId)
 
 	var payload2 cloudyneighpb.Record
@@ -140,13 +140,13 @@ func TestUpsert_EmptyRecords(t *testing.T) {
 	ctx := context.Background()
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
-		Namespace: "main",
+		Namespace: "default",
 		Records:   nil,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), resp.UpsertedCount)
 
-	log, err := ing.Log(namespace.BranchRef("", "main", ""))
+	log, err := ing.Log(namespace.BranchRef("", "default", ""))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -181,14 +181,14 @@ func TestUpsert_Validation(t *testing.T) {
 		{
 			name: "nil record in batch",
 			req: &cloudyneighpb.UpsertRequest{
-				Namespace: "main",
+				Namespace: "default",
 				Records:   []*cloudyneighpb.Record{nil},
 			},
 		},
 		{
 			name: "empty record id",
 			req: &cloudyneighpb.UpsertRequest{
-				Namespace: "main",
+				Namespace: "default",
 				Records:   []*cloudyneighpb.Record{{Id: ""}},
 			},
 		},
@@ -234,13 +234,13 @@ func TestDelete_Success(t *testing.T) {
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
-		Namespace: "main",
+		Namespace: "default",
 		Ids:       []string{"doc-1", "doc-2"},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.DeletedCount)
 
-	log, err := ing.Log(namespace.BranchRef("", "main", ""))
+	log, err := ing.Log(namespace.BranchRef("", "default", ""))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -258,7 +258,7 @@ func TestDelete_Success(t *testing.T) {
 
 		mutation := rec.GetMutation()
 		require.NotNil(t, mutation)
-		assert.Equal(t, namespace.BranchRef("", "main", ""), mutation.Branch)
+		assert.Equal(t, namespace.BranchRef("", "default", ""), mutation.Branch)
 		assert.Equal(t, wantIds[i], mutation.DocId)
 		assert.Equal(t, storagepb.MutationOp_DELETE, mutation.Op)
 		assert.Empty(t, mutation.Payload)
@@ -270,13 +270,13 @@ func TestDelete_Empty(t *testing.T) {
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
-		Namespace: "main",
+		Namespace: "default",
 		Ids:       nil,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), resp.DeletedCount)
 
-	log, err := ing.Log(namespace.BranchRef("", "main", ""))
+	log, err := ing.Log(namespace.BranchRef("", "default", ""))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -302,7 +302,7 @@ func TestDelete_Validation(t *testing.T) {
 		{
 			name: "empty id in list",
 			req: &cloudyneighpb.DeleteRequest{
-				Namespace: "main",
+				Namespace: "default",
 				Ids:       []string{"doc-1", ""},
 			},
 		},
@@ -430,7 +430,7 @@ func TestUpsert_CanceledContext(t *testing.T) {
 	cancel()
 
 	_, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
-		Namespace: "main",
+		Namespace: "default",
 		Records:   []*cloudyneighpb.Record{{Id: "doc-1"}},
 	})
 	require.Error(t, err)

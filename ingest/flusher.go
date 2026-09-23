@@ -194,7 +194,14 @@ func (f *Flusher) startStream(ctx context.Context, g *errgroup.Group, target str
 		f.mu.Unlock()
 		return err
 	}
-	sf := f.newStreamFlusher(log, target.scope, target.walPrefix)
+	sf := &streamFlusher{
+		store:             f.store,
+		log:               log,
+		scope:             target.scope,
+		walPrefix:         target.walPrefix,
+		pollInterval:      f.cfg.PollInterval,
+		branchCheckpoints: make(map[string]uint64),
+	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	f.flushers[target.walPrefix] = sf
 	f.cancels[target.walPrefix] = cancel
@@ -211,17 +218,6 @@ func (f *Flusher) stopAllStreams() {
 	defer f.mu.Unlock()
 	for _, cancel := range f.cancels {
 		cancel()
-	}
-}
-
-func (f *Flusher) newStreamFlusher(log *logstream.Log, scope namespace.Scope, walPrefix string) *streamFlusher {
-	return &streamFlusher{
-		store:             f.store,
-		log:               log,
-		scope:             scope,
-		walPrefix:         walPrefix,
-		pollInterval:      f.cfg.PollInterval,
-		branchCheckpoints: make(map[string]uint64),
 	}
 }
 
