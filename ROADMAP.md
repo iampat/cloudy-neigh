@@ -224,6 +224,7 @@ Provide Git-like dataset branching and point-in-time snapshot isolation.
 Scale dataset size and query throughput across multiple compute nodes.
 
 - **Namespace sharding**: Fixed and dynamic shard partitioning for high-volume namespaces.
+- **Cross-tenant isolation**: Enforce strict tenant isolation across ingestion routing, query execution, local caches, and storage keys.
 - **Distributed query coordinator**: Scatter-gather execution across shards with merged ranking.
 - **Consistent routing**: Topology-aware request routing and shard mapping.
 - **Online resharding**: Rebalance and split shards with zero read downtime.
