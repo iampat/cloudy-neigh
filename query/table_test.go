@@ -104,7 +104,7 @@ func TestTable_Upsert(t *testing.T) {
 		},
 	}
 
-	b := query.NewBuilder()
+	b := query.NewTable()
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			err := b.UpsertRecord(tc.rec)
@@ -114,7 +114,7 @@ func TestTable_Upsert(t *testing.T) {
 			}
 			require.NoError(t, err)
 
-			table := b.Build()
+			table := b
 			rec, ok := table.Get(tc.rec.Id)
 			require.True(t, ok)
 			require.Equal(t, tc.rec.Id, rec.Id)
@@ -125,11 +125,11 @@ func TestTable_Upsert(t *testing.T) {
 			} else {
 				require.Nil(t, rec.Vectors["default"])
 			}
-			b = table.Builder()
+			b = table.Clone()
 		})
 	}
 
-	table := b.Build()
+	table := b
 	t.Run("mutation isolation on read", func(t *testing.T) {
 		rec, ok := table.Get("doc-1")
 		require.True(t, ok)
@@ -178,7 +178,7 @@ func TestTable_MultiVector(t *testing.T) {
 		},
 	}
 
-	b := query.NewBuilder()
+	b := query.NewTable()
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			err := b.Upsert(tc.id, tc.vectors, tc.attrs)
@@ -188,17 +188,17 @@ func TestTable_MultiVector(t *testing.T) {
 			}
 			require.NoError(t, err)
 
-			table := b.Build()
+			table := b
 			rec, ok := table.Get(tc.id)
 			require.True(t, ok)
 			for col, expected := range tc.vectors {
 				require.Equal(t, expected, rec.Vectors[col].Values)
 			}
-			b = table.Builder()
+			b = table.Clone()
 		})
 	}
 
-	table := b.Build()
+	table := b
 	rec, ok := table.Get("doc-mv-2")
 	require.True(t, ok)
 	require.Nil(t, rec.Vectors["body_emb"])
@@ -206,7 +206,7 @@ func TestTable_MultiVector(t *testing.T) {
 }
 
 func TestTable_PartialUpdate(t *testing.T) {
-	b := query.NewBuilder()
+	b := query.NewTable()
 	err := b.Upsert("doc-p", map[string][]float32{
 		"vec": {1.0, 2.0},
 	}, map[string]*cloudyneighpb.AttributeValue{
@@ -270,28 +270,27 @@ func TestTable_PartialUpdate(t *testing.T) {
 			err := b.Upsert("doc-p", tc.vectors, tc.attrs)
 			require.NoError(t, err)
 
-			table := b.Build()
+			table := b
 			rec, ok := table.Get("doc-p")
 			require.True(t, ok)
 			require.Equal(t, tc.wantVec, rec.Vectors["vec"].Values)
 			assertAttrsEqual(t, tc.wantAttr, rec.Attributes)
-			b = table.Builder()
+			b = table.Clone()
 		})
 	}
 }
 
 func TestTable_FlatStorage(t *testing.T) {
-	b := query.NewBuilder()
+	table := query.NewTable()
 	for i := 0; i < 8; i++ {
 		id := string(rune('a' + i))
-		err := b.Upsert(id, map[string][]float32{
+		err := table.Upsert(id, map[string][]float32{
 			"v": {float32(i)},
 		}, map[string]*cloudyneighpb.AttributeValue{
 			"idx": stringAttr(string(rune('0' + i))),
 		})
 		require.NoError(t, err)
 	}
-	table := b.Build()
 
 	tests := []struct {
 		id      string
@@ -324,10 +323,9 @@ func TestTable_FlatStorage(t *testing.T) {
 	_, ok = table.Get("e")
 	require.True(t, ok)
 
-	b = table.Builder()
-	err := b.Upsert("h", nil, map[string]*cloudyneighpb.AttributeValue{"idx": stringAttr("updated")})
+	table = table.Clone()
+	err := table.Upsert("h", nil, map[string]*cloudyneighpb.AttributeValue{"idx": stringAttr("updated")})
 	require.NoError(t, err)
-	table = b.Build()
 	rec, ok := table.Get("h")
 	require.True(t, ok)
 	require.True(t, proto.Equal(stringAttr("updated"), rec.Attributes["idx"]))
@@ -339,7 +337,7 @@ func TestTable_ZeroValue(t *testing.T) {
 	_, ok := table.Get("nonexistent")
 	require.False(t, ok)
 
-	b := table.Builder()
+	b := table.Clone()
 	err := b.Upsert("doc-1", map[string][]float32{
 		"vec": {1.0, 2.0},
 	}, map[string]*cloudyneighpb.AttributeValue{
@@ -347,28 +345,30 @@ func TestTable_ZeroValue(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	tablePtr := b.Build()
-	rec, ok := tablePtr.Get("doc-1")
+	rec, ok := b.Get("doc-1")
 	require.True(t, ok)
 	require.Equal(t, "doc-1", rec.Id)
 	require.True(t, proto.Equal(stringAttr("zero-value-test"), rec.Attributes["title"]))
 	require.Equal(t, []float32{1.0, 2.0}, rec.Vectors["vec"].Values)
+
+	var nilTable *query.Table
+	cloned := nilTable.Clone()
+	require.NotNil(t, cloned)
 }
 
 func TestTable_SparseVectors(t *testing.T) {
-	b := query.NewBuilder()
+	table := query.NewTable()
 	for i := 0; i < 50; i++ {
-		err := b.Upsert("doc-"+strconv.Itoa(i), nil, map[string]*cloudyneighpb.AttributeValue{
+		err := table.Upsert("doc-"+strconv.Itoa(i), nil, map[string]*cloudyneighpb.AttributeValue{
 			"k": stringAttr("v"),
 		})
 		require.NoError(t, err)
 	}
 
-	err := b.Upsert("doc-50", map[string][]float32{
+	err := table.Upsert("doc-50", map[string][]float32{
 		"v": {1.0, 2.0, 3.0, 4.0},
 	}, nil)
 	require.NoError(t, err)
-	table := b.Build()
 
 	for i := 0; i < 50; i++ {
 		id := "doc-" + strconv.Itoa(i)
@@ -383,31 +383,29 @@ func TestTable_SparseVectors(t *testing.T) {
 }
 
 func TestTable_Delete(t *testing.T) {
-	b := query.NewBuilder()
-	err := b.Upsert("doc-1", map[string][]float32{
+	table := query.NewTable()
+	err := table.Upsert("doc-1", map[string][]float32{
 		"vec": {1.0, 2.0},
 	}, map[string]*cloudyneighpb.AttributeValue{
 		"title": stringAttr("test"),
 	})
 	require.NoError(t, err)
 
-	table := b.Build()
 	_, ok := table.Get("doc-1")
 	require.True(t, ok)
 
-	b = table.Builder()
-	require.True(t, b.Delete("doc-1"))
-	deletedTable := b.Build()
+	deletedTable := table.Clone()
+	require.True(t, deletedTable.Delete("doc-1"))
 	_, ok = deletedTable.Get("doc-1")
 	require.False(t, ok)
 
-	b2 := deletedTable.Builder()
-	require.False(t, b2.Delete("doc-1"))
-	require.False(t, b2.Delete("nonexistent"))
+	table2 := deletedTable.Clone()
+	require.False(t, table2.Delete("doc-1"))
+	require.False(t, table2.Delete("nonexistent"))
 }
 
 func TestTable_Search_Metrics(t *testing.T) {
-	b := query.NewBuilder()
+	table := query.NewTable()
 	docs := []struct {
 		id  string
 		vec []float32
@@ -418,10 +416,9 @@ func TestTable_Search_Metrics(t *testing.T) {
 		{"doc-4", []float32{0.6, 0.8}},
 	}
 	for _, d := range docs {
-		err := b.Upsert(d.id, map[string][]float32{"v": d.vec}, nil)
+		err := table.Upsert(d.id, map[string][]float32{"v": d.vec}, nil)
 		require.NoError(t, err)
 	}
-	table := b.Build()
 
 	tests := []struct {
 		name      string
@@ -464,14 +461,13 @@ func TestTable_Search_Metrics(t *testing.T) {
 }
 
 func TestTable_Search_TopKBounds(t *testing.T) {
-	b := query.NewBuilder()
+	table := query.NewTable()
 	for i := 1; i <= 5; i++ {
-		err := b.Upsert("doc-"+strconv.Itoa(i), map[string][]float32{
+		err := table.Upsert("doc-"+strconv.Itoa(i), map[string][]float32{
 			"v": {float32(i), 0.0},
 		}, nil)
 		require.NoError(t, err)
 	}
-	table := b.Build()
 
 	tests := []struct {
 		name    string
@@ -522,15 +518,14 @@ func TestTable_Search_TopKBounds(t *testing.T) {
 }
 
 func TestTable_Search_Ties(t *testing.T) {
-	b := query.NewBuilder()
+	table := query.NewTable()
 	docs := []string{"doc-c", "doc-a", "doc-d", "doc-b"}
 	for _, id := range docs {
-		err := b.Upsert(id, map[string][]float32{
+		err := table.Upsert(id, map[string][]float32{
 			"v": {1.0, 0.0},
 		}, nil)
 		require.NoError(t, err)
 	}
-	table := b.Build()
 
 	tests := []struct {
 		name    string
@@ -571,7 +566,7 @@ func TestTable_Search_Ties(t *testing.T) {
 }
 
 func TestTable_Search_Filters(t *testing.T) {
-	b := query.NewBuilder()
+	table := query.NewTable()
 	records := []struct {
 		id    string
 		vec   []float32
@@ -599,10 +594,9 @@ func TestTable_Search_Filters(t *testing.T) {
 		},
 	}
 	for _, r := range records {
-		err := b.Upsert(r.id, map[string][]float32{"v": r.vec}, r.attrs)
+		err := table.Upsert(r.id, map[string][]float32{"v": r.vec}, r.attrs)
 		require.NoError(t, err)
 	}
-	table := b.Build()
 
 	tests := []struct {
 		name    string
@@ -673,25 +667,23 @@ func TestTable_Search_Filters(t *testing.T) {
 }
 
 func TestTable_Search_Skips(t *testing.T) {
-	b := query.NewBuilder()
+	table := query.NewTable()
 
-	err := b.Upsert("doc-live", map[string][]float32{"v": {1.0, 0.0}}, nil)
+	err := table.Upsert("doc-live", map[string][]float32{"v": {1.0, 0.0}}, nil)
 	require.NoError(t, err)
 
-	err = b.Upsert("doc-tombstoned", map[string][]float32{"v": {1.0, 0.0}}, nil)
+	err = table.Upsert("doc-tombstoned", map[string][]float32{"v": {1.0, 0.0}}, nil)
 	require.NoError(t, err)
-	require.True(t, b.Delete("doc-tombstoned"))
+	require.True(t, table.Delete("doc-tombstoned"))
 
-	err = b.Upsert("doc-other-col", map[string][]float32{"other": {1.0, 0.0}}, nil)
-	require.NoError(t, err)
-
-	err = b.Upsert("doc-no-vec", nil, map[string]*cloudyneighpb.AttributeValue{"a": stringAttr("b")})
+	err = table.Upsert("doc-other-col", map[string][]float32{"other": {1.0, 0.0}}, nil)
 	require.NoError(t, err)
 
-	err = b.Upsert("doc-zero-vec", map[string][]float32{"v": {0.0, 0.0}}, nil)
+	err = table.Upsert("doc-no-vec", nil, map[string]*cloudyneighpb.AttributeValue{"a": stringAttr("b")})
 	require.NoError(t, err)
 
-	table := b.Build()
+	err = table.Upsert("doc-zero-vec", map[string][]float32{"v": {0.0, 0.0}}, nil)
+	require.NoError(t, err)
 
 	t.Run("cosine skips tombstones missing vectors and zero stored vectors", func(t *testing.T) {
 		hits, _, err := table.Search("v", []float32{1.0, 0.0}, 10, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
@@ -710,10 +702,9 @@ func TestTable_Search_Skips(t *testing.T) {
 }
 
 func TestTable_Search_Errors(t *testing.T) {
-	b := query.NewBuilder()
-	err := b.Upsert("doc-1", map[string][]float32{"v": {1.0, 2.0, 3.0}}, nil)
+	table := query.NewTable()
+	err := table.Upsert("doc-1", map[string][]float32{"v": {1.0, 2.0, 3.0}}, nil)
 	require.NoError(t, err)
-	table := b.Build()
 
 	tests := []struct {
 		name      string
@@ -788,9 +779,9 @@ func TestTable_Search_Errors(t *testing.T) {
 }
 
 func TestTable_Search_Concurrent(t *testing.T) {
-	b := query.NewBuilder()
+	table := query.NewTable()
 	for i := 0; i < 20; i++ {
-		err := b.Upsert("doc-"+strconv.Itoa(i), map[string][]float32{
+		err := table.Upsert("doc-"+strconv.Itoa(i), map[string][]float32{
 			"v": {float32(i), float32(i * 2)},
 		}, map[string]*cloudyneighpb.AttributeValue{
 			"tag": stringAttr("num"),
@@ -799,7 +790,7 @@ func TestTable_Search_Concurrent(t *testing.T) {
 	}
 
 	var current atomic.Pointer[query.Table]
-	current.Store(b.Build())
+	current.Store(table)
 
 	oldSnap := current.Load()
 
@@ -835,13 +826,13 @@ func TestTable_Search_Concurrent(t *testing.T) {
 	go func() {
 		for i := 0; i < iters; i++ {
 			prev := current.Load()
-			wb := prev.Builder()
+			wb := prev.Clone()
 			if err := wb.Upsert("doc-new", map[string][]float32{"v": {100.0, 200.0}}, nil); err != nil {
 				errCh <- err
 				return
 			}
 			wb.Delete("doc-1")
-			current.Store(wb.Build())
+			current.Store(wb)
 		}
 		errCh <- nil
 	}()
@@ -863,18 +854,17 @@ func TestTable_Search_Concurrent(t *testing.T) {
 }
 
 func TestTable_ChunkBoundary(t *testing.T) {
-	b := query.NewBuilder()
+	table := query.NewTable()
 	const count = 2500
 	for i := 0; i < count; i++ {
 		id := fmt.Sprintf("doc-%04d", i)
-		err := b.Upsert(id, map[string][]float32{
+		err := table.Upsert(id, map[string][]float32{
 			"v": {float32(i), float32(i + 1)},
 		}, map[string]*cloudyneighpb.AttributeValue{
 			"idx": stringAttr(strconv.Itoa(i)),
 		})
 		require.NoError(t, err)
 	}
-	table := b.Build()
 
 	for i := 0; i < count; i += 250 {
 		id := fmt.Sprintf("doc-%04d", i)
@@ -892,37 +882,34 @@ func TestTable_ChunkBoundary(t *testing.T) {
 }
 
 func TestTable_SnapshotIsolation_Delta(t *testing.T) {
-	b := query.NewBuilder()
+	snap1 := query.NewTable()
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("doc-%02d", i)
-		err := b.Upsert(id, map[string][]float32{
+		err := snap1.Upsert(id, map[string][]float32{
 			"v": {float32(i), float32(i * 2)},
 		}, map[string]*cloudyneighpb.AttributeValue{
 			"tag": stringAttr("initial"),
 		})
 		require.NoError(t, err)
 	}
-	snap1 := b.Build()
 
-	wb := snap1.Builder()
-	err := wb.Upsert("doc-delta", map[string][]float32{
+	snap2 := snap1.Clone()
+	err := snap2.Upsert("doc-delta", map[string][]float32{
 		"v": {500.0, 1000.0},
 	}, map[string]*cloudyneighpb.AttributeValue{
 		"tag": stringAttr("delta"),
 	})
 	require.NoError(t, err)
 
-	err = wb.Upsert("doc-05", map[string][]float32{
+	err = snap2.Upsert("doc-05", map[string][]float32{
 		"v": {999.0, 999.0},
 	}, map[string]*cloudyneighpb.AttributeValue{
 		"tag": stringAttr("updated"),
 	})
 	require.NoError(t, err)
 
-	deleted := wb.Delete("doc-10")
+	deleted := snap2.Delete("doc-10")
 	require.True(t, deleted)
-
-	snap2 := wb.Build()
 
 	_, ok := snap1.Get("doc-delta")
 	require.False(t, ok)
@@ -961,11 +948,10 @@ func TestTable_SnapshotIsolation_Delta(t *testing.T) {
 }
 
 func TestTable_Search_Stats(t *testing.T) {
-	b := query.NewBuilder()
-	require.NoError(t, b.Upsert("doc-1", map[string][]float32{
+	tbl := query.NewTable()
+	require.NoError(t, tbl.Upsert("doc-1", map[string][]float32{
 		"default": {1.0, 0.0},
 	}, nil))
-	tbl := b.Build()
 
 	hits, stats, err := tbl.Search("default", []float32{1.0, 0.0}, 1, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, nil)
 	require.NoError(t, err)
@@ -975,8 +961,8 @@ func TestTable_Search_Stats(t *testing.T) {
 }
 
 func TestTable_ReupsertDeletedDocClearsPreviousAttributes(t *testing.T) {
-	b := query.NewBuilder()
-	err := b.Upsert("doc-1", map[string][]float32{
+	table := query.NewTable()
+	err := table.Upsert("doc-1", map[string][]float32{
 		"vec": {1.0, 2.0},
 	}, map[string]*cloudyneighpb.AttributeValue{
 		"title": stringAttr("initial"),
@@ -984,27 +970,24 @@ func TestTable_ReupsertDeletedDocClearsPreviousAttributes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	table := b.Build()
 	rec, ok := table.Get("doc-1")
 	require.True(t, ok)
 	require.NotNil(t, rec.Attributes["title"])
 	require.NotNil(t, rec.Attributes["tag"])
 
-	b = table.Builder()
-	require.True(t, b.Delete("doc-1"))
-	table = b.Build()
+	table = table.Clone()
+	require.True(t, table.Delete("doc-1"))
 	_, ok = table.Get("doc-1")
 	require.False(t, ok)
 
-	b = table.Builder()
-	err = b.Upsert("doc-1", map[string][]float32{
+	table = table.Clone()
+	err = table.Upsert("doc-1", map[string][]float32{
 		"vec": {3.0, 4.0},
 	}, map[string]*cloudyneighpb.AttributeValue{
 		"tag": stringAttr("new"),
 	})
 	require.NoError(t, err)
 
-	table = b.Build()
 	rec, ok = table.Get("doc-1")
 	require.True(t, ok)
 	require.Nil(t, rec.Attributes["title"])
@@ -1013,30 +996,27 @@ func TestTable_ReupsertDeletedDocClearsPreviousAttributes(t *testing.T) {
 }
 
 func TestTable_ReupsertDeletedDocClearsOmittedVectors(t *testing.T) {
-	b := query.NewBuilder()
-	err := b.Upsert("doc-1", map[string][]float32{
+	table := query.NewTable()
+	err := table.Upsert("doc-1", map[string][]float32{
 		"vec1": {1.0, 2.0},
 		"vec2": {5.0, 6.0},
 	}, nil)
 	require.NoError(t, err)
 
-	table := b.Build()
 	rec, ok := table.Get("doc-1")
 	require.True(t, ok)
 	require.Equal(t, []float32{1.0, 2.0}, rec.Vectors["vec1"].Values)
 
-	b = table.Builder()
-	require.True(t, b.Delete("doc-1"))
-	table = b.Build()
+	table = table.Clone()
+	require.True(t, table.Delete("doc-1"))
 
-	b = table.Builder()
-	err = b.Upsert("doc-1", map[string][]float32{
+	table = table.Clone()
+	err = table.Upsert("doc-1", map[string][]float32{
 		"vec1": {3.0, 4.0},
 		"vec2": {},
 	}, nil)
 	require.NoError(t, err)
 
-	table = b.Build()
 	rec, ok = table.Get("doc-1")
 	require.True(t, ok)
 	require.Equal(t, []float32{3.0, 4.0}, rec.Vectors["vec1"].Values)

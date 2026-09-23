@@ -61,26 +61,26 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 		return 0, nil
 	}
 
-	var b *Builder
+	var t *Table
 	loadedCount := 0
 	for _, seg := range manifest.Segments {
 		if l.loaded[seg.SegmentId] {
 			continue
 		}
-		if b == nil {
-			b = l.table.Load().Builder()
+		if t == nil {
+			t = l.table.Load().Clone()
 		}
-		if err := l.loadSegment(ctx, branch, seg, b); err != nil {
+		if err := l.loadSegment(ctx, branch, seg, t); err != nil {
 			if loadedCount > 0 {
-				l.table.Store(b.Build())
+				l.table.Store(t)
 			}
 			return loadedCount, err
 		}
 		l.loaded[seg.SegmentId] = true
 		loadedCount++
 	}
-	if b != nil {
-		l.table.Store(b.Build())
+	if t != nil {
+		l.table.Store(t)
 	}
 	l.lastGen = gen
 
@@ -95,7 +95,7 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 	return loadedCount, nil
 }
 
-func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.SegmentRef, b *Builder) error {
+func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.SegmentRef, t *Table) error {
 	segKey := seg.GetKey()
 	if segKey == "" {
 		return fmt.Errorf("query: segment ref missing key: %s", seg.GetSegmentId())
@@ -130,11 +130,11 @@ func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.
 			if err := proto.Unmarshal(mut.Payload, &rec); err != nil {
 				return fmt.Errorf("unmarshal record from %s: %w", segKey, err)
 			}
-			if err := b.UpsertRecord(&rec); err != nil {
+			if err := t.UpsertRecord(&rec); err != nil {
 				return fmt.Errorf("upsert record %s from %s: %w", rec.Id, segKey, err)
 			}
 		case storagepb.MutationOp_DELETE:
-			b.Delete(mut.DocId)
+			t.Delete(mut.DocId)
 		default:
 			return fmt.Errorf("unknown mutation op %v in %s", mut.Op, segKey)
 		}
