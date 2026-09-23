@@ -17,6 +17,8 @@ Catalog of architectural patterns, third-party algorithms, and brainstorming ses
 - **Vector representations beyond float32** (2026-09-11): SQ8 first when ANN
   starts, binary prefilter second, skip float16/bfloat16 in Go. Kernels are
   bandwidth-bound, so size cuts convert to speed.
+- [Roaring Bitmaps for Postings and Tombstones](#roaring-bitmaps-for-postings-and-tombstones): Compressed bitsets for scalar pre-filtering and zero-copy branch deletion masks.
+- [Probabilistic Filters and Sketches](#probabilistic-filters-and-sketches): Trade-offs between Bloom filters, Cuckoo filters, and Count-Min sketches for key probing and cache admission.
 
 ---
 
@@ -134,3 +136,72 @@ Add binary prefiltering only if scan throughput still binds after SQ8.
 scalar quantizer, Lucene int8 HNSW, RaBitQ (SIGMOD 2024).
 
 **Status:** Decided, waiting on Milestone 5.
+
+---
+
+## Roaring Bitmaps for Postings and Tombstones
+
+- **Date**: 2026-09-22
+- **Topic**: Compressed bitsets for scalar attribute filtering and branch deletion masks
+- **Status**: Proposed
+- **References**:
+  - Lemire et al., "Consistently faster and smaller compressed bitmaps with Roaring" (2016)
+  - https://github.com/RoaringBitmap/roaring
+
+### Options Considered
+
+1. **Dense Bitsets (`[]uint64`)**
+   - Fast bitwise operations and simple word scanning.
+   - Wastes memory on sparse attributes and large document ID spaces (12.5 MB per 100M IDs).
+
+2. **Sorted Integer Slices (`[]uint32`)**
+   - Compact for sparse postings.
+   - Poor performance on dense sets. Intersection requires linear scans or binary searches.
+
+3. **Roaring Bitmaps (`RoaringBitmap/roaring`)**
+   - Dynamically selects array, bitset, or run containers based on data density.
+   - Fast SIMD set operations (`And`, `Or`, `AndNot`) directly on compressed containers.
+   - Supports serialization and direct memory mapping.
+
+### Verdict
+
+Adopt Roaring Bitmaps for two subsystems:
+1. **Scalar inverted indexes**: Store attribute postings as compressed Roaring Bitmaps to evaluate pre-filter predicates before vector scoring.
+2. **Branch-isolated tombstones**: Store deleted row IDs per branch inside branch manifests to enable zero-copy deletions on shared segments.
+
+---
+
+## Probabilistic Filters and Sketches
+
+- **Date**: 2026-09-22
+- **Topic**: Bloom filters, Cuckoo filters, and Count-Min sketches for key probing and cache admission
+- **Status**: Proposed
+- **References**:
+  - Bloom, "Space/Time Trade-offs in Hash Coding with Allowable Errors" (1970)
+  - Fan et al., "Cuckoo Filter: Practically Better Than Bloom" (2014)
+  - Cormode and Muthukrishnan, "An Improved Data Stream Summary: The Count-Min Sketch and its Applications" (2005)
+
+### Options Considered
+
+1. **Bloom Filter (Bit Array with k Hashes)**
+   - Fast membership testing with zero false negatives.
+   - Cannot delete entries without counting variants that inflate memory fourfold.
+   - Best suited for sealed immutable segment footers.
+
+2. **Cuckoo Filter (Cuckoo Hashing with Fingerprints)**
+   - Membership testing with native deletion support.
+   - Better space efficiency than Bloom filters at low false positive rates ($\epsilon < 3\%$).
+   - Limits memory access to two cache lines on lookups.
+   - Ideal for mutable memtables, branch tombstone sets, and dynamic point lookups.
+
+3. **Count-Min Sketch (Sublinear 2D Frequency Matrix)**
+   - Frequency estimation rather than set membership.
+   - Tracks document and query access frequency in constant space.
+   - Serves cache admission policies (TinyLFU) and write-heavy rate limiting.
+
+### Verdict
+
+1. Use **Bloom Filters** in immutable segment footers to reject remote object store GET requests for missing keys.
+2. Use **Cuckoo Filters** in memory and branch manifests where document updates and deletions occur.
+3. Use **Count-Min Sketches** for cache admission policies in the query table buffer.
+
