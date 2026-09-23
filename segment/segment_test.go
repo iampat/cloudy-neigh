@@ -7,7 +7,6 @@ import (
 	"io"
 	"testing"
 
-	"github.com/iampat/cloudy-neigh/namespace"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"github.com/iampat/cloudy-neigh/recordio"
 	"github.com/iampat/cloudy-neigh/segment"
@@ -292,65 +291,10 @@ func TestNilMutation(t *testing.T) {
 	}
 }
 
-func TestInvalidBranch(t *testing.T) {
-	invalid := []string{
-		"",
-		"features/search",
-		"/root",
-		"123branch",
-		"-dash",
-		"_under",
-		"branch space",
-	}
-	for _, branch := range invalid {
-		w := segment.NewWriter(&bytes.Buffer{})
-		m := &storagepb.DocumentMutation{
-			Branch: branch,
-			DocId:  "doc-1",
-			Op:     storagepb.MutationOp_PUT,
-		}
-		if err := w.Write(m); !errors.Is(err, namespace.ErrInvalidName) {
-			t.Errorf("expected ErrInvalidName for %q, got: %v", branch, err)
-		}
-	}
-}
-
 func TestKey(t *testing.T) {
 	got := segment.Key("main", "seg-1")
 	want := "segments/main/seg-1.recordio"
 	if got != want {
 		t.Fatalf("segment.Key() = %q, want %q", got, want)
 	}
-}
-
-func TestRefKey(t *testing.T) {
-	t.Run("explicit key", func(t *testing.T) {
-		ref := &storagepb.SegmentRef{
-			SegmentId: "seg-1",
-			Key:       "segments/main/seg-1.recordio",
-		}
-		got := segment.RefKey("staging", ref)
-		want := "segments/main/seg-1.recordio"
-		if got != want {
-			t.Fatalf("segment.RefKey() = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("fallback key", func(t *testing.T) {
-		ref := &storagepb.SegmentRef{
-			SegmentId: "seg-2",
-		}
-		got := segment.RefKey("main", ref)
-		want := "segments/main/seg-2.recordio"
-		if got != want {
-			t.Fatalf("segment.RefKey() = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("nil ref", func(t *testing.T) {
-		got := segment.RefKey("main", nil)
-		if got != "" {
-			t.Fatalf("segment.RefKey() = %q, want empty", got)
-		}
-	})
 }

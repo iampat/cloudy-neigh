@@ -3,8 +3,6 @@ package ingest
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,17 +27,12 @@ func withDefaults(c Config) Config {
 	return c
 }
 
-const listLimit = 1000
-
 type Flusher struct {
 	store objectstore.Store
 	log   *logstream.Log
 	cfg   Config
 
 	branchCheckpoints map[string]uint64
-
-	lastSegTime string
-	lastMicros  uint64
 }
 
 func NewFlusher(store objectstore.Store, log *logstream.Log, cfg Config) (*Flusher, error) {
@@ -59,38 +52,26 @@ func NewFlusher(store objectstore.Store, log *logstream.Log, cfg Config) (*Flush
 }
 
 func (f *Flusher) initCheckpoints(ctx context.Context) (uint64, error) {
-	var startAfter string
+	branches, err := kvfs.ListBranches(ctx, f.store)
+	if err != nil {
+		return 0, fmt.Errorf("list branches: %w", err)
+	}
+
 	var minCheckpoint uint64
 	hasBranch := false
-
-	for {
-		branches, err := kvfs.ListBranches(ctx, f.store, startAfter, listLimit)
+	for _, branch := range branches {
+		manifest, _, err := kvfs.ResolveBranch(ctx, f.store, branch)
 		if err != nil {
-			return 0, fmt.Errorf("list branches: %w", err)
-		}
-		if len(branches) == 0 {
-			break
-		}
-
-		for _, branch := range branches {
-			manifest, _, err := kvfs.ResolveBranch(ctx, f.store, branch)
-			if err != nil {
-				if errors.Is(err, objectstore.ErrNotFound) {
-					continue
-				}
-				return 0, fmt.Errorf("resolve branch %s: %w", branch, err)
+			if errors.Is(err, objectstore.ErrNotFound) {
+				continue
 			}
-			f.branchCheckpoints[branch] = manifest.CheckpointSeq
-			if !hasBranch || manifest.CheckpointSeq < minCheckpoint {
-				minCheckpoint = manifest.CheckpointSeq
-				hasBranch = true
-			}
+			return 0, fmt.Errorf("resolve branch %s: %w", branch, err)
 		}
-
-		if len(branches) < listLimit {
-			break
+		f.branchCheckpoints[branch] = manifest.CheckpointSeq
+		if !hasBranch || manifest.CheckpointSeq < minCheckpoint {
+			minCheckpoint = manifest.CheckpointSeq
+			hasBranch = true
 		}
-		startAfter = branches[len(branches)-1]
 	}
 
 	if hasBranch {
@@ -230,10 +211,7 @@ func (f *Flusher) flushBranch(ctx context.Context, branch string, mutations []*s
 	}
 	data := buf.Bytes()
 
-	segID, err := f.newSegmentID()
-	if err != nil {
-		return fmt.Errorf("generate segment id: %w", err)
-	}
+	segID := fmt.Sprintf("%020d", seq)
 	segKey := segment.Key(branch, segID)
 	if _, err := f.store.Put(ctx, segKey, bytes.NewReader(data), objectstore.Condition{Absent: true}); err != nil {
 		return fmt.Errorf("upload segment %s: %w", segKey, err)
@@ -293,26 +271,4 @@ func (f *Flusher) flushBranch(ctx context.Context, branch string, mutations []*s
 			return fmt.Errorf("update branch %s: %w", branch, err)
 		}
 	}
-}
-
-func (f *Flusher) newSegmentID() (string, error) {
-	var b [5]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("read random bytes: %w", err)
-	}
-	now := time.Now().UTC()
-	ts := now.Format("20060102150405")
-	micros := uint64(now.Nanosecond() / 1000)
-
-	if ts < f.lastSegTime {
-		ts = f.lastSegTime
-		micros = f.lastMicros + 1
-	} else if ts == f.lastSegTime && micros <= f.lastMicros {
-		micros = f.lastMicros + 1
-	}
-
-	f.lastSegTime = ts
-	f.lastMicros = micros
-
-	return fmt.Sprintf("%s-%06d%s", ts, micros, hex.EncodeToString(b[:])), nil
 }

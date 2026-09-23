@@ -92,7 +92,10 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 }
 
 func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.SegmentRef, b *Builder) error {
-	segKey := segment.RefKey(branch, seg)
+	segKey := seg.GetKey()
+	if segKey == "" {
+		return fmt.Errorf("query: segment ref missing key: %s", seg.GetSegmentId())
+	}
 
 	loadStart := time.Now()
 	rc, _, err := l.store.Get(ctx, segKey)

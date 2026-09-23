@@ -10,8 +10,8 @@ const (
 	DefaultTenant    = "cloudy"
 	DefaultNamespace = "default"
 	DefaultBranch    = "main"
-	defaultEpoch     = "0"
-	refPrefix        = "refs/heads/"
+	NamespaceDir     = "ns"
+	RefHead          = "refs/head"
 )
 
 var ErrInvalidName = errors.New("namespace: invalid name")
@@ -51,6 +51,32 @@ func ValidateBranch(branch string) error {
 	return validate(branch)
 }
 
+func BranchRef(tenant, ns, branch string) string {
+	if tenant == "" {
+		tenant = DefaultTenant
+	}
+	if ns == "" {
+		ns = DefaultNamespace
+	}
+	if branch == "" {
+		branch = DefaultBranch
+	}
+	return path.Join(tenant, NamespaceDir, ns, RefHead, branch)
+}
+
+func SegmentKey(tenant, ns, branch, segID string) string {
+	if tenant == "" {
+		tenant = DefaultTenant
+	}
+	if ns == "" {
+		ns = DefaultNamespace
+	}
+	if branch == "" {
+		branch = DefaultBranch
+	}
+	return path.Join(tenant, NamespaceDir, ns, "segments", branch, segID+".recordio")
+}
+
 type Scope struct {
 	Tenant    string
 	Namespace string
@@ -78,25 +104,26 @@ func (s Scope) Validate() error {
 	return nil
 }
 
-func (s Scope) Prefix() string {
-	switch {
-	case s.Tenant != "" && s.Namespace != "":
-		return path.Join(s.Tenant, "ns", s.Namespace, defaultEpoch)
-	case s.Tenant != "":
+func (s Scope) tenant() string {
+	if s.Tenant != "" {
 		return s.Tenant
-	case s.Namespace != "":
-		return path.Join("ns", s.Namespace, defaultEpoch)
-	default:
-		return ""
 	}
+	return DefaultTenant
+}
+
+func (s Scope) namespace() string {
+	if s.Namespace != "" {
+		return s.Namespace
+	}
+	return DefaultNamespace
+}
+
+func (s Scope) Prefix() string {
+	return path.Join(s.tenant(), NamespaceDir, s.namespace())
 }
 
 func (s Scope) Path(subpath string) string {
-	p := s.Prefix()
-	if p == "" {
-		return subpath
-	}
-	return path.Join(p, subpath)
+	return path.Join(s.Prefix(), subpath)
 }
 
 func (s Scope) WALPrefix() string {
@@ -104,7 +131,10 @@ func (s Scope) WALPrefix() string {
 }
 
 func (s Scope) BranchRef(branch string) string {
-	return s.Path(refPrefix + branch)
+	if branch == "" {
+		branch = DefaultBranch
+	}
+	return s.Path(path.Join(RefHead, branch))
 }
 
 func (s Scope) SegmentsPrefix() string {
@@ -117,7 +147,7 @@ func (s Scope) CatalogPath() string {
 
 func CatalogPath(tenant string) string {
 	if tenant == "" {
-		return "ns.json"
+		tenant = DefaultTenant
 	}
 	return path.Join(tenant, "ns.json")
 }

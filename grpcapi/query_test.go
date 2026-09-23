@@ -13,6 +13,7 @@ import (
 	"github.com/iampat/cloudy-neigh/ingest"
 	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -47,6 +48,7 @@ func updateManifest(t *testing.T, ctx context.Context, store objectstore.Store, 
 	for _, id := range segIDs {
 		segs = append(segs, &storagepb.SegmentRef{
 			SegmentId: id,
+			Key:       segment.Key(branch, id),
 		})
 	}
 	m := &storagepb.BranchManifest{
@@ -140,9 +142,10 @@ func TestQuery_Validation(t *testing.T) {
 
 	client, eng := setupQueryTestEnv(t, store)
 
-	writeSegment(t, ctx, store, "main", "seg-1", []*storagepb.DocumentMutation{
+	mainBranch := namespace.BranchRef("", "main", "")
+	writeSegment(t, ctx, store, mainBranch, "seg-1", []*storagepb.DocumentMutation{
 		{
-			Branch: "main",
+			Branch: mainBranch,
 			DocId:  "doc-1",
 			Op:     storagepb.MutationOp_PUT,
 			Payload: func() []byte {
@@ -156,7 +159,7 @@ func TestQuery_Validation(t *testing.T) {
 			}(),
 		},
 	})
-	updateManifest(t, ctx, store, "main", []string{"seg-1"}, "")
+	updateManifest(t, ctx, store, mainBranch, []string{"seg-1"}, "")
 	require.NoError(t, eng.SyncOnce(ctx))
 
 	tests := []struct {
@@ -396,15 +399,16 @@ func TestQuery_ConcurrentSyncAndQuery(t *testing.T) {
 		payload, err := proto.Marshal(rec)
 		require.NoError(t, err)
 
+		mainBranch := namespace.BranchRef("", "main", "")
 		mut := &storagepb.DocumentMutation{
-			Branch:  "main",
+			Branch:  mainBranch,
 			DocId:   rec.Id,
 			Op:      storagepb.MutationOp_PUT,
 			Payload: payload,
 		}
-		writeSegment(t, ctx, store, "main", segID, []*storagepb.DocumentMutation{mut})
+		writeSegment(t, ctx, store, mainBranch, segID, []*storagepb.DocumentMutation{mut})
 		segIDs = append(segIDs, segID)
-		gen = updateManifest(t, ctx, store, "main", segIDs, gen)
+		gen = updateManifest(t, ctx, store, mainBranch, segIDs, gen)
 	}
 
 	close(done)

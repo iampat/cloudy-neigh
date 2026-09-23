@@ -14,8 +14,6 @@ import (
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 )
 
-const listLimit = 1000
-
 type Request struct {
 	Namespace    string
 	VectorColumn string
@@ -69,37 +67,26 @@ func (e *Engine) getOrCreateBranch(branch string) (*branchState, error) {
 }
 
 func (e *Engine) SyncOnce(ctx context.Context) error {
-	var startAfter string
-	for {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	branches, err := kvfs.ListBranches(ctx, e.store)
+	if err != nil {
+		return fmt.Errorf("list branches: %w", err)
+	}
+
+	for _, branch := range branches {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		branches, err := kvfs.ListBranches(ctx, e.store, startAfter, listLimit)
+		b, err := e.getOrCreateBranch(branch)
 		if err != nil {
-			return fmt.Errorf("list branches: %w", err)
+			slog.Error("create loader failed", "branch", branch, "err", err)
+			continue
 		}
-		if len(branches) == 0 {
-			break
+		if _, err := b.loader.Sync(ctx, branch); err != nil {
+			slog.Error("sync branch failed", "branch", branch, "err", err)
 		}
-
-		for _, branch := range branches {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			b, err := e.getOrCreateBranch(branch)
-			if err != nil {
-				slog.Error("create loader failed", "branch", branch, "err", err)
-				continue
-			}
-			if _, err := b.loader.Sync(ctx, branch); err != nil {
-				slog.Error("sync branch failed", "branch", branch, "err", err)
-			}
-		}
-
-		if len(branches) < listLimit {
-			break
-		}
-		startAfter = branches[len(branches)-1]
 	}
 	return nil
 }

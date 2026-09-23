@@ -29,6 +29,7 @@ go_test(
         ":ingest",
         "//kvfs",
         "//logstream",
+        "//namespace",
         "//objectstore",
         "//proto/cloudyneigh/v1:cloudyneigh",
         "//proto/storage/v1:storage",

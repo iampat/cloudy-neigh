@@ -56,44 +56,48 @@ func TestBranchOperations(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 
+		mainKey := namespace.BranchRef("", "", "main")
+		featKey := namespace.BranchRef("", "", "feature-x")
+		featYKey := namespace.BranchRef("", "", "feature-y")
+
 		m1 := sampleManifest(10)
-		gen1, err := kvfs.UpdateBranch(ctx, s, "main", m1, "")
+		gen1, err := kvfs.UpdateBranch(ctx, s, mainKey, m1, "")
 		require.NoError(t, err)
 		assert.NotEmpty(t, gen1)
 
-		resolved1, rGen1, err := kvfs.ResolveBranch(ctx, s, "main")
+		resolved1, rGen1, err := kvfs.ResolveBranch(ctx, s, mainKey)
 		require.NoError(t, err)
 		assert.Equal(t, gen1, rGen1)
 		assert.True(t, proto.Equal(m1, resolved1))
 
-		forkManifest, childGen, err := kvfs.CreateBranch(ctx, s, "feature-x", "main")
+		forkManifest, childGen, err := kvfs.CreateBranch(ctx, s, featKey, mainKey)
 		require.NoError(t, err)
 		assert.NotEmpty(t, childGen)
 		assert.True(t, proto.Equal(m1, forkManifest))
 
-		resolvedChild, _, err := kvfs.ResolveBranch(ctx, s, "feature-x")
+		resolvedChild, _, err := kvfs.ResolveBranch(ctx, s, featKey)
 		require.NoError(t, err)
 		assert.True(t, proto.Equal(m1, resolvedChild))
 
-		_, _, err = kvfs.CreateBranch(ctx, s, "feature-x", "main")
+		_, _, err = kvfs.CreateBranch(ctx, s, featKey, mainKey)
 		assert.ErrorIs(t, err, kvfs.ErrBranchAlreadyExists)
 
-		_, _, err = kvfs.CreateBranch(ctx, s, "feature-y", "nonexistent")
+		_, _, err = kvfs.CreateBranch(ctx, s, featYKey, "nonexistent")
 		assert.Error(t, err)
 
 		m2 := sampleManifest(20)
-		gen2, err := kvfs.UpdateBranch(ctx, s, "main", m2, gen1)
+		gen2, err := kvfs.UpdateBranch(ctx, s, mainKey, m2, gen1)
 		require.NoError(t, err)
 		assert.NotEqual(t, gen1, gen2)
 
-		_, err = kvfs.UpdateBranch(ctx, s, "main", m2, gen1)
+		_, err = kvfs.UpdateBranch(ctx, s, mainKey, m2, gen1)
 		assert.ErrorIs(t, err, objectstore.ErrPreconditionFailed)
 
-		_, err = kvfs.UpdateBranch(ctx, s, "main", nil, gen2)
+		_, err = kvfs.UpdateBranch(ctx, s, mainKey, nil, gen2)
 		assert.ErrorIs(t, err, kvfs.ErrNilManifest)
 
-		require.NoError(t, kvfs.DeleteBranch(ctx, s, "feature-x"))
-		_, _, err = kvfs.ResolveBranch(ctx, s, "feature-x")
+		require.NoError(t, kvfs.DeleteBranch(ctx, s, featKey))
+		_, _, err = kvfs.ResolveBranch(ctx, s, featKey)
 		assert.ErrorIs(t, err, objectstore.ErrNotFound)
 	})
 }
@@ -106,48 +110,12 @@ func TestResolveBranchNotFound(t *testing.T) {
 	})
 }
 
-func TestBranchNameValidation(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
-		ctx := context.Background()
-		invalidNames := []string{
-			"",
-			"/main",
-			"main/",
-			"a/b",
-			"a//b",
-			"features/search",
-			"123branch",
-			"-branch",
-			"_branch",
-			"branch with spaces",
-			"branch..traversal",
-			"branch@tag",
-		}
-
-		m := sampleManifest(1)
-		for _, name := range invalidNames {
-			t.Run(name, func(t *testing.T) {
-				_, _, err := kvfs.ResolveBranch(ctx, s, name)
-				assert.ErrorIs(t, err, namespace.ErrInvalidName)
-
-				_, err = kvfs.UpdateBranch(ctx, s, name, m, "")
-				assert.ErrorIs(t, err, namespace.ErrInvalidName)
-
-				_, _, err = kvfs.CreateBranch(ctx, s, name, "main")
-				assert.ErrorIs(t, err, namespace.ErrInvalidName)
-
-				err = kvfs.DeleteBranch(ctx, s, name)
-				assert.ErrorIs(t, err, namespace.ErrInvalidName)
-			})
-		}
-	})
-}
-
 func TestConcurrentBranchUpdates(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
+		mainKey := namespace.BranchRef("", "", "main")
 		m := sampleManifest(1)
-		gen, err := kvfs.UpdateBranch(ctx, s, "main", m, "")
+		gen, err := kvfs.UpdateBranch(ctx, s, mainKey, m, "")
 		require.NoError(t, err)
 
 		const writers = 16
@@ -160,7 +128,7 @@ func TestConcurrentBranchUpdates(t *testing.T) {
 			go func(seq uint64) {
 				defer wg.Done()
 				nextM := sampleManifest(seq)
-				_, err := kvfs.UpdateBranch(ctx, s, "main", nextM, gen)
+				_, err := kvfs.UpdateBranch(ctx, s, mainKey, nextM, gen)
 				switch {
 				case err == nil:
 					wins.Add(1)
@@ -187,22 +155,18 @@ func TestListBranches(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s objectstore.Store) {
 		ctx := context.Background()
 
-		for _, name := range []string{"alpha", "beta", "gamma"} {
+		kAlpha := namespace.BranchRef("", "", "alpha")
+		kBeta := namespace.BranchRef("", "", "beta")
+		kGamma := namespace.BranchRef("", "", "gamma")
+
+		for _, key := range []string{kAlpha, kBeta, kGamma} {
 			m := sampleManifest(1)
-			_, err := kvfs.UpdateBranch(ctx, s, name, m, "")
+			_, err := kvfs.UpdateBranch(ctx, s, key, m, "")
 			require.NoError(t, err)
 		}
 
-		branches, err := kvfs.ListBranches(ctx, s, "", 0)
+		branches, err := kvfs.ListBranches(ctx, s)
 		require.NoError(t, err)
-		assert.Equal(t, []string{"alpha", "beta", "gamma"}, branches)
-
-		page1, err := kvfs.ListBranches(ctx, s, "", 2)
-		require.NoError(t, err)
-		assert.Equal(t, []string{"alpha", "beta"}, page1)
-
-		page2, err := kvfs.ListBranches(ctx, s, page1[len(page1)-1], 2)
-		require.NoError(t, err)
-		assert.Equal(t, []string{"gamma"}, page2)
+		assert.Equal(t, []string{kAlpha, kBeta, kGamma}, branches)
 	})
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/iampat/cloudy-neigh/kvfs"
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -35,6 +36,7 @@ func updateEngineManifest(t *testing.T, ctx context.Context, store objectstore.S
 	for _, id := range segIDs {
 		segs = append(segs, &storagepb.SegmentRef{
 			SegmentId: id,
+			Key:       segment.Key(branch, id),
 		})
 	}
 	m := &storagepb.BranchManifest{
@@ -114,15 +116,16 @@ func TestEngine_Query_SuccessAndDefaultColumn(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	writeEngineSegment(t, ctx, store, "main", "seg-1", []*storagepb.DocumentMutation{
+	branch := namespace.BranchRef("", "", "main")
+	writeEngineSegment(t, ctx, store, branch, "seg-1", []*storagepb.DocumentMutation{
 		{
-			Branch:  "main",
+			Branch:  branch,
 			DocId:   "doc-1",
 			Op:      storagepb.MutationOp_PUT,
 			Payload: payload,
 		},
 	})
-	updateEngineManifest(t, ctx, store, "main", []string{"seg-1"}, "")
+	updateEngineManifest(t, ctx, store, branch, []string{"seg-1"}, "")
 
 	eng, err := query.NewEngine(store, 20*time.Millisecond)
 	require.NoError(t, err)
@@ -130,7 +133,7 @@ func TestEngine_Query_SuccessAndDefaultColumn(t *testing.T) {
 	require.NoError(t, eng.SyncOnce(ctx))
 
 	hits, _, err := eng.Query(ctx, query.Request{
-		Namespace: "main",
+		Namespace: branch,
 		Vector:    []float32{1.0, 0.0},
 		TopK:      10,
 	})

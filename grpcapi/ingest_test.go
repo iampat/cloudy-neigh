@@ -11,6 +11,7 @@ import (
 	"github.com/iampat/cloudy-neigh/ingest"
 	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -115,7 +116,7 @@ func TestUpsert_Success(t *testing.T) {
 
 	var walRec1 storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[0], &walRec1))
-	assert.Equal(t, "main", walRec1.GetMutation().Branch)
+	assert.Equal(t, namespace.BranchRef("", "main", ""), walRec1.GetMutation().Branch)
 	assert.Equal(t, "doc-1", walRec1.GetMutation().DocId)
 	assert.Equal(t, storagepb.MutationOp_PUT, walRec1.GetMutation().Op)
 
@@ -127,7 +128,7 @@ func TestUpsert_Success(t *testing.T) {
 
 	var walRec2 storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[1], &walRec2))
-	assert.Equal(t, "main", walRec2.GetMutation().Branch)
+	assert.Equal(t, namespace.BranchRef("", "main", ""), walRec2.GetMutation().Branch)
 	assert.Equal(t, "doc-2", walRec2.GetMutation().DocId)
 
 	var payload2 cloudyneighpb.Record
@@ -219,7 +220,7 @@ func TestUpsert_DefaultNamespace(t *testing.T) {
 
 	var walRec storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[0], &walRec))
-	assert.Equal(t, "default", walRec.GetMutation().Branch)
+	assert.Equal(t, namespace.BranchRef("", "", ""), walRec.GetMutation().Branch)
 	assert.Equal(t, "doc-default", walRec.GetMutation().DocId)
 }
 
@@ -249,7 +250,7 @@ func TestDelete_Success(t *testing.T) {
 
 		mutation := rec.GetMutation()
 		require.NotNil(t, mutation)
-		assert.Equal(t, "main", mutation.Branch)
+		assert.Equal(t, namespace.BranchRef("", "main", ""), mutation.Branch)
 		assert.Equal(t, wantIds[i], mutation.DocId)
 		assert.Equal(t, storagepb.MutationOp_DELETE, mutation.Op)
 		assert.Empty(t, mutation.Payload)
@@ -324,7 +325,7 @@ func TestDelete_DefaultNamespace(t *testing.T) {
 
 	var walRec storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[0], &walRec))
-	assert.Equal(t, "default", walRec.GetMutation().Branch)
+	assert.Equal(t, namespace.BranchRef("", "", ""), walRec.GetMutation().Branch)
 	assert.Equal(t, "doc-default", walRec.GetMutation().DocId)
 	assert.Equal(t, storagepb.MutationOp_DELETE, walRec.GetMutation().Op)
 }
@@ -343,7 +344,7 @@ func TestFork(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.NotFound, st.Code())
 
-	_, err = kvfs.UpdateBranch(ctx, store, "wiki_parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = kvfs.UpdateBranch(ctx, store, namespace.BranchRef("", "wiki", "parent"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -392,10 +393,10 @@ func TestFork(t *testing.T) {
 	evt := walRec.GetBranchEvent()
 	require.NotNil(t, evt)
 	assert.Equal(t, storagepb.BranchLifecycleEvent_FORK, evt.Type)
-	assert.Equal(t, "wiki_child", evt.Branch)
-	assert.Equal(t, "wiki_parent", evt.ParentBranch)
+	assert.Equal(t, namespace.BranchRef("", "wiki", "child"), evt.Branch)
+	assert.Equal(t, namespace.BranchRef("", "wiki", "parent"), evt.ParentBranch)
 
-	_, err = kvfs.UpdateBranch(ctx, store, "main", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = kvfs.UpdateBranch(ctx, store, namespace.BranchRef("", "", "main"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -507,7 +508,7 @@ func TestLocalFSBackend(t *testing.T) {
 	require.NoError(t, proto.Unmarshal(scanner1.Record(), &rec1))
 	m1 := rec1.GetMutation()
 	require.NotNil(t, m1)
-	assert.Equal(t, "wiki", m1.Branch)
+	assert.Equal(t, namespace.BranchRef("", "wiki", ""), m1.Branch)
 	assert.Equal(t, "wiki-101", m1.DocId)
 	assert.Equal(t, storagepb.MutationOp_PUT, m1.Op)
 
@@ -528,7 +529,7 @@ func TestLocalFSBackend(t *testing.T) {
 	require.NoError(t, proto.Unmarshal(scanner2.Record(), &rec2))
 	m2 := rec2.GetMutation()
 	require.NotNil(t, m2)
-	assert.Equal(t, "wiki", m2.Branch)
+	assert.Equal(t, namespace.BranchRef("", "wiki", ""), m2.Branch)
 	assert.Equal(t, "wiki-102", m2.DocId)
 	assert.Equal(t, storagepb.MutationOp_DELETE, m2.Op)
 	assert.Empty(t, m2.Payload)

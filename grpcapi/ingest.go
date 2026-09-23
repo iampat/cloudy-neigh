@@ -51,16 +51,7 @@ func resolveBranch(ns, rawBranch string) (string, error) {
 			return "", status.Errorf(codes.InvalidArgument, "grpcapi: invalid branch: %v", err)
 		}
 	}
-	if rawBranch == "" {
-		if ns == "" {
-			return namespace.DefaultNamespace, nil
-		}
-		return ns, nil
-	}
-	if ns == "" || ns == namespace.DefaultNamespace {
-		return rawBranch, nil
-	}
-	return ns + "_" + rawBranch, nil
+	return namespace.BranchRef("", ns, rawBranch), nil
 }
 
 func resolveForkBranches(ns, rawSrc, rawTarget string) (string, string, error) {
