@@ -2,6 +2,8 @@
 
 ### Added
 
+- `manifest`: lightweight branch manifest storage with generation-matched CAS updates. [#142]
+- `namespace`: branch catalog tracking in `branches.json` with CAS updates. [#142]
 - `grpcapi.IngestService.Fork`: RPC to fork a branch within a namespace with WAL sequencing. [#138]
 - `ingest.Ingester`: synchronous batch ingestion appending client document batches directly to the WAL. [#140]
 - Automatic namespace creation on first document flush in `ingest.Flusher`. [#140]
@@ -53,6 +55,10 @@
 
 ### Changed
 
+- Replaced `kvfs` package with `manifest` package for branch manifest reads and CAS writes. [#142]
+- Flattened segment storage under `<tenant>/ns/<namespace>/segments/` without branch subdirectories. [#142]
+- Unified storage layout and key paths under explicit tenant and namespace prefixes. [#142]
+- `query.Engine`: simplified branch sync to discover branches through `branches.json` without internal branch state wrappers. [#142]
 - `cmd/cloudy`: renamed `-listen` to `-addr` and `-url` to `-storage-root`. [#141]
 - `cmd/cloudy`: internalized `walStream` and set `maxMsgSize` as a code constant. [#141]
 - `ingest.Flusher`: simplified flusher to materialize segments directly per WAL sequence and drain partial sequences on shutdown. [#140]
@@ -67,6 +73,8 @@
 
 ### Removed
 
+- `kvfs`: deleted key-value filesystem package in favor of `manifest` package. [#142]
+- `query`: deleted `getOrCreateBranch` and `branchState` wrappers. [#142]
 - `ingest.BatchIngester`: removed server-side batch buffering, actor goroutine, and timer loops. [#140]
 - `cmd/cloudy`: removed `-batch-docs`, `-batch-interval`, `-stream`, and `-max-msg-size` flags. [#140, #141]
 - `query.QueryExecutor`: deleted redundant query executor abstraction. [#133, #134]
@@ -75,7 +83,7 @@
 ### Fixed
 
 - `ingest.Flusher`: fixed cancellation handling to retry the active sequence on shutdown rather than skipping records. [#140]
-- `ingest.Ingester`: roll back created KVFS branch if appending the fork event fails. [#138]
+- `ingest.Ingester`: roll back created branch if appending the fork event fails. [#140]
 - `cloudy ingest`: gRPC GracefulStop bounded by a 5-second timeout with a
   hard-stop fallback. The server stops when the flusher stops. [#105]
 - `recordio.Reader`: a non-EOF read error inside a payload or footer now

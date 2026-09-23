@@ -1,10 +1,17 @@
 # TODO
 
+- [X] Unify storage layout and replace `kvfs` with lightweight `manifest` package. Flattened segments under `segments/` and cataloged active branches in `branches.json`. [#142]
+- [X] Simplify query engine branch discovery and synchronization. Load branches from `branches.json` and remove `branchState` wrapper. [#142]
+- [X] Clean up server CLI flags. Renamed `-listen` to `-addr` and `-url` to `-storage-root`. Internalized stream name and message size. [#141]
 - [X] Audit codebase for instances of premature optimization. Always compare with a vanilla baseline first. [#133, #134]
   - Example: `Table` switched from chunked copy-on-write slices to a flat contiguous `[]float32` array. PR 134 eliminated dead SIMD intrinsics, QueryExecutor, Table mutex, and Loader buffering. [#133, #134]
 - [X] Eliminate server-side batch buffering in Ingester. Replaced BatchIngester actor goroutine and channels with direct synchronous WAL Append. [#140]
 - [X] Add Fork RPC to IngestService with namespace scoping and WAL event sequencing. [#138]
 - [ ] Support capturing unflushed parent mutations before Fork manifest creation. Currently Fork clones the committed storage manifest at call time. [#137]
+- [ ] Background compaction worker to merge flat immutable segments across branches.
+- [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
+- [ ] Expose branch deletion RPC in IngestService to remove branch pointers and update `branches.json`.
+- [ ] Route WAL log streams per tenant and namespace in `cmd/cloudy` server CLI.
 - [ ] Refactor the storage layer. [#47]
   - [ ] Replace the cloud SDK with a shim around GCS. Use the atomic-file
         package from Tailscale. [#47]
@@ -85,7 +92,7 @@
 - [ ] Plan and execute deterministic simulation testing from `docs/design/testing.md`. [#85]
   - [ ] Implement injectable `Clock` interface in `internal/xtime`.
   - [ ] Build deterministic `FaultStore` proxy wrapping `objectstore.memDriver`.
-  - [ ] Implement shadow invariant differential test harness for `logstream` and `kvfs`.
+  - [ ] Implement shadow invariant differential test harness for `logstream` and `manifest`.
 - [ ] Integrate Python into Bazel. [#101, #104]
   - [X] Configure `rules_python` in `MODULE.bazel` for hermetic Python toolchains. [#101]
   - [X] Add Bazel targets (`py_binary`, `py_library`) for Python scripts. [#101]

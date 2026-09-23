@@ -116,9 +116,9 @@ Establish the minimal functional search engine. A user can run a single node, in
 
 - **Object storage abstraction (Done)**: Layer 0 `objectstore.Store` with GCS, local disk, and in-memory backends. [#41, #66, #71, #74, #86]
 - **Write-ahead log (Done)**: Layer 1 `logstream` append-only WAL over `recordio` and `objectstore`. [#34, #57, #70, #72, #81, #87]
-- **Branching key-value engine (Done)**: Layer 2 `kvfs` CAS blob storage, protobuf schemas, and manifest snapshots. [#77, #78, #79, #80, #83, #84, #88]
-- **Memtable and flush (Done)**: Direct synchronous WAL ingestion with background flusher materializing immutable segments to object storage. [#99, #100, #103, #134, #140]
-- **gRPC service (Done)**: Implement `Upsert`, `Delete`, `Fork`, and `Query` RPC endpoints. [#97, #100, #102, #105, #106, #112, #138, #141]
+- **Branch manifest storage (Done)**: Layer 2 `manifest` package for branch pointers and immutable segment tracking. [#77, #78, #79, #80, #83, #84, #88, #142]
+- **Memtable and flush (Done)**: Direct synchronous WAL ingestion with background flusher materializing immutable segments to object storage. [#99, #100, #103, #134, #140, #142]
+- **gRPC service (Done)**: Implement `Upsert`, `Delete`, `Fork`, and `Query` RPC endpoints. [#97, #100, #102, #105, #106, #112, #138, #141, #142]
 - **Exact k-NN search (Done)**: Brute-force vector distance computation for Cosine, Dot Product, and Euclidean (L2) metrics. [#107, #108, #110, #112, #133, #134]
 - **Attribute filtering (Done)**: Exact match equality predicate on scalar document attributes. [#97, #107, #110]
 
@@ -209,8 +209,9 @@ Support multi-vector document representations and modern retrieval models.
 
 Provide Git-like dataset branching and point-in-time snapshot isolation.
 
-- **Branch head references (Done)**: Atomic branch pointers in object storage (`refs/heads/<branch>`) referencing immutable manifests. [#78, #79]
-- **Zero-copy namespace branching (Done)**: Instant creation of isolated branch copies via `Fork` RPC without copying segments. [#79, #138, #139]
+- **Branch head references (Done)**: Atomic branch pointers in object storage (`refs/head/<branch>`) referencing immutable manifests. [#78, #79, #142]
+- **Branch catalog (Done)**: Active branch catalog in `branches.json` per namespace with CAS updates. [#142]
+- **Zero-copy namespace branching (Done)**: Instant creation of isolated branch copies with `Fork` RPC without copying segments. [#79, #138, #139, #140, #142]
 - **Point-in-time queries**: Pin queries to specific historical snapshot versions.
 - **Garbage collection (GC)**: Background service to clean up unreferenced blobs and superseded manifest files.
 

@@ -37,8 +37,8 @@ and branch manifests to object storage.
    ┌─────────────────────────────────────────────────────────────┐
    │                    Cloud Object Storage                     │
    │           <storage-root>/<tenant>/ns/<namespace>/           │
-   │  wal/                  segments/             refs/head/     │
-   │  <020d_seq>.recordio   <seg_id>.recordio     <branch>       │
+   │  wal/             segments/          branches.json  refs/   │
+   │  <seq>.recordio   <seg_id>.recordio                 head/   │
    └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -81,34 +81,44 @@ object storage.
 │     ingest.Flusher      │ Buffers mutations per sequence in memory
 └──────┬──────────────────┘
        │ Flush on sequence commit or shutdown
-       ├──▶ Writes segments/<seg_id>.recordio via segment.Writer
-       └──▶ Updates refs/head/<branch> manifest via manifest.Write
+       ├──▶ Writes segments/<seg_id>.recordio with segment.Writer
+       ├──▶ Updates refs/head/<branch> manifest with manifest.Write
+       └──▶ Registers branch in branches.json with namespace.AddBranch
 ```
 
 ### Ingestion Execution Flow
 
 ```text
 grpcapi.IngestServer.Upsert
-  namespace.Scope
+  resolveNamespace
+  resolveBranch (namespace.BranchRef)
   ingest.Ingester.Upsert
     logstream.Log.Append
       recordio.Writer.WriteRecord
       objectstore.Store.Put (wal/<020d_seq>.recordio)
+grpcapi.IngestServer.Fork
+  resolveForkBranches
+  ingest.Ingester.Fork
+    manifest.Read (source)
+    manifest.Write (target, Absent: true)
+    namespace.AddBranch (branches.json)
+    logstream.Log.Append (BranchLifecycleEvent_FORK)
 ingest.Flusher.Run (Background goroutine)
   logstream.Log.Read
   ingest.Flusher.processRecords
   ingest.Flusher.flushBranch
     segment.Writer.Write (segments/<seg_id>.recordio)
     manifest.Write (refs/head/<branch>, CAS generation)
+    namespace.AddBranch (branches.json)
 ```
 
 ---
 
 ## Query Pipeline (Read Path)
 
-Query nodes read immutable segment references from branch pointers, load
-columnar segments into flat contiguous memory, and compute exact k-NN vector
-distances and scalar attribute filters.
+Query nodes read immutable segment references from branch pointers. They load
+columnar segments into flat memory. They compute exact k-NN vector distances
+and attribute filters.
 
 ```text
 ┌─────────────┐
@@ -144,12 +154,16 @@ distances and scalar attribute filters.
 ### Query Execution Flow
 
 ```text
+query.Engine.Run (Background sync loop)
+  namespace.ListBranches (reads branches.json)
+  query.Loader.Sync
+    manifest.Read (refs/head/<branch>)
+    segment.NewReader (segments/<id>.recordio)
+    table.Builder.UpsertRecord (appends into flat []float32)
 grpcapi.QueryServer.Query
+  resolveBranch (namespace.BranchRef)
   query.Engine.Query
-    query.Loader.Sync
-      manifest.Read (refs/head/<branch>)
-      segment.NewReader (segments/<id>.recordio)
-      query.Table.Upsert (appends vectors into flat []float32)
+    loader.Table (atomic read of immutable table)
     query.Table.Search
       query/distance.DotProduct / Cosine / L2Squared
       evaluate attribute equality predicates
@@ -191,8 +205,8 @@ Each namespace contains:
 - `segments/`: flat immutable columnar segment files without branch
   subdirectories.
 - `branches.json`: catalog of active branches in the namespace.
-- `refs/head/`: protobuf manifest files tracking checkpoint sequence and segment
-  IDs per branch.
+- `refs/head/`: protobuf manifest files tracking checkpoint sequence and
+  segment IDs per branch.
 
 The dev server CLI (`cmd/cloudy`) currently uses a single root `wal/` prefix
 pending per-tenant log stream routing.
@@ -202,12 +216,13 @@ pending per-tenant log stream routing.
 1. **WAL records are immutable**: Once written, a WAL sequence file is never
    modified or overwritten.
 2. **Segment blobs are flat and content-isolated**: Segment files contain
-   immutable vector and document data. Segments live directly under `segments/`
-   without branch subdirectories and are shared across forked branches.
+   immutable vector and document data. Segments live directly under
+   `segments/` without branch subdirectories and are shared across forked
+   branches.
 3. **Branch heads advance monotonically**: Manifest commits update
-   `<tenant>/ns/<namespace>/refs/head/<branch>` using `manifest.Write` with
+   `<tenant>/ns/<namespace>/refs/head/<branch>` with `manifest.Write` using
    conditional creates (`Absent: true`) or generation-matched CAS updates.
-4. **Branch catalog**: Active branches are cataloged in `branches.json` using
+4. **Branch catalog**: Active branches are cataloged in `branches.json` with
    CAS updates.
 
 ---
@@ -223,7 +238,7 @@ pending per-tenant log stream routing.
 | `logstream` | WAL | Monotonic append-only log over RecordIO |
 | `recordio` | Framing | Framed binary reader, writer, and scanner |
 | `query` | Engine | Columnar in-memory table and manifest loader |
-| `query/distance` | Math | Vector distance kernels (scalar and portable SIMD) |
+| `query/distance` | Math | Distance kernels (scalar and portable SIMD) |
 | `segment` | Storage | Segment encoding and decoding over RecordIO |
 | `manifest` | Storage | Branch manifest read and CAS write |
 | `objectstore` | Storage | Store drivers (GCS, local disk, memory) |
