@@ -156,6 +156,8 @@ not trust memory over the help output.
   diff.
 - Design notes: Markdown in `docs/design/`. Update them alongside the code they
   describe.
+- Append contributing pull request numbers to entries in documentation
+  (`CHANGELOG.md`, `ROADMAP.md`, `TODO.md`, etc.) formatted as `[#1234, #5678]`.
 - Every change reaches `main` through a pull request. Never commit on `main`,
   and never push to `origin/main`. Start a branch first, even for a one-line
   Markdown edit.

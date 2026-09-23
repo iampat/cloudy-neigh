@@ -17,6 +17,7 @@ The highest-value review finding is a deletion.
 - Inline a function with one caller.
 - No wrapper type, generic, or helper introduced for one caller.
 - No cross-package error aliases or forwarding functions. Callers and tests use canonical errors and functions from the owning package directly.
+- No trivial forwarding wrappers. Callers invoke target package functions directly instead of creating a single-expression local wrapper.
 - Collapse two switches on the same value into one.
 - Fold two files that differ in one field into one file.
 - Do not assert what you can assume already works. Test the thing under test.
