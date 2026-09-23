@@ -37,8 +37,8 @@ and branch manifests to object storage.
    ┌─────────────────────────────────────────────────────────────┐
    │                    Cloud Object Storage                     │
    │           <storage-root>/<tenant>/ns/<namespace>/           │
-   │  wal/                   segments/<branch>/    refs/head/    │
-   │  <020d_seq>.recordio    <020d_seq>.recordio   <branch>      │
+   │  wal/                  segments/             refs/head/     │
+   │  <020d_seq>.recordio   <seg_id>.recordio     <branch>       │
    └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -81,8 +81,8 @@ object storage.
 │     ingest.Flusher      │ Routes mutations into in-memory memtables
 └──────┬──────────────────┘
        │ Flush on sequence commit or shutdown
-       ├──▶ Writes segments/<branch>/<020d_seq>.recordio via segment.Writer
-       └──▶ Updates refs/head/<branch> via CAS (Absent: true or GenMatch)
+       ├──▶ Writes segments/<seg_id>.recordio via segment.Writer
+       └──▶ Updates refs/head/<branch> manifest via manifest.Write
 ```
 
 ### Ingestion Execution Flow
@@ -98,8 +98,8 @@ ingest.Flusher.Run (Background goroutine)
   logstream.Log.ReadSeq
   ingest.Flusher.processRecords
   ingest.Flusher.flushBranch
-    segment.Writer.Write (segments/<branch>/<020d_seq>.recordio)
-    objectstore.Store.Put (refs/head/<branch>, if-generation-match)
+    segment.Writer.Write (segments/<seg_id>.recordio)
+    manifest.Write (refs/head/<branch>, CAS generation)
 ```
 
 ---
@@ -147,8 +147,8 @@ distances and scalar attribute filters.
 grpcapi.QueryServer.Query
   query.Engine.Query
     query.Loader.SyncBranch
-      objectstore.Store.Get (refs/head/<branch>)
-      segment.Reader.Open (segments/<branch>/<id>.recordio)
+      manifest.Read (refs/head/<branch>)
+      segment.Reader.Open (segments/<id>.recordio)
       query.Table.Add (appends vectors into flat []float32)
     query.Table.Search
       query/distance.DotProduct / Cosine / L2Squared
@@ -167,6 +167,7 @@ segments.
 ```text
 <storage-root>/
 └── <tenant>/
+    ├── ns.json
     └── ns/
         └── <namespace>/
             ├── wal/
@@ -174,32 +175,37 @@ segments.
             │   ├── 00000000000000000002.recordio
             │   └── 00000000000000000003.recordio
             ├── segments/
-            │   └── <branch>/
-            │       ├── 00000000000000000001.recordio
-            │       └── 00000000000000000002.recordio
+            │   ├── 00000000000000000001-<branch>.recordio
+            │   └── 00000000000000000002-<branch>.recordio
+            ├── branches.json
             └── refs/
                 └── head/
                     ├── main
                     └── <branch>
 ```
 
-Each tenant has its own folder. Inside it, `ns/` holds that tenant's namespaces.
-Each namespace has three folders:
-- `wal/`: the write-ahead log files.
-- `segments/<branch>/`: data files, grouped by branch.
-- `refs/head/`: one file per branch (like main) pointing to its latest state.
+Each tenant has its own folder. Inside it, `ns.json` lists namespaces and
+`ns/` holds namespace directories.
+Each namespace contains:
+- `wal/`: append-only write-ahead log files.
+- `segments/`: flat immutable columnar segment files without branch
+  subdirectories.
+- `branches.json`: catalog of active branches in the namespace.
+- `refs/head/`: protobuf manifest files tracking checkpoint sequence and segment
+  IDs per branch.
 
 ### Storage Invariants
 
 1. **WAL records are immutable**: Once written, a WAL sequence file is never
    modified or overwritten.
-2. **Segment blobs are content-isolated**: Segment files contain immutable
-   vector and document data. Segments are shared across forked branches
-   without data duplication.
+2. **Segment blobs are flat and content-isolated**: Segment files contain
+   immutable vector and document data. Segments live directly under `segments/`
+   without branch subdirectories and are shared across forked branches.
 3. **Branch heads advance monotonically**: Manifest commits update
-   `<tenant>/ns/<namespace>/refs/head/<branch>` using conditional
-   creates (`Absent: true`) or generation-matched updates
-   (`if-generation-match`).
+   `<tenant>/ns/<namespace>/refs/head/<branch>` using `manifest.Write` with
+   conditional creates (`Absent: true`) or generation-matched CAS updates.
+4. **Branch catalog**: Active branches are cataloged in `branches.json` using
+   CAS updates.
 
 ---
 
@@ -216,5 +222,5 @@ Each namespace has three folders:
 | `query` | Engine | Columnar in-memory table and manifest loader |
 | `query/distance` | Math | Vector distance kernels (scalar and portable SIMD) |
 | `segment` | Storage | Segment encoding and decoding over RecordIO |
-| `kvfs` | Store | CAS blob storage, branch pointers, and manifests |
+| `manifest` | Storage | Branch manifest read and CAS write |
 | `objectstore` | Storage | Store drivers (GCS, local disk, memory) |
