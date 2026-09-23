@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strings"
 )
 
 const (
@@ -64,17 +65,25 @@ func BranchRef(tenant, ns, branch string) string {
 	return path.Join(tenant, NamespaceDir, ns, RefHead, branch)
 }
 
-func SegmentKey(tenant, ns, branch, segID string) string {
+func SegmentKey(tenant, ns, segID string) string {
 	if tenant == "" {
 		tenant = DefaultTenant
 	}
 	if ns == "" {
 		ns = DefaultNamespace
 	}
-	if branch == "" {
-		branch = DefaultBranch
+	return path.Join(tenant, NamespaceDir, ns, "segments", segID+".recordio")
+}
+
+func ScopeFromRef(branchRef string) (Scope, string) {
+	if prefix, branch, ok := strings.Cut(branchRef, "/"+RefHead+"/"); ok {
+		tenant, ns, _ := strings.Cut(prefix, "/"+NamespaceDir+"/")
+		return Scope{Tenant: tenant, Namespace: ns}, branch
 	}
-	return path.Join(tenant, NamespaceDir, ns, "segments", branch, segID+".recordio")
+	if branch, ok := strings.CutPrefix(branchRef, RefHead+"/"); ok {
+		return Scope{}, branch
+	}
+	return Scope{}, branchRef
 }
 
 type Scope struct {
@@ -139,6 +148,24 @@ func (s Scope) BranchRef(branch string) string {
 
 func (s Scope) SegmentsPrefix() string {
 	return s.Path("segments")
+}
+
+func (s Scope) SegmentKey(segID string) string {
+	return s.Path(path.Join("segments", segID+".recordio"))
+}
+
+func (s Scope) BranchesPath() string {
+	return s.Path("branches.json")
+}
+
+func BranchesPath(tenant, ns string) string {
+	if tenant == "" {
+		tenant = DefaultTenant
+	}
+	if ns == "" {
+		ns = DefaultNamespace
+	}
+	return path.Join(tenant, NamespaceDir, ns, "branches.json")
 }
 
 func (s Scope) CatalogPath() string {

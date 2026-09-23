@@ -4,23 +4,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"github.com/iampat/cloudy-neigh/recordio"
 	"google.golang.org/protobuf/proto"
 )
 
-const KeyPattern = "segments/%s/%s.recordio"
+const KeyPattern = "segments/%s.recordio"
 
-func Key(branch, segID string) string {
-	if strings.Contains(branch, "/refs/head/") {
-		return strings.Replace(branch, "/refs/head/", "/segments/", 1) + "/" + segID + ".recordio"
-	}
-	if strings.HasPrefix(branch, "refs/head/") {
-		return strings.Replace(branch, "refs/head/", "segments/", 1) + "/" + segID + ".recordio"
-	}
-	return fmt.Sprintf(KeyPattern, branch, segID)
+func Key(segID string) string {
+	return fmt.Sprintf(KeyPattern, segID)
 }
 
 var ErrNilMutation = errors.New("segment: nil mutation")

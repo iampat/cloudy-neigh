@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iampat/cloudy-neigh/kvfs"
+	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -25,7 +25,7 @@ func writeEngineSegment(t *testing.T, ctx context.Context, store objectstore.Sto
 		require.NoError(t, w.Write(m))
 	}
 	require.NoError(t, w.Close())
-	segKey := segment.Key(branch, segID)
+	segKey := namespace.SegmentKey("", "", segID)
 	_, err := store.Put(ctx, segKey, bytes.NewReader(buf.Bytes()), objectstore.Condition{Absent: true})
 	require.NoError(t, err)
 }
@@ -36,15 +36,17 @@ func updateEngineManifest(t *testing.T, ctx context.Context, store objectstore.S
 	for _, id := range segIDs {
 		segs = append(segs, &storagepb.SegmentRef{
 			SegmentId: id,
-			Key:       segment.Key(branch, id),
+			Key:       namespace.SegmentKey("", "", id),
 		})
 	}
 	m := &storagepb.BranchManifest{
 		SchemaVersion: 1,
 		Segments:      segs,
 	}
-	gen, err := kvfs.UpdateBranch(ctx, store, branch, m, expectedGen)
+	gen, err := manifest.Write(ctx, store, branch, m, expectedGen)
 	require.NoError(t, err)
+	scope, _ := namespace.ScopeFromRef(branch)
+	_ = scope.AddBranch(ctx, store, branch)
 	return gen
 }
 

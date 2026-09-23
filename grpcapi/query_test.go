@@ -11,8 +11,8 @@ import (
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -37,26 +37,29 @@ func writeSegment(t *testing.T, ctx context.Context, store objectstore.Store, br
 		require.NoError(t, w.Write(m))
 	}
 	require.NoError(t, w.Close())
-	segKey := segment.Key(branch, segID)
+	scope, _ := namespace.ScopeFromRef(branch)
+	segKey := scope.SegmentKey(segID)
 	_, err := store.Put(ctx, segKey, bytes.NewReader(buf.Bytes()), objectstore.Condition{Absent: true})
 	require.NoError(t, err)
 }
 
 func updateManifest(t *testing.T, ctx context.Context, store objectstore.Store, branch string, segIDs []string, expectedGen string) string {
 	t.Helper()
+	scope, _ := namespace.ScopeFromRef(branch)
 	var segs []*storagepb.SegmentRef
 	for _, id := range segIDs {
 		segs = append(segs, &storagepb.SegmentRef{
 			SegmentId: id,
-			Key:       segment.Key(branch, id),
+			Key:       scope.SegmentKey(id),
 		})
 	}
 	m := &storagepb.BranchManifest{
 		SchemaVersion: 1,
 		Segments:      segs,
 	}
-	gen, err := kvfs.UpdateBranch(ctx, store, branch, m, expectedGen)
+	gen, err := manifest.Write(ctx, store, branch, m, expectedGen)
 	require.NoError(t, err)
+	_ = namespace.AddBranch(ctx, store, "", branch)
 	return gen
 }
 

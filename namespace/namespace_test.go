@@ -114,8 +114,10 @@ func TestBranchRef(t *testing.T) {
 	assert.Equal(t, "cloudy/ns/default/refs/head/main", namespace.BranchRef("cloudy", "default", "main"))
 	assert.Equal(t, "acme/ns/prod/refs/head/main", namespace.BranchRef("acme", "prod", "main"))
 	assert.Equal(t, "cloudy/ns/prod/refs/head/main", namespace.BranchRef("", "prod", "main"))
-	assert.Equal(t, "cloudy/ns/prod/refs/head/dev", namespace.BranchRef("", "prod", "dev"))
-	assert.Equal(t, "acme/ns/prod/segments/main/00000000000000000001.recordio", namespace.SegmentKey("acme", "prod", "main", "00000000000000000001"))
+	assert.Equal(t, "acme/ns/prod/segments/00000000000000000001.recordio", namespace.SegmentKey("acme", "prod", "00000000000000000001"))
+	scope, _ := namespace.ScopeFromRef("acme/ns/prod/refs/head/main")
+	assert.Equal(t, "acme/ns/prod/segments/00000000000000000001.recordio", scope.SegmentKey("00000000000000000001"))
+	assert.Equal(t, "acme/ns/prod/branches.json", namespace.BranchesPath("acme", "prod"))
 }
 
 func TestScope_ValidationErrors(t *testing.T) {

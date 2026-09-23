@@ -9,8 +9,8 @@ import (
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -344,7 +344,7 @@ func TestFork(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.NotFound, st.Code())
 
-	_, err = kvfs.UpdateBranch(ctx, store, namespace.BranchRef("", "wiki", "parent"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, store, namespace.BranchRef("", "wiki", "parent"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -396,7 +396,7 @@ func TestFork(t *testing.T) {
 	assert.Equal(t, namespace.BranchRef("", "wiki", "child"), evt.Branch)
 	assert.Equal(t, namespace.BranchRef("", "wiki", "parent"), evt.ParentBranch)
 
-	_, err = kvfs.UpdateBranch(ctx, store, namespace.BranchRef("", "", "main"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, store, namespace.BranchRef("", "", "main"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{

@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
@@ -62,7 +62,7 @@ func waitForManifest(t *testing.T, ctx context.Context, store objectstore.Store,
 			t.Fatalf("timed out waiting for branch %s manifest", branch)
 			return nil
 		case <-ticker.C:
-			m, _, err := kvfs.ResolveBranch(ctx, store, branch)
+			m, _, err := manifest.Read(ctx, store, branch)
 			if err == nil && cond(m) {
 				return m
 			}
@@ -72,7 +72,8 @@ func waitForManifest(t *testing.T, ctx context.Context, store objectstore.Store,
 
 func readSegmentMutations(t *testing.T, ctx context.Context, store objectstore.Store, branch, segID string) []*storagepb.DocumentMutation {
 	t.Helper()
-	key := segment.Key(branch, segID)
+	scope, _ := namespace.ScopeFromRef(branch)
+	key := scope.SegmentKey(segID)
 	rc, _, err := store.Get(ctx, key)
 	require.NoError(t, err)
 	defer rc.Close()
@@ -141,7 +142,8 @@ func TestBatchFlush(t *testing.T) {
 	assert.Equal(t, uint64(1), manifest.CheckpointSeq)
 	require.Len(t, manifest.Segments, 1)
 	assert.Equal(t, uint64(3), manifest.Segments[0].DocCount)
-	assert.Equal(t, segment.Key(br, manifest.Segments[0].SegmentId), manifest.Segments[0].Key)
+	scope, _ := namespace.ScopeFromRef(br)
+	assert.Equal(t, scope.SegmentKey(manifest.Segments[0].SegmentId), manifest.Segments[0].Key)
 
 	mutations := readSegmentMutations(t, ctx, store, br, manifest.Segments[0].SegmentId)
 	require.Len(t, mutations, 3)
@@ -383,10 +385,10 @@ func TestGracefulShutdownFlush(t *testing.T) {
 	require.NoError(t, err)
 
 	drainCtx := context.Background()
-	manifest, _, err := kvfs.ResolveBranch(drainCtx, store, br)
+	m, _, err := manifest.Read(drainCtx, store, br)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(2), manifest.CheckpointSeq)
-	require.Len(t, manifest.Segments, 2)
+	assert.Equal(t, uint64(2), m.CheckpointSeq)
+	require.Len(t, m.Segments, 2)
 }
 
 func TestForkEvent(t *testing.T) {
@@ -406,7 +408,7 @@ func TestForkEvent(t *testing.T) {
 	parentBr := testBranch("parent")
 	childBr := testBranch("child")
 
-	_, err = kvfs.UpdateBranch(ctx, store, parentBr, &storagepb.BranchManifest{CheckpointSeq: 0}, "")
+	_, err = manifest.Write(ctx, store, parentBr, &storagepb.BranchManifest{CheckpointSeq: 0}, "")
 	require.NoError(t, err)
 
 	require.NoError(t, b.Upsert(ctx, parentBr, []*cloudyneighpb.Record{{Id: "p-doc-1"}}))
@@ -481,9 +483,9 @@ func TestPartialSequenceShutdownFlush(t *testing.T) {
 	b1 := testBranch("branch-1")
 	b2 := testBranch("branch-2")
 
-	_, err = kvfs.UpdateBranch(ctx, store, b1, &storagepb.BranchManifest{CheckpointSeq: 0}, "")
+	_, err = manifest.Write(ctx, store, b1, &storagepb.BranchManifest{CheckpointSeq: 0}, "")
 	require.NoError(t, err)
-	_, err = kvfs.UpdateBranch(ctx, store, b2, &storagepb.BranchManifest{CheckpointSeq: 0}, "")
+	_, err = manifest.Write(ctx, store, b2, &storagepb.BranchManifest{CheckpointSeq: 0}, "")
 	require.NoError(t, err)
 
 	walRec1 := &storagepb.WalRecord{
@@ -522,9 +524,9 @@ func TestPartialSequenceShutdownFlush(t *testing.T) {
 	require.NoError(t, err)
 
 	drainCtx := context.Background()
-	m1, _, err := kvfs.ResolveBranch(drainCtx, store, b1)
+	m1, _, err := manifest.Read(drainCtx, store, b1)
 	require.NoError(t, err)
-	m2, _, err := kvfs.ResolveBranch(drainCtx, store, b2)
+	m2, _, err := manifest.Read(drainCtx, store, b2)
 	require.NoError(t, err)
 
 	assert.Equal(t, uint64(1), m1.CheckpointSeq)

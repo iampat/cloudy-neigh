@@ -8,8 +8,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/iampat/cloudy-neigh/kvfs"
 	"github.com/iampat/cloudy-neigh/logstream"
+	"github.com/iampat/cloudy-neigh/manifest"
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"github.com/iampat/cloudy-neigh/segment"
@@ -18,6 +19,7 @@ import (
 
 type Config struct {
 	PollInterval time.Duration
+	Scope        namespace.Scope
 }
 
 func withDefaults(c Config) Config {
@@ -30,6 +32,7 @@ func withDefaults(c Config) Config {
 type Flusher struct {
 	store objectstore.Store
 	log   *logstream.Log
+	scope namespace.Scope
 	cfg   Config
 
 	branchCheckpoints map[string]uint64
@@ -46,13 +49,14 @@ func NewFlusher(store objectstore.Store, log *logstream.Log, cfg Config) (*Flush
 	return &Flusher{
 		store:             store,
 		log:               log,
+		scope:             cfg.Scope,
 		cfg:               withDefaults(cfg),
 		branchCheckpoints: make(map[string]uint64),
 	}, nil
 }
 
 func (f *Flusher) initCheckpoints(ctx context.Context) (uint64, error) {
-	branches, err := kvfs.ListBranches(ctx, f.store)
+	branches, err := namespace.ListBranches(ctx, f.store, "")
 	if err != nil {
 		return 0, fmt.Errorf("list branches: %w", err)
 	}
@@ -60,16 +64,16 @@ func (f *Flusher) initCheckpoints(ctx context.Context) (uint64, error) {
 	var minCheckpoint uint64
 	hasBranch := false
 	for _, branch := range branches {
-		manifest, _, err := kvfs.ResolveBranch(ctx, f.store, branch)
+		m, _, err := manifest.Read(ctx, f.store, branch)
 		if err != nil {
 			if errors.Is(err, objectstore.ErrNotFound) {
 				continue
 			}
-			return 0, fmt.Errorf("resolve branch %s: %w", branch, err)
+			return 0, fmt.Errorf("read branch manifest %s: %w", branch, err)
 		}
-		f.branchCheckpoints[branch] = manifest.CheckpointSeq
-		if !hasBranch || manifest.CheckpointSeq < minCheckpoint {
-			minCheckpoint = manifest.CheckpointSeq
+		f.branchCheckpoints[branch] = m.CheckpointSeq
+		if !hasBranch || m.CheckpointSeq < minCheckpoint {
+			minCheckpoint = m.CheckpointSeq
 			hasBranch = true
 		}
 	}
@@ -211,8 +215,9 @@ func (f *Flusher) flushBranch(ctx context.Context, branch string, mutations []*s
 	}
 	data := buf.Bytes()
 
-	segID := fmt.Sprintf("%020d", seq)
-	segKey := segment.Key(branch, segID)
+	scope, branchName := namespace.ScopeFromRef(branch)
+	segID := fmt.Sprintf("%020d-%s", seq, branchName)
+	segKey := scope.SegmentKey(segID)
 	if _, err := f.store.Put(ctx, segKey, bytes.NewReader(data), objectstore.Condition{Absent: true}); err != nil {
 		return fmt.Errorf("upload segment %s: %w", segKey, err)
 	}
@@ -227,35 +232,36 @@ func (f *Flusher) flushBranch(ctx context.Context, branch string, mutations []*s
 
 	casStart := time.Now()
 	for {
-		manifest, gen, err := kvfs.ResolveBranch(ctx, f.store, branch)
+		m, gen, err := manifest.Read(ctx, f.store, branch)
 		if err != nil {
 			if errors.Is(err, objectstore.ErrNotFound) {
-				manifest = &storagepb.BranchManifest{
+				m = &storagepb.BranchManifest{
 					SchemaVersion: 1,
 				}
 				gen = ""
 			} else {
-				return fmt.Errorf("resolve branch %s: %w", branch, err)
+				return fmt.Errorf("read branch manifest %s: %w", branch, err)
 			}
 		}
 
 		alreadyPresent := false
-		for _, s := range manifest.Segments {
+		for _, s := range m.Segments {
 			if s.SegmentId == segRef.SegmentId {
 				alreadyPresent = true
 				break
 			}
 		}
 		if !alreadyPresent {
-			manifest.Segments = append(manifest.Segments, segRef)
+			m.Segments = append(m.Segments, segRef)
 		}
 
-		if seq > manifest.CheckpointSeq {
-			manifest.CheckpointSeq = seq
+		if seq > m.CheckpointSeq {
+			m.CheckpointSeq = seq
 		}
 
-		_, err = kvfs.UpdateBranch(ctx, f.store, branch, manifest, gen)
+		_, err = manifest.Write(ctx, f.store, branch, m, gen)
 		if err == nil {
+			_ = namespace.AddBranch(ctx, f.store, "", branch)
 			f.branchCheckpoints[branch] = seq
 			casDur := time.Since(casStart)
 
