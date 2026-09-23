@@ -9,7 +9,7 @@
 - [X] Add Fork RPC to IngestService with namespace scoping and WAL event sequencing. [#138]
 - [ ] Support capturing unflushed parent mutations before Fork manifest creation. Sequence the fork event in the flusher, flush active parent mutations to a segment, and create the child manifest at that exact sequence boundary.
 - [ ] Background compaction worker to merge flat immutable segments across branches and purge tombstoned rows.
-- [ ] Move multi-tenant log stream routing into the `ingest` library. `cmd/cloudy` acts strictly as an assembly root using dependency injection, without hardcoded stream names or paths.
+- [X] Move multi-tenant log stream routing into the `ingest` library. `cmd/cloudy` acts strictly as an assembly root using dependency injection, without hardcoded stream names or paths.
 - [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
 - [ ] Expose branch deletion RPC in IngestService to remove branch pointers and update `branches.json`.
 - [ ] Refactor the storage layer. [#47]

@@ -577,7 +577,8 @@ func appendWALRecord(t *testing.T, ctx context.Context, log *logstream.Log, bran
 
 func flushBranch(t *testing.T, ctx context.Context, store objectstore.Store, log *logstream.Log, branch string, expectedSegCount int) {
 	t.Helper()
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
+		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)

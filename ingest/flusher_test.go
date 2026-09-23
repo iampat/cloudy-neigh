@@ -125,7 +125,8 @@ func TestBatchFlush(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), seq)
 
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
+		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -191,7 +192,8 @@ func TestMultiBranchBatchFlush(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), seq)
 
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
+		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -234,7 +236,8 @@ func TestRestartResume(t *testing.T) {
 	}
 
 	flusher1Ctx, cancel1 := context.WithCancel(ctx)
-	flusher1, err := ingest.NewFlusher(store, log, ingest.Config{
+	flusher1, err := ingest.NewFlusher(store, ingest.Config{
+		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -255,7 +258,8 @@ func TestRestartResume(t *testing.T) {
 	appendDoc(t, ctx, log, mainBr, "doc-3", []byte("val-3"))
 
 	flusher2Ctx, cancel2 := context.WithCancel(ctx)
-	flusher2, err := ingest.NewFlusher(store, log, ingest.Config{
+	flusher2, err := ingest.NewFlusher(store, ingest.Config{
+		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -331,7 +335,8 @@ func TestCASRetryPreconditionFailed(t *testing.T) {
 
 	appendDoc(t, ctx, log, br, "doc-1", []byte("val-1"))
 
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
+		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -369,7 +374,8 @@ func TestGracefulShutdownFlush(t *testing.T) {
 	appendDoc(t, ctx, log, br, "doc-1", []byte("val-1"))
 	appendDoc(t, ctx, log, br, "doc-2", []byte("val-2"))
 
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
+		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -399,10 +405,7 @@ func TestForkEvent(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	log, err := logstream.New(store, "wal")
-	require.NoError(t, err)
-
-	b, err := ingest.NewIngester(store, log)
+	b, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	parentBr := testBranch("parent")
@@ -415,7 +418,7 @@ func TestForkEvent(t *testing.T) {
 	require.NoError(t, b.Fork(ctx, parentBr, childBr))
 	require.NoError(t, b.Upsert(ctx, childBr, []*cloudyneighpb.Record{{Id: "c-doc-1"}}))
 
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -514,7 +517,8 @@ func TestPartialSequenceShutdownFlush(t *testing.T) {
 	_, err = log.Append(ctx, []logstream.Record{b1Data, b2Data})
 	require.NoError(t, err)
 
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
+		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -533,4 +537,54 @@ func TestPartialSequenceShutdownFlush(t *testing.T) {
 	assert.Len(t, m1.Segments, 1)
 	assert.Equal(t, uint64(1), m2.CheckpointSeq)
 	assert.Len(t, m2.Segments, 1)
+}
+
+func TestMultiTenantFlusher_DiscoveryAndFlush(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	in, err := ingest.NewIngester(store)
+	require.NoError(t, err)
+
+	brA := namespace.BranchRef("tenant-1", "ns-a", "main")
+	brB := namespace.BranchRef("tenant-2", "ns-b", "main")
+
+	require.NoError(t, in.Upsert(ctx, brA, []*cloudyneighpb.Record{{Id: "doc-a1"}, {Id: "doc-a2"}}))
+	require.NoError(t, in.Upsert(ctx, brB, []*cloudyneighpb.Record{{Id: "doc-b1"}}))
+
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
+		PollInterval: 10 * time.Millisecond,
+	})
+	require.NoError(t, err)
+
+	flusherErrCh := make(chan error, 1)
+	go func() {
+		flusherErrCh <- flusher.Run(ctx)
+	}()
+
+	manifestA := waitForManifest(t, ctx, store, brA, func(m *storagepb.BranchManifest) bool {
+		return len(m.Segments) == 1 && m.CheckpointSeq == 1
+	})
+	require.NotNil(t, manifestA)
+	assert.Equal(t, uint64(2), manifestA.Segments[0].DocCount)
+
+	manifestB := waitForManifest(t, ctx, store, brB, func(m *storagepb.BranchManifest) bool {
+		return len(m.Segments) == 1 && m.CheckpointSeq == 1
+	})
+	require.NotNil(t, manifestB)
+	assert.Equal(t, uint64(1), manifestB.Segments[0].DocCount)
+
+	require.NoError(t, in.Upsert(ctx, brB, []*cloudyneighpb.Record{{Id: "doc-b2"}}))
+	manifestB2 := waitForManifest(t, ctx, store, brB, func(m *storagepb.BranchManifest) bool {
+		return len(m.Segments) == 2 && m.CheckpointSeq == 2
+	})
+	require.NotNil(t, manifestB2)
+
+	cancel()
+	err = <-flusherErrCh
+	require.NoError(t, err)
 }

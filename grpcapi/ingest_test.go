@@ -9,7 +9,6 @@ import (
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -26,16 +25,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *logstream.Log, objectstore.Store) {
+func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *ingest.Ingester, objectstore.Store) {
 	t.Helper()
 	store, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	log, err := logstream.New(store, "wal")
-	require.NoError(t, err)
-
-	ingester, err := ingest.NewIngester(store, log)
+	ingester, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	srv, err := grpcapi.NewIngestServer(ingester)
@@ -62,7 +58,7 @@ func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *logstream.L
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 
-	return cloudyneighpb.NewIngestServiceClient(conn), log, store
+	return cloudyneighpb.NewIngestServiceClient(conn), ingester, store
 }
 
 func TestNewIngestServer_NilIngester(t *testing.T) {
@@ -75,7 +71,7 @@ func stringAttr(s string) *cloudyneighpb.AttributeValue {
 }
 
 func TestUpsert_Success(t *testing.T) {
-	client, log, _ := setupTestEnv(t)
+	client, in, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	rec1 := &cloudyneighpb.Record{
@@ -105,6 +101,9 @@ func TestUpsert_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.UpsertedCount)
+
+	log, err := in.Log(namespace.BranchRef("", "main", ""))
+	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
 	require.NoError(t, err)
@@ -137,7 +136,7 @@ func TestUpsert_Success(t *testing.T) {
 }
 
 func TestUpsert_EmptyRecords(t *testing.T) {
-	client, log, _ := setupTestEnv(t)
+	client, in, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
@@ -146,6 +145,9 @@ func TestUpsert_EmptyRecords(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), resp.UpsertedCount)
+
+	log, err := in.Log(namespace.BranchRef("", "main", ""))
+	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
 	require.NoError(t, err)
@@ -204,7 +206,7 @@ func TestUpsert_Validation(t *testing.T) {
 }
 
 func TestUpsert_DefaultNamespace(t *testing.T) {
-	client, log, _ := setupTestEnv(t)
+	client, in, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
@@ -213,6 +215,9 @@ func TestUpsert_DefaultNamespace(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), resp.UpsertedCount)
+
+	log, err := in.Log(namespace.BranchRef("", "", ""))
+	require.NoError(t, err)
 
 	records, err := log.Read(ctx, 1)
 	require.NoError(t, err)
@@ -225,7 +230,7 @@ func TestUpsert_DefaultNamespace(t *testing.T) {
 }
 
 func TestDelete_Success(t *testing.T) {
-	client, log, _ := setupTestEnv(t)
+	client, in, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -234,6 +239,9 @@ func TestDelete_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.DeletedCount)
+
+	log, err := in.Log(namespace.BranchRef("", "main", ""))
+	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
 	require.NoError(t, err)
@@ -258,7 +266,7 @@ func TestDelete_Success(t *testing.T) {
 }
 
 func TestDelete_Empty(t *testing.T) {
-	client, log, _ := setupTestEnv(t)
+	client, in, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -267,6 +275,9 @@ func TestDelete_Empty(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), resp.DeletedCount)
+
+	log, err := in.Log(namespace.BranchRef("", "main", ""))
+	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
 	require.NoError(t, err)
@@ -309,7 +320,7 @@ func TestDelete_Validation(t *testing.T) {
 }
 
 func TestDelete_DefaultNamespace(t *testing.T) {
-	client, log, _ := setupTestEnv(t)
+	client, in, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -318,6 +329,9 @@ func TestDelete_DefaultNamespace(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), resp.DeletedCount)
+
+	log, err := in.Log(namespace.BranchRef("", "", ""))
+	require.NoError(t, err)
 
 	records, err := log.Read(ctx, 1)
 	require.NoError(t, err)
@@ -331,7 +345,7 @@ func TestDelete_DefaultNamespace(t *testing.T) {
 }
 
 func TestFork(t *testing.T) {
-	client, log, store := setupTestEnv(t)
+	client, in, store := setupTestEnv(t)
 	ctx := context.Background()
 
 	_, err := client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -384,6 +398,9 @@ func TestFork(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.AlreadyExists, st.Code())
 
+	log, err := in.Log(namespace.BranchRef("", "wiki", "child"))
+	require.NoError(t, err)
+
 	records, err := log.Read(ctx, 1)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
@@ -428,10 +445,7 @@ func TestLocalFSBackend(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	log, err := logstream.New(store, "wal")
-	require.NoError(t, err)
-
-	ingester, err := ingest.NewIngester(store, log)
+	ingester, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	srv, err := grpcapi.NewIngestServer(ingester)
@@ -487,8 +501,8 @@ func TestLocalFSBackend(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), dResp.DeletedCount)
 
-	seg1Path := filepath.Join(dir, "wal", "00000000000000000001.recordio")
-	seg2Path := filepath.Join(dir, "wal", "00000000000000000002.recordio")
+	seg1Path := filepath.Join(dir, "cloudy", "ns", "wiki", "wal", "00000000000000000001.recordio")
+	seg2Path := filepath.Join(dir, "cloudy", "ns", "wiki", "wal", "00000000000000000002.recordio")
 
 	info1, err := os.Stat(seg1Path)
 	require.NoError(t, err)

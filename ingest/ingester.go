@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/iampat/cloudy-neigh/logstream"
@@ -22,26 +23,51 @@ var (
 
 type Ingester struct {
 	store objectstore.Store
-	log   *logstream.Log
+
+	mu   sync.Mutex
+	logs map[string]*logstream.Log
 }
 
-func NewIngester(store objectstore.Store, log *logstream.Log) (*Ingester, error) {
+func NewIngester(store objectstore.Store) (*Ingester, error) {
 	if store == nil {
 		return nil, ErrNilStore
 	}
-	if log == nil {
-		return nil, ErrNilLog
-	}
 	return &Ingester{
 		store: store,
-		log:   log,
+		logs:  make(map[string]*logstream.Log),
 	}, nil
 }
 
-func (in *Ingester) Upsert(ctx context.Context, namespace string, records []*cloudyneighpb.Record) error {
+func (in *Ingester) getOrCreateLog(walPrefix string) (*logstream.Log, error) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+
+	if l, ok := in.logs[walPrefix]; ok {
+		return l, nil
+	}
+	l, err := logstream.New(in.store, walPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("create logstream %s: %w", walPrefix, err)
+	}
+	in.logs[walPrefix] = l
+	return l, nil
+}
+
+func (in *Ingester) Log(branchRef string) (*logstream.Log, error) {
+	scope, _ := namespace.ScopeFromRef(branchRef)
+	return in.getOrCreateLog(scope.WALPrefix())
+}
+
+func (in *Ingester) Upsert(ctx context.Context, branch string, records []*cloudyneighpb.Record) error {
 	if len(records) == 0 {
 		return nil
 	}
+	scope, _ := namespace.ScopeFromRef(branch)
+	log, err := in.getOrCreateLog(scope.WALPrefix())
+	if err != nil {
+		return err
+	}
+
 	walRecords := make([]logstream.Record, len(records))
 	for i, rec := range records {
 		payload, err := proto.Marshal(rec)
@@ -51,7 +77,7 @@ func (in *Ingester) Upsert(ctx context.Context, namespace string, records []*clo
 		walRec := &storagepb.WalRecord{
 			Record: &storagepb.WalRecord_Mutation{
 				Mutation: &storagepb.DocumentMutation{
-					Branch:  namespace,
+					Branch:  branch,
 					DocId:   rec.Id,
 					Op:      storagepb.MutationOp_PUT,
 					Payload: payload,
@@ -64,20 +90,26 @@ func (in *Ingester) Upsert(ctx context.Context, namespace string, records []*clo
 		}
 		walRecords[i] = recBytes
 	}
-	_, err := in.log.Append(ctx, walRecords)
+	_, err = log.Append(ctx, walRecords)
 	return err
 }
 
-func (in *Ingester) Delete(ctx context.Context, namespace string, ids []string) error {
+func (in *Ingester) Delete(ctx context.Context, branch string, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
+	scope, _ := namespace.ScopeFromRef(branch)
+	log, err := in.getOrCreateLog(scope.WALPrefix())
+	if err != nil {
+		return err
+	}
+
 	walRecords := make([]logstream.Record, len(ids))
 	for i, id := range ids {
 		walRec := &storagepb.WalRecord{
 			Record: &storagepb.WalRecord_Mutation{
 				Mutation: &storagepb.DocumentMutation{
-					Branch: namespace,
+					Branch: branch,
 					DocId:  id,
 					Op:     storagepb.MutationOp_DELETE,
 				},
@@ -89,11 +121,13 @@ func (in *Ingester) Delete(ctx context.Context, namespace string, ids []string) 
 		}
 		walRecords[i] = recBytes
 	}
-	_, err := in.log.Append(ctx, walRecords)
+	_, err = log.Append(ctx, walRecords)
 	return err
 }
 
 func (in *Ingester) Fork(ctx context.Context, source, target string) error {
+	targetScope, _ := namespace.ScopeFromRef(target)
+
 	parentManifest, _, err := manifest.Read(ctx, in.store, source)
 	if err != nil {
 		return err
@@ -109,7 +143,10 @@ func (in *Ingester) Fork(ctx context.Context, source, target string) error {
 		}
 		return err
 	}
-	_ = namespace.AddBranch(ctx, in.store, "", target)
+	_ = targetScope.AddBranch(ctx, in.store, target)
+	if targetScope.BranchesPath() != namespace.BranchesFile {
+		_ = namespace.AddBranch(ctx, in.store, "", target)
+	}
 
 	eventRec := &storagepb.WalRecord{
 		Record: &storagepb.WalRecord_BranchEvent{
@@ -122,13 +159,20 @@ func (in *Ingester) Fork(ctx context.Context, source, target string) error {
 	}
 	recBytes, err := proto.Marshal(eventRec)
 	if err == nil {
-		_, err = in.log.Append(ctx, []logstream.Record{recBytes})
+		var log *logstream.Log
+		log, err = in.getOrCreateLog(targetScope.WALPrefix())
+		if err == nil {
+			_, err = log.Append(ctx, []logstream.Record{recBytes})
+		}
 	}
 	if err != nil {
 		delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer delCancel()
 		_ = in.store.Delete(delCtx, target)
-		_ = namespace.RemoveBranch(delCtx, in.store, "", target)
+		_ = targetScope.RemoveBranch(delCtx, in.store, target)
+		if targetScope.BranchesPath() != namespace.BranchesFile {
+			_ = namespace.RemoveBranch(delCtx, in.store, "", target)
+		}
 		return err
 	}
 	return nil

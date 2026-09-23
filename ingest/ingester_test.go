@@ -3,13 +3,15 @@ package ingest_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/manifest"
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -19,17 +21,8 @@ import (
 )
 
 func TestNewIngester_NilStore(t *testing.T) {
-	_, err := ingest.NewIngester(nil, nil)
+	_, err := ingest.NewIngester(nil)
 	assert.ErrorIs(t, err, ingest.ErrNilStore)
-}
-
-func TestNewIngester_NilLog(t *testing.T) {
-	store, err := objectstore.Open(context.Background(), "mem://")
-	require.NoError(t, err)
-	defer store.Close()
-
-	_, err = ingest.NewIngester(store, nil)
-	assert.ErrorIs(t, err, ingest.ErrNilLog)
 }
 
 func TestIngester_Upsert(t *testing.T) {
@@ -37,10 +30,7 @@ func TestIngester_Upsert(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	log, err := logstream.New(store, "wal")
-	require.NoError(t, err)
-
-	in, err := ingest.NewIngester(store, log)
+	in, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -51,6 +41,9 @@ func TestIngester_Upsert(t *testing.T) {
 	}
 
 	require.NoError(t, in.Upsert(ctx, "main", records))
+
+	log, err := in.Log("main")
+	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
 	require.NoError(t, err)
@@ -78,15 +71,15 @@ func TestIngester_Delete(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	log, err := logstream.New(store, "wal")
-	require.NoError(t, err)
-
-	in, err := ingest.NewIngester(store, log)
+	in, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	ids := []string{"doc-1", "doc-2"}
 	require.NoError(t, in.Delete(ctx, "main", ids))
+
+	log, err := in.Log("main")
+	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
 	require.NoError(t, err)
@@ -114,19 +107,19 @@ func TestIngester_Fork(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	log, err := logstream.New(store, "wal")
-	require.NoError(t, err)
-
-	in, err := ingest.NewIngester(store, log)
+	in, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	assert.Error(t, in.Fork(ctx, "nonexistent", "child"))
+	assert.Error(t, in.Fork(ctx, "parent", "child"))
 
 	_, err = manifest.Write(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 	require.NoError(t, in.Fork(ctx, "parent", "child"))
 	assert.Error(t, in.Fork(ctx, "parent", "child"))
+
+	log, err := in.Log("child")
+	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
 	require.NoError(t, err)
@@ -143,6 +136,84 @@ func TestIngester_Fork(t *testing.T) {
 	assert.Equal(t, storagepb.BranchLifecycleEvent_FORK, evt.Type)
 	assert.Equal(t, "child", evt.Branch)
 	assert.Equal(t, "parent", evt.ParentBranch)
+}
+
+func TestIngester_MultiTenantRouting(t *testing.T) {
+	store, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	in, err := ingest.NewIngester(store)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	branchA := namespace.BranchRef("tenant-a", "ns-1", "main")
+	branchB := namespace.BranchRef("tenant-b", "ns-2", "main")
+
+	scopeA, _ := namespace.ScopeFromRef(branchA)
+	scopeB, _ := namespace.ScopeFromRef(branchB)
+
+	require.NoError(t, in.Upsert(ctx, branchA, []*cloudyneighpb.Record{{Id: "a-1"}}))
+	require.NoError(t, in.Upsert(ctx, branchB, []*cloudyneighpb.Record{{Id: "b-1"}, {Id: "b-2"}}))
+
+	logA, err := in.Log(branchA)
+	require.NoError(t, err)
+	assert.Equal(t, scopeA.WALPrefix(), "tenant-a/ns/ns-1/wal")
+
+	logB, err := in.Log(branchB)
+	require.NoError(t, err)
+	assert.Equal(t, scopeB.WALPrefix(), "tenant-b/ns/ns-2/wal")
+
+	recsA, err := logA.Read(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, recsA, 1)
+
+	recsB, err := logB.Read(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, recsB, 2)
+}
+
+func TestIngester_ConcurrentMultiTenant(t *testing.T) {
+	store, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	in, err := ingest.NewIngester(store)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	const numTenants = 8
+	const writesPerTenant = 10
+
+	var wg sync.WaitGroup
+	wg.Add(numTenants)
+	for i := 0; i < numTenants; i++ {
+		tenantID := fmt.Sprintf("tenant-%d", i)
+		branch := namespace.BranchRef(tenantID, "default", "main")
+		go func(br string) {
+			defer wg.Done()
+			for j := 0; j < writesPerTenant; j++ {
+				err := in.Upsert(ctx, br, []*cloudyneighpb.Record{
+					{Id: fmt.Sprintf("doc-%d", j)},
+				})
+				if err != nil {
+					t.Errorf("upsert failed for branch %s: %v", br, err)
+				}
+			}
+		}(branch)
+	}
+	wg.Wait()
+
+	for i := 0; i < numTenants; i++ {
+		tenantID := fmt.Sprintf("tenant-%d", i)
+		branch := namespace.BranchRef(tenantID, "default", "main")
+		log, err := in.Log(branch)
+		require.NoError(t, err)
+
+		tail, err := log.Tail(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(writesPerTenant), tail)
+	}
 }
 
 type failAppendStore struct {
@@ -168,10 +239,7 @@ func TestIngester_Fork_AppendFailureRollback(t *testing.T) {
 		failKey: "wal",
 	}
 
-	log, err := logstream.New(store, "wal")
-	require.NoError(t, err)
-
-	in, err := ingest.NewIngester(store, log)
+	in, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	_, err = manifest.Write(ctx, store, "parent", &storagepb.BranchManifest{CheckpointSeq: 1}, "")

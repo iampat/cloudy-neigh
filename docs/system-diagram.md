@@ -208,8 +208,9 @@ Each namespace contains:
 - `refs/head/`: protobuf manifest files tracking checkpoint sequence and
   segment IDs per branch.
 
-The dev server CLI (`cmd/cloudy`) currently uses a single root `wal/` prefix
-pending per-tenant log stream routing.
+The server CLI (`cmd/cloudy`) acts strictly as an assembly root with
+dependency injection, delegating multi-tenant log stream routing to the
+`ingest` library.
 
 ### Storage Invariants
 

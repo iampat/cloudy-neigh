@@ -11,7 +11,6 @@ import (
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -244,16 +243,13 @@ func TestQuery_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	log, err := logstream.New(store, "wal")
-	require.NoError(t, err)
-
-	ingester, err := ingest.NewIngester(store, log)
+	ingester, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
 	ingestSrv, err := grpcapi.NewIngestServer(ingester)
 	require.NoError(t, err)
 
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{})
+	flusher, err := ingest.NewFlusher(store, ingest.Config{})
 	require.NoError(t, err)
 
 	_, err = ingestSrv.Upsert(ctx, &cloudyneighpb.UpsertRequest{

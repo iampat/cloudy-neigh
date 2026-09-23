@@ -15,7 +15,6 @@ import (
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query"
@@ -24,10 +23,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-const (
-	maxMsgSize = 64 * 1024 * 1024
-	walStream  = "wal"
-)
+const maxMsgSize = 64 * 1024 * 1024
 
 type ingestConfig struct {
 	addr         string
@@ -76,13 +72,7 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
-	log, err := logstream.New(store, walStream)
-	if err != nil {
-		store.Close()
-		return nil, fmt.Errorf("open logstream: %w", err)
-	}
-
-	ingester, err := ingest.NewIngester(store, log)
+	ingester, err := ingest.NewIngester(store)
 	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("create ingester: %w", err)
@@ -94,7 +84,7 @@ func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, erro
 		return nil, fmt.Errorf("create ingest server: %w", err)
 	}
 
-	flusher, err := ingest.NewFlusher(store, log, ingest.Config{
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
 		PollInterval: cfg.pollInterval,
 	})
 	if err != nil {
@@ -211,7 +201,7 @@ func runIngest(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("ingest server listening", "addr", srv.Addr().String(), "wal", walStream, "storage_root", cfg.storageRoot)
+	slog.Info("ingest server listening", "addr", srv.Addr().String(), "storage_root", cfg.storageRoot)
 
 	return srv.Serve(ctx)
 }
