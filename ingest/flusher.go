@@ -23,8 +23,6 @@ import (
 
 type Config struct {
 	PollInterval time.Duration
-	Scope        namespace.Scope
-	Log          *logstream.Log
 }
 
 func withDefaults(c Config) Config {
@@ -56,29 +54,7 @@ func NewFlusher(store objectstore.Store, cfg Config) (*Flusher, error) {
 	}, nil
 }
 
-func NewFlusherWithLog(store objectstore.Store, log *logstream.Log, cfg Config) (*Flusher, error) {
-	cfg.Log = log
-	return NewFlusher(store, cfg)
-}
-
 func (f *Flusher) Run(ctx context.Context) error {
-	if f.cfg.Log != nil {
-		sf := f.newStreamFlusher(f.cfg.Log, f.cfg.Scope, "wal")
-		return sf.Run(ctx)
-	}
-	if f.cfg.Scope != (namespace.Scope{}) {
-		log, err := logstream.New(f.store, f.cfg.Scope.WALPrefix())
-		if err != nil {
-			return err
-		}
-		sf := f.newStreamFlusher(log, f.cfg.Scope, f.cfg.Scope.WALPrefix())
-		return sf.Run(ctx)
-	}
-
-	return f.runMultiTenant(ctx)
-}
-
-func (f *Flusher) runMultiTenant(ctx context.Context) error {
 	var g errgroup.Group
 
 	f.mu.Lock()

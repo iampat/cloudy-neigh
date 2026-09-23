@@ -126,7 +126,6 @@ func TestBatchFlush(t *testing.T) {
 	require.Equal(t, uint64(1), seq)
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
-		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -193,7 +192,6 @@ func TestMultiBranchBatchFlush(t *testing.T) {
 	require.Equal(t, uint64(1), seq)
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
-		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -237,7 +235,6 @@ func TestRestartResume(t *testing.T) {
 
 	flusher1Ctx, cancel1 := context.WithCancel(ctx)
 	flusher1, err := ingest.NewFlusher(store, ingest.Config{
-		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -259,7 +256,6 @@ func TestRestartResume(t *testing.T) {
 
 	flusher2Ctx, cancel2 := context.WithCancel(ctx)
 	flusher2, err := ingest.NewFlusher(store, ingest.Config{
-		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -336,7 +332,6 @@ func TestCASRetryPreconditionFailed(t *testing.T) {
 	appendDoc(t, ctx, log, br, "doc-1", []byte("val-1"))
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
-		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -375,7 +370,6 @@ func TestGracefulShutdownFlush(t *testing.T) {
 	appendDoc(t, ctx, log, br, "doc-2", []byte("val-2"))
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
-		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -518,7 +512,6 @@ func TestPartialSequenceShutdownFlush(t *testing.T) {
 	require.NoError(t, err)
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
-		Log:          log,
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)

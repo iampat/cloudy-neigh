@@ -31,6 +31,10 @@ No hidden magic. Never add a silent default, a silent fallback, or a quiet
 directory creation. A missing input is the caller's error, and the error says
 what is missing.
 
+No configuration fallback magic. Do not branch across execution modes based on
+optional config fields. Never synthesize missing dependencies or arguments deep
+in execution. Require explicit dependencies and fail fast.
+
 One implementation, never one per backend. Before you write the second
 backend, find the library's unified interface. Push the backend-specific code
 into the smallest hook the library offers, such as the `As` escape hatch in
