@@ -45,6 +45,9 @@ func NewTable() *Table {
 }
 
 func (t *Table) Clone() *Table {
+	if t == nil {
+		return NewTable()
+	}
 	c := &Table{
 		numRows:    t.numRows,
 		docIDs:     slices.Clone(t.docIDs),
@@ -392,37 +395,6 @@ func (t *Table) Search(
 		ScanDuration:        scanDur,
 		MaterializeDuration: matDur,
 	}, nil
-}
-
-type Builder struct {
-	table *Table
-}
-
-func NewBuilder() *Builder {
-	return &Builder{table: NewTable()}
-}
-
-func (t *Table) Builder() *Builder {
-	if t == nil {
-		return NewBuilder()
-	}
-	return &Builder{table: t.Clone()}
-}
-
-func (b *Builder) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
-	return b.table.Upsert(id, vectors, attrs)
-}
-
-func (b *Builder) UpsertRecord(rec *cloudyneighpb.Record) error {
-	return b.table.UpsertRecord(rec)
-}
-
-func (b *Builder) Delete(id string) bool {
-	return b.table.Delete(id)
-}
-
-func (b *Builder) Build() *Table {
-	return b.table
 }
 
 type searchHit struct {
