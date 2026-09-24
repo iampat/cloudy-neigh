@@ -176,6 +176,13 @@
 - [X] Drop `--test_output=streamed` from `test:fuzz`. It disables sharding and serializes the test run. [#108, #153]
 - [ ] Build fuzz targets with coverage instrumentation. Without it, fuzzing runs without coverage guidance. [#82, #108]
 
+## Optimization
+
+Measure each item with `BenchmarkDistance` on darwin/arm64 and linux/amd64, before and after. [#158]
+
+- [ ] Split the FMA chain in the portable SIMD kernels into four to eight independent accumulators. One accumulator makes each `MulAdd` wait for the one before it (`query/distance/distance_simd.go`).
+- [ ] Compare the portable SIMD kernels with arch-specific kernels over D = 32 to 4096. PR 134 removed the Neon intrinsics, and amd64 has no arch kernel. `docs/benchmarks/distance.md` has arm64 numbers only. [#108, #134]
+
 ## Done
 
 - [X] Enable `--config=race` by default for `build` in `.bazelrc`. Gazelle
