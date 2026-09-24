@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -167,6 +168,27 @@ func DeleteNamespace(ctx context.Context, store objectstore.Store, tenant, name 
 		}
 		return nil, "", err
 	}
+}
+
+func ActiveNamespaces(ctx context.Context, store objectstore.Store, tenant string) ([]string, error) {
+	cat, _, err := ReadTenantCatalog(ctx, store, tenant)
+	if err != nil {
+		if errors.Is(err, objectstore.ErrNotFound) {
+			return []string{DefaultNamespace}, nil
+		}
+		return nil, err
+	}
+	var names []string
+	for name, meta := range cat.GetNamespaces() {
+		if meta.GetStatus() != namespacepb.NamespaceStatus_NAMESPACE_STATUS_DELETED {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return []string{DefaultNamespace}, nil
+	}
+	slices.Sort(names)
+	return names, nil
 }
 
 func NewCatalogCache(store objectstore.Store, syncInterval time.Duration) (*CatalogCache, error) {

@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path"
-	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +23,7 @@ const defaultPollInterval = 100 * time.Millisecond
 
 type Config struct {
 	PollInterval time.Duration
+	Tenants      []string
 }
 
 type Flusher struct {
@@ -102,55 +101,28 @@ type streamTarget struct {
 	walPrefix string
 }
 
+func (f *Flusher) tenants() []string {
+	if len(f.cfg.Tenants) > 0 {
+		return f.cfg.Tenants
+	}
+	return []string{namespace.DefaultTenant}
+}
+
 func (f *Flusher) discoverStreams(ctx context.Context) ([]streamTarget, error) {
 	var targets []streamTarget
-	seen := make(map[string]bool)
-
-	add := func(target streamTarget) {
-		if !seen[target.walPrefix] {
-			seen[target.walPrefix] = true
-			targets = append(targets, target)
-		}
-	}
-
-	startAfter := ""
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		objs, err := f.store.List(ctx, "", startAfter, 100)
+	for _, tenant := range f.tenants() {
+		namespaces, err := namespace.ActiveNamespaces(ctx, f.store, tenant)
 		if err != nil {
 			return nil, err
 		}
-		if len(objs) == 0 {
-			break
-		}
-
-		for _, obj := range objs {
-			nextJump := obj.Key
-			if tenant, rest, ok := strings.Cut(obj.Key, "/"+namespace.NamespaceDir+"/"); ok {
-				ns, _, _ := strings.Cut(rest, "/")
-				if tenant != "" && ns != "" {
-					scope := namespace.Scope{Tenant: tenant, Namespace: ns}
-					if scope.Validate() == nil {
-						add(streamTarget{
-							scope:     scope,
-							walPrefix: scope.WALPrefix(),
-						})
-						nextJump = path.Join(tenant, namespace.NamespaceDir, ns) + "/~"
-					}
-				}
-			}
-			if nextJump > startAfter {
-				startAfter = nextJump
-			}
-		}
-
-		if len(objs) < 100 {
-			break
+		for _, ns := range namespaces {
+			scope := namespace.Scope{Tenant: tenant, Namespace: ns}
+			targets = append(targets, streamTarget{
+				scope:     scope,
+				walPrefix: scope.WALPrefix(),
+			})
 		}
 	}
-
 	return targets, nil
 }
 

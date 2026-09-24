@@ -314,3 +314,31 @@ func openMem(t *testing.T) objectstore.Store {
 func pathForTenant(tenant string) string {
 	return tenant + "/ns.json"
 }
+
+func TestActiveNamespaces(t *testing.T) {
+	ctx := context.Background()
+	store := openMem(t)
+
+	// Uninitialized store returns default namespace.
+	active, err := namespace.ActiveNamespaces(ctx, store, "cloudy")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"default"}, active)
+
+	// Add namespaces for tenant.
+	_, _, err = namespace.CreateNamespace(ctx, store, "acme", "catalog", time.Now())
+	require.NoError(t, err)
+	_, _, err = namespace.CreateNamespace(ctx, store, "acme", "analytics", time.Now())
+	require.NoError(t, err)
+
+	active, err = namespace.ActiveNamespaces(ctx, store, "acme")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"analytics", "catalog"}, active)
+
+	// Deleted namespace is not active.
+	_, _, err = namespace.DeleteNamespace(ctx, store, "acme", "analytics", time.Now())
+	require.NoError(t, err)
+
+	active, err = namespace.ActiveNamespaces(ctx, store, "acme")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"catalog"}, active)
+}

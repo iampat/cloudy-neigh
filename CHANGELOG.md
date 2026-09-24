@@ -56,6 +56,7 @@
 
 ### Changed
 
+- `ingest`: replaced flusher store key crawling with tenant-scoped `namespace.ActiveNamespaces` discovery and auto-registered scopes on ingest. [#152]
 - `grpcapi`: inlined single-caller `resolveForkBranches` helper into `Fork`. [#151]
 - `ingest`: inlined single-caller `parseStreamTarget` helper into `discoverStreams`. [#151]
 - `query`: inlined single-caller `loadSegment` helper into `Loader.Sync`. [#151]

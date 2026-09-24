@@ -60,6 +60,7 @@
   - [X] Delete single-caller helper `parseStreamTarget` in `ingest/flusher.go:149-164`. Inline into `discoverStreams`. [#151]
   - [X] Delete single-caller helper `loadSegment` in `query/loader.go:98`. Inline into `Loader.Sync`. [#151]
   - [X] Delete `query/loader.go:43-45` `Table()` forwarding getter. Call `loader.table.Load()` directly. [#151]
+  - [X] Replace flusher store crawling and key parsing with tenant-scoped stream discovery (`namespace.ActiveNamespaces`). [#152]
   - [ ] Inline server setup single-caller helpers in `cmd/cloudy/main.go:35-119, 216-292`.
   - [ ] Remove test-only accessors `Store()` and `Log()` from `ingest.Ingester` (`ingest/ingester.go:41-43, 60-63`).
 - [ ] KISS: prune internal invariant checks, unreachable modes, and dead code.
