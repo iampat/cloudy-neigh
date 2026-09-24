@@ -229,7 +229,7 @@ Scale dataset size and query throughput across multiple compute nodes.
 
 - **Namespace sharding**: Fixed and dynamic shard partitioning for high-volume namespaces.
 - **Multi-tenant log stream routing (Done)**: Route log streams under tenant prefixes without root fallbacks. [#144]
-- **Cross-tenant isolation**: Enforce strict tenant isolation across ingestion routing, query execution, local caches, and storage keys.
+- **Cross-tenant isolation (Done)**: Enforce strict tenant isolation across ingestion routing, query execution, local caches, and storage keys. [#156]
 - **Tenant control-plane API**: Expose administrative RPCs to create, list, and delete tenants and namespaces in root `tenants.json`. [#144]
 - **Distributed query coordinator**: Scatter-gather execution across shards with merged ranking.
 - **Consistent routing**: Topology-aware request routing and shard mapping.
@@ -254,6 +254,7 @@ Complete the developer workflow and harden production operations.
 
 ## Future Work
 
+- API key authentication and bearer token authorization mapping to tenants in gRPC interceptors.
 - Zero-knowledge client-side encryption for sensitive enterprise datasets.
 - Cross-region replication and multi-region read replicas.
 - Cross-encoder server-side reranking pipelines.

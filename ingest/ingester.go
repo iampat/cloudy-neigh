@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,44 +38,54 @@ func NewIngester(store objectstore.Store) (*Ingester, error) {
 	}, nil
 }
 
-func (ing *Ingester) Store() objectstore.Store {
-	return ing.store
+func scopeFromBranchRef(branchRef string) namespace.Scope {
+	if prefix, _, ok := strings.Cut(branchRef, "/"+namespace.RefHead+"/"); ok {
+		ns := strings.TrimPrefix(prefix, namespace.NamespaceDir+"/")
+		return namespace.Scope{Namespace: ns}
+	}
+	return namespace.Scope{Namespace: namespace.DefaultNamespace}
 }
 
 func (ing *Ingester) getOrCreateLog(ctx context.Context, scope namespace.Scope) (*logstream.Log, error) {
 	walPrefix := scope.WALPrefix()
 	ing.mu.Lock()
-	defer ing.mu.Unlock()
-
 	if l, ok := ing.logs[walPrefix]; ok {
+		ing.mu.Unlock()
 		return l, nil
 	}
 
-	tenant := scope.Tenant
-	if tenant == "" {
-		tenant = namespace.DefaultTenant
-	}
 	ns := scope.Namespace
 	if ns == "" {
 		ns = namespace.DefaultNamespace
 	}
 	cachePath := scope.Prefix()
-	if !ing.registered[cachePath] {
-		_ = namespace.AddTenant(ctx, ing.store, tenant)
-		_, _, _ = namespace.CreateNamespace(ctx, ing.store, tenant, ns, time.Now())
+	registered := ing.registered[cachePath]
+	ing.mu.Unlock()
+
+	if !registered {
+		_, _, _ = namespace.CreateNamespace(ctx, ing.store, ns, time.Now())
+		ing.mu.Lock()
 		ing.registered[cachePath] = true
+		ing.mu.Unlock()
 	}
 
 	l, err := logstream.New(ing.store, walPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("create logstream %s: %w", walPrefix, err)
 	}
+
+	ing.mu.Lock()
+	if existing, ok := ing.logs[walPrefix]; ok {
+		ing.mu.Unlock()
+		return existing, nil
+	}
 	ing.logs[walPrefix] = l
+	ing.mu.Unlock()
 	return l, nil
 }
 
 func (ing *Ingester) Log(branchRef string) (*logstream.Log, error) {
-	scope, _ := namespace.ScopeFromRef(branchRef)
+	scope := scopeFromBranchRef(branchRef)
 	return ing.getOrCreateLog(context.Background(), scope)
 }
 
@@ -82,7 +93,7 @@ func (ing *Ingester) Upsert(ctx context.Context, branch string, records []*cloud
 	if len(records) == 0 {
 		return nil
 	}
-	scope, _ := namespace.ScopeFromRef(branch)
+	scope := scopeFromBranchRef(branch)
 	log, err := ing.getOrCreateLog(ctx, scope)
 	if err != nil {
 		return err
@@ -118,7 +129,7 @@ func (ing *Ingester) Delete(ctx context.Context, branch string, ids []string) er
 	if len(ids) == 0 {
 		return nil
 	}
-	scope, _ := namespace.ScopeFromRef(branch)
+	scope := scopeFromBranchRef(branch)
 	log, err := ing.getOrCreateLog(ctx, scope)
 	if err != nil {
 		return err
@@ -146,7 +157,7 @@ func (ing *Ingester) Delete(ctx context.Context, branch string, ids []string) er
 }
 
 func (ing *Ingester) Fork(ctx context.Context, source, target string) error {
-	targetScope, _ := namespace.ScopeFromRef(target)
+	targetScope := scopeFromBranchRef(target)
 
 	parentManifest, _, err := manifest.Read(ctx, ing.store, source)
 	if err != nil {

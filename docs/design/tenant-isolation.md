@@ -100,3 +100,10 @@ A server unary interceptor extracts and validates the tenant into the context.
 Protobuf request messages contain no tenant field.
 Ingest and query handlers resolve the tenant store from the registry using the context.
 Missing or invalid tenants fail fast with an error.
+
+### Content-Addressed Segments
+
+Segments are named after the SHA-256 hash of their serialized bytes (`<sha256>.recordio`).
+Content addressing decouples segments from branches and enables zero-copy branch forks.
+It eliminates collisions when multiple indexes flush within the same WAL batch.
+Replays remain idempotent without distributed coordination.

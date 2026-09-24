@@ -11,7 +11,9 @@
 - [ ] Background compaction worker to merge flat immutable segments across branches and purge tombstoned rows.
 - [X] Move multi-tenant log stream routing into the `ingest` library. `cmd/cloudy` acts strictly as an assembly root using dependency injection, without hardcoded stream names or paths. [#144]
 - [ ] Implement tenant management mechanism and control-plane API to register, list, and delete tenants in root tenants.json with CAS updates. Design note in `docs/design/tenant-isolation.md`. [#155]
-- [ ] Implement cross-tenant isolation across ingestion, query execution, local cache tiers, and storage keys.
+- [X] Implement cross-tenant isolation across ingestion, query execution, local cache tiers, and storage keys. [#156]
+- [ ] Consolidate existing design docs into a smaller set of docs, and fix any conflict between docs and code.
+- [ ] Use `https://github.com/google/subcommands` for cloudy CLI subcommand dispatch.
 - [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
 - [ ] Expose branch deletion RPC in IngestService to remove branch pointers and update `branches.json`.
 - [ ] Fix storage durability and error handling bugs.
@@ -37,7 +39,7 @@
   - [ ] Reject unknown fields during catalog JSON decoding (`namespace/catalog.go:28`). Remove `DiscardUnknown: true` to prevent data loss on rewrites.
 - [ ] Eliminate configuration fallbacks and compatibility shims.
   - [ ] Eliminate duplicate free functions in `namespace` (`BranchRef`, `SegmentKey`, `BranchesPath`, `CatalogPath`, `ListBranches`, `AddBranch`, `RemoveBranch`). Require explicit `Scope` arguments and resolve defaults once at gRPC boundary.
-  - [ ] Reject malformed or bare branch references in `ScopeFromRef` (`namespace/namespace.go:78-87`). Require canonical reference formats instead of returning empty fallback scopes.
+  - [X] Remove `ScopeFromRef` (`namespace/namespace.go`). [#156]
   - [ ] Reject malformed storage URLs in `objectstore.Open` (`objectstore/open.go:22-39`). Require canonical `file:///path` and `gs://bucket`.
   - [ ] Remove `create_dir=true` default and driver directory creation in `objectstore.Open` (`objectstore/open.go:29-33`).
   - [ ] Fail fast on non-positive intervals in `NewFlusher` and `NewCatalogCache` (`ingest/flusher.go:43`, `namespace/catalog.go:176`).
@@ -62,7 +64,7 @@
   - [X] Delete `query/loader.go:43-45` `Table()` forwarding getter. Call `loader.table.Load()` directly. [#151]
   - [X] Replace flusher store crawling and key parsing with tenant-scoped stream discovery (`namespace.ActiveNamespaces`). [#152]
   - [ ] Inline server setup single-caller helpers in `cmd/cloudy/main.go:35-119, 216-292`.
-  - [ ] Remove test-only accessors `Store()` and `Log()` from `ingest.Ingester` (`ingest/ingester.go:41-43, 60-63`).
+  - [ ] Remove test-only accessor `Log()` from `ingest.Ingester` (`ingest/ingester.go:41-43`). `Store()` removed in [#156].
 - [ ] KISS: prune internal invariant checks, unreachable modes, and dead code.
   - [ ] Remove defensive constructor nil checks for internal dependencies wired in `main.go` (`grpcapi/ingest.go:31`, `grpcapi/query.go:23`, `ingest/ingester.go:32`, `query/engine.go:33`, `query/loader.go:30`).
   - [ ] Remove redundant slice bounds checks and lazy map initialization in `query/table.go:83-87, 132, 139, 229`.

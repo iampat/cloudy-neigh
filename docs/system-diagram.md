@@ -38,7 +38,7 @@ and branch manifests to object storage.
    │                    Cloud Object Storage                     │
    │            <tenant-storage-root>/ns/<namespace>/            │
    │  wal/             segments/          branches.json  refs/   │
-   │  <seq>.recordio   <seg_id>.recordio                 head/   │
+   │  <seq>.recordio   <sha256>.recordio                 head/   │
    └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -81,7 +81,7 @@ object storage.
 │     ingest.Flusher      │ Buffers mutations per sequence in memory
 └──────┬──────────────────┘
        │ Flush on sequence commit or shutdown
-       ├──▶ Writes segments/<seg_id>.recordio with segment.Writer
+       ├──▶ Writes segments/<sha256>.recordio with segment.Writer
        ├──▶ Updates refs/head/<branch> manifest with manifest.Write
        └──▶ Registers branch in branches.json with namespace.AddBranch
 ```
@@ -107,7 +107,7 @@ ingest.Flusher.Run (Background goroutine)
   logstream.Log.Read
   ingest.Flusher.processRecords
   ingest.Flusher.flushBranch
-    segment.Writer.Write (segments/<seg_id>.recordio)
+    segment.Writer.Write (segments/<sha256>.recordio)
     manifest.Write (refs/head/<branch>, CAS generation)
     namespace.AddBranch (branches.json)
 ```
@@ -158,7 +158,7 @@ query.Engine.Run (Background sync loop)
   namespace.ListBranches (reads branches.json)
   query.Loader.Sync
     manifest.Read (refs/head/<branch>)
-    segment.NewReader (segments/<id>.recordio)
+    segment.NewReader (segments/<sha256>.recordio)
     table.Builder.UpsertRecord (appends into flat []float32)
 grpcapi.QueryServer.Query
   resolveBranch (namespace.BranchRef)
@@ -188,8 +188,8 @@ segments.
         │   ├── 00000000000000000002.recordio
         │   └── 00000000000000000003.recordio
         ├── segments/
-        │   ├── 00000000000000000001.recordio
-        │   └── 00000000000000000002.recordio
+        │   ├── 3a7f4c9b201d...recordio
+        │   └── e8b10f4a82c3...recordio
         ├── branches.json
         └── refs/
             └── head/
@@ -216,10 +216,11 @@ dependency injection, delegating multi-tenant log stream routing to the
 
 1. **WAL records are immutable**: Once written, a WAL sequence file is never
    modified or overwritten.
-2. **Segment blobs are flat and content-isolated**: Segment files contain
-   immutable vector and document data. Segments live directly under
-   `segments/` without branch subdirectories and are shared across forked
-   branches.
+2. **Segment blobs are content-addressed**: Segment files contain immutable
+   vector and document data. The segment ID is the SHA-256 hash of the
+   serialized segment bytes (`<sha256>.recordio`). Segments live directly
+   under `segments/` without branch subdirectories and are shared across
+   forked branches.
 3. **Branch heads advance monotonically**: Manifest commits update
    `<tenant>/ns/<namespace>/refs/head/<branch>` with `manifest.Write` using
    conditional creates (`Absent: true`) or generation-matched CAS updates.

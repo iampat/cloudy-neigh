@@ -57,66 +57,33 @@ func TestValidateName(t *testing.T) {
 
 func TestScope_ZeroValue(t *testing.T) {
 	var s namespace.Scope
-	require.NoError(t, s.Validate())
-
-	assert.Equal(t, "cloudy/ns/default", s.Prefix())
-	assert.Equal(t, "cloudy/ns.json", s.CatalogPath())
-	assert.Equal(t, "cloudy/ns/default/wal", s.WALPrefix())
-	assert.Equal(t, "cloudy/ns/default/refs/head/main", s.BranchRef("main"))
-	assert.Equal(t, "cloudy/ns/default/segments", s.SegmentsPrefix())
-	assert.Equal(t, "cloudy/ns/default/custom/path", s.Path("custom/path"))
+	assert.ErrorIs(t, s.Validate(), namespace.ErrInvalidName)
 }
 
 func TestScope_StorageHierarchy(t *testing.T) {
-	s := namespace.Scope{Tenant: "acme-corp", Namespace: "catalog"}
+	s := namespace.Scope{Namespace: "catalog"}
 	require.NoError(t, s.Validate())
 
-	assert.Equal(t, "acme-corp/ns/catalog", s.Prefix())
-	assert.Equal(t, "acme-corp/ns.json", s.CatalogPath())
-	assert.Equal(t, "acme-corp/ns/catalog/wal", s.WALPrefix())
-	assert.Equal(t, "acme-corp/ns/catalog/refs/head/main", s.BranchRef("main"))
-	assert.Equal(t, "acme-corp/ns/catalog/refs/head/experiment", s.BranchRef("experiment"))
-	assert.Equal(t, "acme-corp/ns/catalog/segments", s.SegmentsPrefix())
-	assert.Equal(t, "acme-corp/ns/catalog/custom", s.Path("custom"))
-}
-
-func TestScope_TenantOnly(t *testing.T) {
-	s := namespace.Scope{Tenant: "tenant1"}
-	require.NoError(t, s.Validate())
-
-	assert.Equal(t, "tenant1/ns/default", s.Prefix())
-	assert.Equal(t, "tenant1/ns.json", s.CatalogPath())
-	assert.Equal(t, "tenant1/ns/default/wal", s.WALPrefix())
-	assert.Equal(t, "tenant1/ns/default/refs/head/main", s.BranchRef("main"))
-}
-
-func TestScope_NamespaceOnly(t *testing.T) {
-	s := namespace.Scope{Namespace: "wiki"}
-	require.NoError(t, s.Validate())
-
-	assert.Equal(t, "cloudy/ns/wiki", s.Prefix())
-	assert.Equal(t, "cloudy/ns.json", s.CatalogPath())
-	assert.Equal(t, "cloudy/ns/wiki/wal", s.WALPrefix())
-	assert.Equal(t, "cloudy/ns/wiki/refs/head/main", s.BranchRef("main"))
+	assert.Equal(t, "ns/catalog", s.Prefix())
+	assert.Equal(t, "ns/catalog/wal", s.WALPrefix())
+	assert.Equal(t, "ns/catalog/refs/head/main", s.BranchRef("main"))
+	assert.Equal(t, "ns/catalog/refs/head/experiment", s.BranchRef("experiment"))
+	assert.Equal(t, "ns/catalog/segments", s.SegmentsPrefix())
+	assert.Equal(t, "ns/catalog/custom", s.Path("custom"))
 }
 
 func TestBranchRef(t *testing.T) {
-	assert.Equal(t, "cloudy/ns/default/refs/head/main", namespace.BranchRef("", "", ""))
-	assert.Equal(t, "cloudy/ns/default/refs/head/main", namespace.BranchRef("cloudy", "default", "main"))
-	assert.Equal(t, "acme/ns/prod/refs/head/main", namespace.BranchRef("acme", "prod", "main"))
-	assert.Equal(t, "cloudy/ns/prod/refs/head/main", namespace.BranchRef("", "prod", "main"))
-	assert.Equal(t, "acme/ns/prod/segments/00000000000000000001.recordio", namespace.SegmentKey("acme", "prod", "00000000000000000001"))
-	scope, _ := namespace.ScopeFromRef("acme/ns/prod/refs/head/main")
-	assert.Equal(t, "acme/ns/prod/segments/00000000000000000001.recordio", scope.SegmentKey("00000000000000000001"))
-	assert.Equal(t, "acme/ns/prod/branches.json", namespace.BranchesPath("acme", "prod"))
+	assert.Equal(t, "ns/default/refs/head/main", namespace.BranchRef("default", "main"))
+	assert.Equal(t, "ns/prod/refs/head/main", namespace.BranchRef("prod", "main"))
+	assert.Equal(t, "ns/prod/segments/00000000000000000001.recordio", namespace.SegmentKey("prod", "00000000000000000001"))
+	scope := namespace.Scope{Namespace: "prod"}
+	assert.Equal(t, "ns/prod/segments/00000000000000000001.recordio", scope.SegmentKey("00000000000000000001"))
+	assert.Equal(t, "ns/prod/branches.json", namespace.BranchesPath("prod"))
 }
 
 func TestScope_ValidationErrors(t *testing.T) {
-	invalidScope := namespace.Scope{Tenant: "1bad", Namespace: "wiki"}
+	invalidScope := namespace.Scope{Namespace: "1bad"}
 	assert.ErrorIs(t, invalidScope.Validate(), namespace.ErrInvalidName)
-
-	invalidScope2 := namespace.Scope{Tenant: "tenant", Namespace: "1bad"}
-	assert.ErrorIs(t, invalidScope2.Validate(), namespace.ErrInvalidName)
 }
 
 func BenchmarkValidate(b *testing.B) {

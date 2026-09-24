@@ -37,23 +37,16 @@ type CatalogCache struct {
 	store        objectstore.Store
 	syncInterval time.Duration
 
-	mu      sync.Mutex
-	tenants map[string]cacheEntry
-}
-
-type cacheEntry struct {
+	mu         sync.Mutex
 	catalog    *namespacepb.TenantCatalog
 	generation string
 }
 
-func ReadTenantCatalog(ctx context.Context, store objectstore.Store, tenant string) (*namespacepb.TenantCatalog, string, error) {
+func ReadTenantCatalog(ctx context.Context, store objectstore.Store) (*namespacepb.TenantCatalog, string, error) {
 	if store == nil {
 		return nil, "", ErrNilStore
 	}
-	if err := ValidateName(tenant); err != nil {
-		return nil, "", err
-	}
-	rc, obj, err := store.Get(ctx, CatalogPath(tenant))
+	rc, obj, err := store.Get(ctx, CatalogFile)
 	if err != nil {
 		return nil, "", err
 	}
@@ -61,14 +54,11 @@ func ReadTenantCatalog(ctx context.Context, store objectstore.Store, tenant stri
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
-		return nil, "", fmt.Errorf("namespace: read catalog %s: %w", tenant, err)
+		return nil, "", fmt.Errorf("namespace: read catalog: %w", err)
 	}
 	var catalog namespacepb.TenantCatalog
 	if err := unmarshalOpts.Unmarshal(data, &catalog); err != nil {
-		return nil, "", fmt.Errorf("namespace: unmarshal catalog %s: %w", tenant, err)
-	}
-	if catalog.Tenant != tenant {
-		return nil, "", fmt.Errorf("namespace: catalog tenant %q does not match key tenant %q", catalog.Tenant, tenant)
+		return nil, "", fmt.Errorf("namespace: unmarshal catalog: %w", err)
 	}
 	if catalog.Namespaces == nil {
 		catalog.Namespaces = make(map[string]*namespacepb.NamespaceMetadata)
@@ -76,8 +66,8 @@ func ReadTenantCatalog(ctx context.Context, store objectstore.Store, tenant stri
 	return &catalog, obj.Generation, nil
 }
 
-func ReadTenantCatalogIfGeneration(ctx context.Context, store objectstore.Store, tenant, generation string) (*namespacepb.TenantCatalog, string, error) {
-	catalog, got, err := ReadTenantCatalog(ctx, store, tenant)
+func ReadTenantCatalogIfGeneration(ctx context.Context, store objectstore.Store, generation string) (*namespacepb.TenantCatalog, string, error) {
+	catalog, got, err := ReadTenantCatalog(ctx, store)
 	if err != nil {
 		return nil, "", err
 	}
@@ -87,12 +77,9 @@ func ReadTenantCatalogIfGeneration(ctx context.Context, store objectstore.Store,
 	return catalog, got, nil
 }
 
-func CreateNamespace(ctx context.Context, store objectstore.Store, tenant, name string, now time.Time) (*namespacepb.NamespaceMetadata, string, error) {
+func CreateNamespace(ctx context.Context, store objectstore.Store, name string, now time.Time) (*namespacepb.NamespaceMetadata, string, error) {
 	if store == nil {
 		return nil, "", ErrNilStore
-	}
-	if err := ValidateName(tenant); err != nil {
-		return nil, "", err
 	}
 	if err := ValidateName(name); err != nil {
 		return nil, "", err
@@ -100,7 +87,7 @@ func CreateNamespace(ctx context.Context, store objectstore.Store, tenant, name 
 	createdAt := max(now.Unix(), 0)
 
 	for {
-		catalog, generation, err := readCatalogOrEmpty(ctx, store, tenant)
+		catalog, generation, err := readCatalogOrEmpty(ctx, store)
 		if err != nil {
 			return nil, "", err
 		}
@@ -127,12 +114,9 @@ func CreateNamespace(ctx context.Context, store objectstore.Store, tenant, name 
 	}
 }
 
-func DeleteNamespace(ctx context.Context, store objectstore.Store, tenant, name string, now time.Time) (*namespacepb.NamespaceMetadata, string, error) {
+func DeleteNamespace(ctx context.Context, store objectstore.Store, name string, now time.Time) (*namespacepb.NamespaceMetadata, string, error) {
 	if store == nil {
 		return nil, "", ErrNilStore
-	}
-	if err := ValidateName(tenant); err != nil {
-		return nil, "", err
 	}
 	if err := ValidateName(name); err != nil {
 		return nil, "", err
@@ -140,7 +124,7 @@ func DeleteNamespace(ctx context.Context, store objectstore.Store, tenant, name 
 	deletedAt := max(now.Unix(), 0)
 
 	for {
-		catalog, generation, err := ReadTenantCatalog(ctx, store, tenant)
+		catalog, generation, err := ReadTenantCatalog(ctx, store)
 		if err != nil {
 			if errors.Is(err, objectstore.ErrNotFound) {
 				return nil, "", ErrNamespaceNotFound
@@ -170,8 +154,8 @@ func DeleteNamespace(ctx context.Context, store objectstore.Store, tenant, name 
 	}
 }
 
-func ActiveNamespaces(ctx context.Context, store objectstore.Store, tenant string) ([]string, error) {
-	cat, _, err := ReadTenantCatalog(ctx, store, tenant)
+func ActiveNamespaces(ctx context.Context, store objectstore.Store) ([]string, error) {
+	cat, _, err := ReadTenantCatalog(ctx, store)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
 			return []string{DefaultNamespace}, nil
@@ -201,30 +185,26 @@ func NewCatalogCache(store objectstore.Store, syncInterval time.Duration) (*Cata
 	return &CatalogCache{
 		store:        store,
 		syncInterval: syncInterval,
-		tenants:      make(map[string]cacheEntry),
 	}, nil
 }
 
-func (c *CatalogCache) LookupNamespace(ctx context.Context, tenant, name string) (*namespacepb.NamespaceMetadata, error) {
-	if err := ValidateName(tenant); err != nil {
-		return nil, err
-	}
+func (c *CatalogCache) LookupNamespace(ctx context.Context, name string) (*namespacepb.NamespaceMetadata, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
 
-	if meta, ok := c.lookupCached(tenant, name); ok {
+	if meta, ok := c.lookupCached(name); ok {
 		if meta.Status != namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE {
 			return nil, ErrNamespaceDeleted
 		}
 		return meta, nil
 	}
 
-	entry, err := c.refreshTenant(ctx, tenant)
+	cat, _, err := c.refresh(ctx)
 	if err != nil {
 		return nil, err
 	}
-	meta, ok := entry.catalog.GetNamespaces()[name]
+	meta, ok := cat.GetNamespaces()[name]
 	if !ok {
 		return nil, ErrNamespaceNotFound
 	}
@@ -234,21 +214,19 @@ func (c *CatalogCache) LookupNamespace(ctx context.Context, tenant, name string)
 	return proto.Clone(meta).(*namespacepb.NamespaceMetadata), nil
 }
 
-func (c *CatalogCache) RefreshTenant(ctx context.Context, tenant string) (*namespacepb.TenantCatalog, string, error) {
-	if err := ValidateName(tenant); err != nil {
-		return nil, "", err
-	}
-	entry, err := c.refreshTenant(ctx, tenant)
+func (c *CatalogCache) Refresh(ctx context.Context) (*namespacepb.TenantCatalog, string, error) {
+	cat, gen, err := c.refresh(ctx)
 	if err != nil {
 		return nil, "", err
 	}
-	return proto.Clone(entry.catalog).(*namespacepb.TenantCatalog), entry.generation, nil
+	return proto.Clone(cat).(*namespacepb.TenantCatalog), gen, nil
 }
 
-func (c *CatalogCache) InvalidateTenant(tenant string) {
+func (c *CatalogCache) Invalidate() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.tenants, tenant)
+	c.catalog = nil
+	c.generation = ""
 }
 
 func (c *CatalogCache) Run(ctx context.Context) error {
@@ -259,63 +237,42 @@ func (c *CatalogCache) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			for _, tenant := range c.snapshotTenants() {
-				if err := ctx.Err(); err != nil {
+			if _, _, err := c.refresh(ctx); err != nil && !errors.Is(err, objectstore.ErrNotFound) {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return err
-				}
-				if _, err := c.refreshTenant(ctx, tenant); err != nil && !errors.Is(err, objectstore.ErrNotFound) {
-					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-						return err
-					}
 				}
 			}
 		}
 	}
 }
 
-func (c *CatalogCache) lookupCached(tenant, name string) (*namespacepb.NamespaceMetadata, bool) {
+func (c *CatalogCache) lookupCached(name string) (*namespacepb.NamespaceMetadata, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	entry, ok := c.tenants[tenant]
-	if !ok {
+	if c.catalog == nil {
 		return nil, false
 	}
-	meta, ok := entry.catalog.GetNamespaces()[name]
+	meta, ok := c.catalog.GetNamespaces()[name]
 	if !ok {
 		return nil, false
 	}
 	return proto.Clone(meta).(*namespacepb.NamespaceMetadata), true
 }
 
-func (c *CatalogCache) refreshTenant(ctx context.Context, tenant string) (cacheEntry, error) {
-	catalog, generation, err := readCatalogOrEmpty(ctx, c.store, tenant)
+func (c *CatalogCache) refresh(ctx context.Context) (*namespacepb.TenantCatalog, string, error) {
+	catalog, generation, err := readCatalogOrEmpty(ctx, c.store)
 	if err != nil {
-		return cacheEntry{}, err
+		return nil, "", err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.tenants[tenant] = cacheEntry{
-		catalog:    catalog,
-		generation: generation,
-	}
-	return cacheEntry{
-		catalog:    catalog,
-		generation: generation,
-	}, nil
+	c.catalog = catalog
+	c.generation = generation
+	return catalog, generation, nil
 }
 
-func (c *CatalogCache) snapshotTenants() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	tenants := make([]string, 0, len(c.tenants))
-	for tenant := range c.tenants {
-		tenants = append(tenants, tenant)
-	}
-	return tenants
-}
-
-func readCatalogOrEmpty(ctx context.Context, store objectstore.Store, tenant string) (*namespacepb.TenantCatalog, string, error) {
-	catalog, generation, err := ReadTenantCatalog(ctx, store, tenant)
+func readCatalogOrEmpty(ctx context.Context, store objectstore.Store) (*namespacepb.TenantCatalog, string, error) {
+	catalog, generation, err := ReadTenantCatalog(ctx, store)
 	if err == nil {
 		return catalog, generation, nil
 	}
@@ -323,7 +280,6 @@ func readCatalogOrEmpty(ctx context.Context, store objectstore.Store, tenant str
 		return nil, "", err
 	}
 	return &namespacepb.TenantCatalog{
-		Tenant:     tenant,
 		Namespaces: make(map[string]*namespacepb.NamespaceMetadata),
 	}, "", nil
 }
@@ -331,11 +287,11 @@ func readCatalogOrEmpty(ctx context.Context, store objectstore.Store, tenant str
 func putTenantCatalog(ctx context.Context, store objectstore.Store, catalog *namespacepb.TenantCatalog, generation string) (string, error) {
 	data, err := marshalOpts.Marshal(catalog)
 	if err != nil {
-		return "", fmt.Errorf("namespace: marshal catalog %s: %w", catalog.Tenant, err)
+		return "", fmt.Errorf("namespace: marshal catalog: %w", err)
 	}
 	cond := objectstore.Condition{Absent: true}
 	if generation != "" {
 		cond = objectstore.Condition{GenerationMatch: generation}
 	}
-	return store.Put(ctx, CatalogPath(catalog.Tenant), bytes.NewReader(data), cond)
+	return store.Put(ctx, CatalogFile, bytes.NewReader(data), cond)
 }

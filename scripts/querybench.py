@@ -1,5 +1,3 @@
-"""Query latency benchmark for the cloudy-neigh demo."""
-
 import logging
 import os
 import random
@@ -11,6 +9,7 @@ import grpc
 import pyarrow.parquet as pq
 
 from proto.cloudyneigh.v1 import index_pb2, index_pb2_grpc
+from scripts.interceptor import TenantClientInterceptor
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
@@ -21,6 +20,7 @@ flags.DEFINE_string(
 flags.DEFINE_string("parquet", "en/0000.parquet", "Parquet file for query vectors")
 flags.DEFINE_string("target", "localhost:50052", "Target query address")
 flags.DEFINE_string("namespace", "main", "Target namespace")
+flags.DEFINE_string("tenant", "cloudy", "Target tenant")
 flags.DEFINE_integer("queries", 100, "Number of timed queries")
 flags.DEFINE_integer("warmup", 10, "Number of warmup queries")
 flags.DEFINE_integer("top_k", 10, "top_k per query")
@@ -115,10 +115,18 @@ def main(argv: list[str]) -> None:
     logger.info("Loaded %d query vectors from %s", len(vectors), path)
 
     with grpc.insecure_channel(FLAGS.target) as channel:
-        stub = index_pb2_grpc.QueryServiceStub(channel)
+        intercepted = grpc.intercept_channel(
+            channel, TenantClientInterceptor(FLAGS.tenant)
+        )
+        stub = index_pb2_grpc.QueryServiceStub(intercepted)
 
         run_queries(
-            stub, vectors, FLAGS.warmup, FLAGS.top_k, FLAGS.namespace, FLAGS.filter_lang
+            stub,
+            vectors,
+            FLAGS.warmup,
+            FLAGS.top_k,
+            FLAGS.namespace,
+            FLAGS.filter_lang,
         )
         latencies, last_hits = run_queries(
             stub,

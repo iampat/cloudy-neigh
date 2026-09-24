@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
@@ -36,7 +37,7 @@ func writeSegment(t *testing.T, ctx context.Context, store objectstore.Store, br
 		require.NoError(t, w.Write(m))
 	}
 	require.NoError(t, w.Close())
-	scope, _ := namespace.ScopeFromRef(branch)
+	scope := namespace.Scope{Namespace: namespace.DefaultNamespace}
 	segKey := scope.SegmentKey(segID)
 	_, err := store.Put(ctx, segKey, bytes.NewReader(buf.Bytes()), objectstore.Condition{Absent: true})
 	require.NoError(t, err)
@@ -44,7 +45,7 @@ func writeSegment(t *testing.T, ctx context.Context, store objectstore.Store, br
 
 func updateManifest(t *testing.T, ctx context.Context, store objectstore.Store, branch string, segIDs []string, expectedGen string) string {
 	t.Helper()
-	scope, _ := namespace.ScopeFromRef(branch)
+	scope := namespace.Scope{Namespace: namespace.DefaultNamespace}
 	var segs []*storagepb.SegmentRef
 	for _, id := range segIDs {
 		segs = append(segs, &storagepb.SegmentRef{
@@ -58,7 +59,7 @@ func updateManifest(t *testing.T, ctx context.Context, store objectstore.Store, 
 	}
 	gen, err := manifest.Write(ctx, store, branch, m, expectedGen)
 	require.NoError(t, err)
-	_ = namespace.AddBranch(ctx, store, "", branch)
+	_ = scope.AddBranch(ctx, store, branch)
 	return gen
 }
 
@@ -67,11 +68,13 @@ func setupQueryTestEnv(t *testing.T, store objectstore.Store) (cloudyneighpb.Que
 	eng, err := query.NewEngine(store, 20*time.Millisecond)
 	require.NoError(t, err)
 
-	srv, err := grpcapi.NewQueryServer(eng)
+	srv, err := grpcapi.NewQueryServer(map[string]grpcapi.QueryEngine{
+		namespace.DefaultTenant: eng,
+	})
 	require.NoError(t, err)
 
 	lis := bufconn.Listen(1024 * 1024)
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.UnaryInterceptor(grpcapi.TenantInterceptor))
 	cloudyneighpb.RegisterQueryServiceServer(s, srv)
 
 	go func() {
@@ -88,6 +91,7 @@ func setupQueryTestEnv(t *testing.T, store objectstore.Store) (cloudyneighpb.Que
 			return lis.Dial()
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(testTenantClientInterceptor(namespace.DefaultTenant)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
@@ -108,7 +112,9 @@ func TestQuery_NilRequest(t *testing.T) {
 
 	eng, err := query.NewEngine(store, 20*time.Millisecond)
 	require.NoError(t, err)
-	srv, err := grpcapi.NewQueryServer(eng)
+	srv, err := grpcapi.NewQueryServer(map[string]grpcapi.QueryEngine{
+		namespace.DefaultTenant: eng,
+	})
 	require.NoError(t, err)
 
 	_, err = srv.Query(ctx, nil)
@@ -144,7 +150,7 @@ func TestQuery_Validation(t *testing.T) {
 
 	client, eng := setupQueryTestEnv(t, store)
 
-	mainBranch := namespace.BranchRef("", "default", "main")
+	mainBranch := namespace.BranchRef("default", "main")
 	writeSegment(t, ctx, store, mainBranch, "seg-1", []*storagepb.DocumentMutation{
 		{
 			Branch: mainBranch,
@@ -246,44 +252,39 @@ func TestQuery_EndToEnd(t *testing.T) {
 	ingester, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
-	ingestSrv, err := grpcapi.NewIngestServer(ingester)
-	require.NoError(t, err)
-
 	flusher, err := ingest.NewFlusher(store, ingest.Config{})
 	require.NoError(t, err)
 
-	_, err = ingestSrv.Upsert(ctx, &cloudyneighpb.UpsertRequest{
-		Namespace: "default",
-		Records: []*cloudyneighpb.Record{
-			{
-				Id: "doc-1",
-				Vectors: map[string]*cloudyneighpb.Vector{
-					"default": {Values: []float32{1.0, 0.0}},
-				},
-				Attributes: map[string]*cloudyneighpb.AttributeValue{
-					"genre": stringAttr("sci-fi"),
-				},
+	err = ingester.Upsert(ctx, namespace.BranchRef(namespace.DefaultNamespace, "main"), []*cloudyneighpb.Record{
+		{
+			Id: "doc-1",
+			Vectors: map[string]*cloudyneighpb.Vector{
+				"default": {Values: []float32{1.0, 0.0}},
 			},
-			{
-				Id: "doc-2",
-				Vectors: map[string]*cloudyneighpb.Vector{
-					"default": {Values: []float32{0.6, 0.8}},
-				},
-				Attributes: map[string]*cloudyneighpb.AttributeValue{
-					"genre": stringAttr("sci-fi"),
-				},
-			},
-			{
-				Id: "doc-3",
-				Vectors: map[string]*cloudyneighpb.Vector{
-					"default": {Values: []float32{0.0, 1.0}},
-				},
-				Attributes: map[string]*cloudyneighpb.AttributeValue{
-					"genre": stringAttr("fantasy"),
-				},
+			Attributes: map[string]*cloudyneighpb.AttributeValue{
+				"genre": stringAttr("sci-fi"),
 			},
 		},
-	})
+		{
+			Id: "doc-2",
+			Vectors: map[string]*cloudyneighpb.Vector{
+				"default": {Values: []float32{0.6, 0.8}},
+			},
+			Attributes: map[string]*cloudyneighpb.AttributeValue{
+				"genre": stringAttr("sci-fi"),
+			},
+		},
+		{
+			Id: "doc-3",
+			Vectors: map[string]*cloudyneighpb.Vector{
+				"default": {Values: []float32{0.0, 1.0}},
+			},
+			Attributes: map[string]*cloudyneighpb.AttributeValue{
+				"genre": stringAttr("fantasy"),
+			},
+		},
+	},
+	)
 	require.NoError(t, err)
 
 	flusherCtx, cancelFlusher := context.WithCancel(ctx)
@@ -317,10 +318,7 @@ func TestQuery_EndToEnd(t *testing.T) {
 	require.Len(t, resp.Hits, 1)
 	require.Equal(t, "doc-3", resp.Hits[0].Record.Id)
 
-	_, err = ingestSrv.Delete(ctx, &cloudyneighpb.DeleteRequest{
-		Namespace: "default",
-		Ids:       []string{"doc-1"},
-	})
+	err = ingester.Delete(ctx, namespace.BranchRef(namespace.DefaultNamespace, "main"), []string{"doc-1"})
 	require.NoError(t, err)
 
 	flusherCtx2, cancelFlusher2 := context.WithCancel(ctx)
@@ -398,7 +396,7 @@ func TestQuery_ConcurrentSyncAndQuery(t *testing.T) {
 		payload, err := proto.Marshal(rec)
 		require.NoError(t, err)
 
-		mainBranch := namespace.BranchRef("", "default", "main")
+		mainBranch := namespace.BranchRef("default", "main")
 		mut := &storagepb.DocumentMutation{
 			Branch:  mainBranch,
 			DocId:   rec.Id,
@@ -431,4 +429,150 @@ func TestQuery_ConcurrentSyncAndQuery(t *testing.T) {
 	cancel()
 	err = <-runErrCh
 	require.NoError(t, err)
+}
+
+func TestQuery_UnknownTenant(t *testing.T) {
+	store, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	eng, err := query.NewEngine(store, 20*time.Millisecond)
+	require.NoError(t, err)
+
+	srv, err := grpcapi.NewQueryServer(map[string]grpcapi.QueryEngine{
+		"tenant-a": eng,
+	})
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	s := grpc.NewServer(grpc.UnaryInterceptor(grpcapi.TenantInterceptor))
+	cloudyneighpb.RegisterQueryServiceServer(s, srv)
+	go func() { _ = s.Serve(lis) }()
+	t.Cleanup(func() {
+		s.GracefulStop()
+		lis.Close()
+	})
+
+	conn, err := grpc.NewClient(
+		"passthrough://bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return lis.Dial()
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	client := cloudyneighpb.NewQueryServiceClient(conn)
+	ctx := metadata.AppendToOutgoingContext(context.Background(), grpcapi.TenantHeader, "unknown-tenant")
+	_, err = client.Query(ctx, &cloudyneighpb.QueryRequest{
+		Namespace: "default",
+		Branch:    "main",
+		Vector:    []float32{1.0, 0.0},
+		TopK:      1,
+	})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.NotFound, st.Code())
+}
+
+func TestQuery_CrossTenantIsolation(t *testing.T) {
+	ctx := context.Background()
+	storeAcme, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { storeAcme.Close() })
+
+	storeKrusty, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { storeKrusty.Close() })
+
+	ingAcme, err := ingest.NewIngester(storeAcme)
+	require.NoError(t, err)
+	engAcme, err := query.NewEngine(storeAcme, 20*time.Millisecond)
+	require.NoError(t, err)
+
+	ingKrusty, err := ingest.NewIngester(storeKrusty)
+	require.NoError(t, err)
+	engKrusty, err := query.NewEngine(storeKrusty, 20*time.Millisecond)
+	require.NoError(t, err)
+
+	ingestSrv, err := grpcapi.NewIngestServer(map[string]grpcapi.Ingester{
+		"acme":   ingAcme,
+		"krusty": ingKrusty,
+	})
+	require.NoError(t, err)
+
+	querySrv, err := grpcapi.NewQueryServer(map[string]grpcapi.QueryEngine{
+		"acme":   engAcme,
+		"krusty": engKrusty,
+	})
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	s := grpc.NewServer(grpc.UnaryInterceptor(grpcapi.TenantInterceptor))
+	cloudyneighpb.RegisterIngestServiceServer(s, ingestSrv)
+	cloudyneighpb.RegisterQueryServiceServer(s, querySrv)
+	go func() { _ = s.Serve(lis) }()
+	t.Cleanup(func() {
+		s.GracefulStop()
+		lis.Close()
+	})
+
+	conn, err := grpc.NewClient(
+		"passthrough://bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return lis.Dial()
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	ingestClient := cloudyneighpb.NewIngestServiceClient(conn)
+	queryClient := cloudyneighpb.NewQueryServiceClient(conn)
+
+	ctxAcme := metadata.AppendToOutgoingContext(ctx, grpcapi.TenantHeader, "acme")
+	_, err = ingestClient.Upsert(ctxAcme, &cloudyneighpb.UpsertRequest{
+		Namespace: "default",
+		Branch:    "main",
+		Records: []*cloudyneighpb.Record{
+			{
+				Id: "acme-secret-doc",
+				Vectors: map[string]*cloudyneighpb.Vector{
+					"default": {Values: []float32{1.0, 0.0}},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	flusher, err := ingest.NewFlusher(storeAcme, ingest.Config{})
+	require.NoError(t, err)
+	flusherCtx, cancelFlusher := context.WithCancel(ctx)
+	cancelFlusher()
+	require.NoError(t, flusher.Run(flusherCtx))
+
+	require.NoError(t, engAcme.SyncOnce(ctx))
+	require.NoError(t, engKrusty.SyncOnce(ctx))
+
+	ctxKrusty := metadata.AppendToOutgoingContext(ctx, grpcapi.TenantHeader, "krusty")
+	krustyResp, err := queryClient.Query(ctxKrusty, &cloudyneighpb.QueryRequest{
+		Namespace: "default",
+		Branch:    "main",
+		Vector:    []float32{1.0, 0.0},
+		TopK:      10,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, krustyResp.Hits)
+
+	acmeResp, err := queryClient.Query(ctxAcme, &cloudyneighpb.QueryRequest{
+		Namespace: "default",
+		Branch:    "main",
+		Vector:    []float32{1.0, 0.0},
+		TopK:      10,
+	})
+	require.NoError(t, err)
+	require.Len(t, acmeResp.Hits, 1)
+	assert.Equal(t, "acme-secret-doc", acmeResp.Hits[0].Record.Id)
 }

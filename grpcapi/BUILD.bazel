@@ -4,6 +4,7 @@ go_library(
     name = "grpcapi",
     srcs = [
         "ingest.go",
+        "interceptor.go",
         "query.go",
     ],
     importpath = "github.com/iampat/cloudy-neigh/grpcapi",
@@ -15,7 +16,9 @@ go_library(
         "//proto/cloudyneigh/v1:cloudyneigh",
         "//query",
         "//query/distance",
+        "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//metadata",
         "@org_golang_google_grpc//status",
     ],
 )
@@ -24,6 +27,7 @@ go_test(
     name = "grpcapi_test",
     srcs = [
         "ingest_test.go",
+        "interceptor_test.go",
         "query_test.go",
     ],
     deps = [
@@ -42,6 +46,7 @@ go_test(
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//metadata",
         "@org_golang_google_grpc//status",
         "@org_golang_google_grpc//test/bufconn",
         "@org_golang_google_protobuf//proto",

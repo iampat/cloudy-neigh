@@ -24,18 +24,18 @@ func TestListBranchesDefault(t *testing.T) {
 
 	branches, err := namespace.ListBranches(ctx, s, "")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"cloudy/ns/default/refs/head/main"}, branches)
+	assert.Equal(t, []string{"ns/default/refs/head/main"}, branches)
 }
 
 func TestBranchRegistration(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	scope := namespace.Scope{Tenant: "acme", Namespace: "prod"}
+	scope := namespace.Scope{Namespace: "prod"}
 
 	// Initially empty -> returns default branch ref
 	branches, err := scope.ListBranches(ctx, s)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"acme/ns/prod/refs/head/main"}, branches)
+	assert.Equal(t, []string{"ns/prod/refs/head/main"}, branches)
 
 	// Add branches
 	err = scope.AddBranch(ctx, s, scope.BranchRef("main"))
@@ -48,9 +48,9 @@ func TestBranchRegistration(t *testing.T) {
 	branches, err = scope.ListBranches(ctx, s)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{
-		"acme/ns/prod/refs/head/main",
-		"acme/ns/prod/refs/head/feature-1",
-		"acme/ns/prod/refs/head/feature-2",
+		"ns/prod/refs/head/main",
+		"ns/prod/refs/head/feature-1",
+		"ns/prod/refs/head/feature-2",
 	}, branches)
 
 	// Idempotent add
@@ -67,26 +67,7 @@ func TestBranchRegistration(t *testing.T) {
 	branches, err = scope.ListBranches(ctx, s)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{
-		"acme/ns/prod/refs/head/main",
-		"acme/ns/prod/refs/head/feature-2",
+		"ns/prod/refs/head/main",
+		"ns/prod/refs/head/feature-2",
 	}, branches)
-}
-
-func TestScopeFromRef(t *testing.T) {
-	scope, branch := namespace.ScopeFromRef("acme/ns/prod/refs/head/main")
-	assert.Equal(t, "acme", scope.Tenant)
-	assert.Equal(t, "prod", scope.Namespace)
-	assert.Equal(t, "main", branch)
-	assert.Equal(t, "acme/ns/prod/segments/0001.recordio", scope.SegmentKey("0001"))
-
-	scope, branch = namespace.ScopeFromRef("refs/head/main")
-	assert.Equal(t, "", scope.Tenant)
-	assert.Equal(t, "", scope.Namespace)
-	assert.Equal(t, "main", branch)
-	assert.Equal(t, "cloudy/ns/default/segments/0001.recordio", scope.SegmentKey("0001"))
-
-	scope, branch = namespace.ScopeFromRef("main")
-	assert.Equal(t, "", scope.Tenant)
-	assert.Equal(t, "", scope.Namespace)
-	assert.Equal(t, "main", branch)
 }

@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//grpcapi",
         "//ingest",
-        "//objectstore",
+        "//namespace",
         "//proto/cloudyneigh/v1:cloudyneigh",
         "//query",
         "//query/distance",

@@ -49,3 +49,21 @@ Last pass: 2026-08-26. Window: 4 weeks, 286 messages, 21 sessions.
 **Do:** Cut the sentence that explains a language feature, a protocol or a pattern. Cut the reason for an obvious choice.
 7 asks, 2026-08-12 to 2026-08-13. Repeat offence: `.claude/CLAUDE.md`.
 > "you don't need to explain why a message is empty, reader are experienced. remove it here and in the rest of the doc."
+
+## Architecture
+
+### Do not parse paths to extract namespaces or branches
+**Do:** Never parse storage paths or reference strings to extract namespaces or branches. Control plane catalogs like `branches.json` and explicit parameters resolve them.
+
+Forbidden pattern:
+```go
+func scopeFromBranchRef(branchRef string) namespace.Scope {
+	if prefix, _, ok := strings.Cut(branchRef, "/"+namespace.RefHead+"/"); ok {
+		ns := strings.TrimPrefix(prefix, namespace.NamespaceDir+"/")
+		return namespace.Scope{Namespace: ns}
+	}
+	return namespace.Scope{Namespace: namespace.DefaultNamespace}
+}
+```
+> "we are not allowd to parse paths to extract namespaces or branches"
+

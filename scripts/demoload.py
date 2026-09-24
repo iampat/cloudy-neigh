@@ -1,5 +1,3 @@
-"""Dataset loader for cloudy-neigh customer demo."""
-
 import glob
 import logging
 import os
@@ -11,6 +9,7 @@ import grpc
 import pyarrow.parquet as pq
 
 from proto.cloudyneigh.v1 import index_pb2, index_pb2_grpc
+from scripts.interceptor import TenantClientInterceptor
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
@@ -22,6 +21,7 @@ flags.DEFINE_integer("batch_size", 200, "Batch size for writes")
 flags.DEFINE_integer("max_docs", None, "Maximum documents to stream")
 flags.DEFINE_string("target", "localhost:50051", "Target ingest address")
 flags.DEFINE_string("namespace", "main", "Target namespace")
+flags.DEFINE_string("tenant", "cloudy", "Target tenant")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +54,7 @@ def load_dataset(
     max_docs: int | None = None,
     target: str = "localhost:50051",
     namespace: str = "main",
+    tenant: str = "cloudy",
 ) -> None:
     """Read Parquet files from data_dir and stream batches to the target service."""
     base = os.environ.get("BUILD_WORKING_DIRECTORY", ".")
@@ -76,7 +77,8 @@ def load_dataset(
     start_time = time.time()
 
     with grpc.insecure_channel(target) as channel:
-        stub = index_pb2_grpc.IngestServiceStub(channel)
+        intercepted = grpc.intercept_channel(channel, TenantClientInterceptor(tenant))
+        stub = index_pb2_grpc.IngestServiceStub(intercepted)
 
         for file_path in files:
             lang = parse_lang_from_path(file_path)
@@ -149,6 +151,7 @@ def main(argv: list[str]) -> None:
         max_docs=FLAGS.max_docs,
         target=FLAGS.target,
         namespace=FLAGS.namespace,
+        tenant=FLAGS.tenant,
     )
 
 
