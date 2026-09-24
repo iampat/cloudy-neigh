@@ -83,6 +83,7 @@
 - `logstream`: Unified stream and prefix into a single prefix path parameter in `logstream.New`. Removed `WithPrefix` option. [#81]
 
 ### Removed
+
 - `segment.Writer`: deleted manual `Flush` and `Close` forwarding methods in favor of embedded `recordio.Writer`. [#154]
 - `objectstore`: deleted `gcsStore.bkt()` forwarding helper in favor of struct field. [#154]
 - `.bazelrc`: removed `--test_output=streamed` from fuzz tests to re-enable sharding. [#153]
