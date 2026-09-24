@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import random
@@ -25,6 +26,7 @@ flags.DEFINE_integer("queries", 100, "Number of timed queries")
 flags.DEFINE_integer("warmup", 10, "Number of warmup queries")
 flags.DEFINE_integer("top_k", 10, "top_k per query")
 flags.DEFINE_string("filter_lang", "", "Optional lang equality filter")
+flags.DEFINE_string("out", "", "Optional JSONL file for per-query measurements")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,8 +49,8 @@ def run_queries(
     top_k: int,
     namespace: str,
     filter_lang: str,
-) -> tuple[list[float], int]:
-    latencies: list[float] = []
+) -> tuple[list[dict], int]:
+    results: list[dict] = []
     hits = 0
     for i in range(count):
         req = index_pb2.QueryRequest(
@@ -60,8 +62,18 @@ def run_queries(
             req.filter.field = "lang"
             req.filter.value.string_value = filter_lang
         start = time.perf_counter()
-        resp = stub.Query(req)
-        latencies.append(time.perf_counter() - start)
+        resp, call = stub.Query.with_call(req)
+        total = time.perf_counter() - start
+        trailer = dict(call.trailing_metadata())
+        results.append(
+            {
+                "query": i % len(vectors),
+                "total_s": total,
+                "server_s": int(trailer["server-time-us"]) / 1e6,
+                "ids": [h.record.id for h in resp.hits],
+                "scores": [h.score for h in resp.hits],
+            }
+        )
         hits = len(resp.hits)
         if i == 0 and resp.hits:
             rec = resp.hits[0].record
@@ -70,7 +82,7 @@ def run_queries(
                 rec.id,
                 {k: v.string_value[:40] for k, v in rec.attributes.items()},
             )
-    return latencies, hits
+    return results, hits
 
 
 def report(label: str, latencies: list[float]) -> None:
@@ -128,7 +140,7 @@ def main(argv: list[str]) -> None:
             FLAGS.namespace,
             FLAGS.filter_lang,
         )
-        latencies, last_hits = run_queries(
+        results, last_hits = run_queries(
             stub,
             vectors,
             FLAGS.queries,
@@ -140,7 +152,18 @@ def main(argv: list[str]) -> None:
     label = f"top_k={FLAGS.top_k}"
     if FLAGS.filter_lang:
         label += f" lang={FLAGS.filter_lang}"
-    report(label, latencies)
+    report(f"{label} total", [r["total_s"] for r in results])
+    report(f"{label} server", [r["server_s"] for r in results])
+    report(
+        f"{label} client-server",
+        [r["total_s"] - r["server_s"] for r in results],
+    )
+    if FLAGS.out:
+        out = FLAGS.out if os.path.isabs(FLAGS.out) else os.path.join(base, FLAGS.out)
+        with open(out, "w") as f:
+            for r in results:
+                f.write(json.dumps(r) + "\n")
+        logger.info("Wrote %d measurements to %s", len(results), out)
     logger.info("last response hits: %d", last_hits)
 
 
