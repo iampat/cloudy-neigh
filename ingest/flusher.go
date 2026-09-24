@@ -127,14 +127,22 @@ func (f *Flusher) discoverStreams(ctx context.Context) ([]streamTarget, error) {
 		}
 
 		for _, obj := range objs {
-			target, nextJump, ok := parseStreamTarget(obj.Key)
-			if ok {
-				add(target)
+			nextJump := obj.Key
+			if tenant, rest, ok := strings.Cut(obj.Key, "/"+namespace.NamespaceDir+"/"); ok {
+				ns, _, _ := strings.Cut(rest, "/")
+				if tenant != "" && ns != "" {
+					scope := namespace.Scope{Tenant: tenant, Namespace: ns}
+					if scope.Validate() == nil {
+						add(streamTarget{
+							scope:     scope,
+							walPrefix: scope.WALPrefix(),
+						})
+						nextJump = path.Join(tenant, namespace.NamespaceDir, ns) + "/~"
+					}
+				}
 			}
 			if nextJump > startAfter {
 				startAfter = nextJump
-			} else if obj.Key > startAfter {
-				startAfter = obj.Key
 			}
 		}
 
@@ -144,23 +152,6 @@ func (f *Flusher) discoverStreams(ctx context.Context) ([]streamTarget, error) {
 	}
 
 	return targets, nil
-}
-
-func parseStreamTarget(key string) (streamTarget, string, bool) {
-	if tenant, rest, ok := strings.Cut(key, "/"+namespace.NamespaceDir+"/"); ok {
-		ns, _, _ := strings.Cut(rest, "/")
-		if tenant != "" && ns != "" {
-			scope := namespace.Scope{Tenant: tenant, Namespace: ns}
-			if scope.Validate() == nil {
-				jump := path.Join(tenant, namespace.NamespaceDir, ns) + "/~"
-				return streamTarget{
-					scope:     scope,
-					walPrefix: scope.WALPrefix(),
-				}, jump, true
-			}
-		}
-	}
-	return streamTarget{}, key, false
 }
 
 func (f *Flusher) startStream(ctx context.Context, g *errgroup.Group, target streamTarget) error {

@@ -40,10 +40,6 @@ func NewLoader(store objectstore.Store, table *atomic.Pointer[Table]) (*Loader, 
 	}, nil
 }
 
-func (l *Loader) Table() *Table {
-	return l.table.Load()
-}
-
 func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 	syncStart := time.Now()
 	manifest, gen, err := manifest.Read(ctx, l.store, branch)
@@ -70,12 +66,80 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 		if t == nil {
 			t = l.table.Load().Clone()
 		}
-		if err := l.loadSegment(ctx, branch, seg, t); err != nil {
+		segKey := seg.GetKey()
+		if segKey == "" {
 			if loadedCount > 0 {
 				l.table.Store(t)
 			}
-			return loadedCount, err
+			return loadedCount, fmt.Errorf("query: segment ref missing key: %s", seg.GetSegmentId())
 		}
+
+		loadStart := time.Now()
+		rc, _, err := l.store.Get(ctx, segKey)
+		if err != nil {
+			if loadedCount > 0 {
+				l.table.Store(t)
+			}
+			return loadedCount, fmt.Errorf("get segment %s: %w", segKey, err)
+		}
+
+		reader := segment.NewReader(rc)
+		count := 0
+		var readErr error
+		for {
+			select {
+			case <-ctx.Done():
+				readErr = ctx.Err()
+			default:
+			}
+			if readErr != nil {
+				break
+			}
+
+			mut, err := reader.Next()
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					readErr = fmt.Errorf("read mutation from %s: %w", segKey, err)
+				}
+				break
+			}
+			switch mut.Op {
+			case storagepb.MutationOp_PUT:
+				var rec cloudyneighpb.Record
+				if err := proto.Unmarshal(mut.Payload, &rec); err != nil {
+					readErr = fmt.Errorf("unmarshal record from %s: %w", segKey, err)
+					break
+				}
+				if err := t.UpsertRecord(&rec); err != nil {
+					readErr = fmt.Errorf("upsert record %s from %s: %w", rec.Id, segKey, err)
+					break
+				}
+			case storagepb.MutationOp_DELETE:
+				t.Delete(mut.DocId)
+			default:
+				readErr = fmt.Errorf("unknown mutation op %v in %s", mut.Op, segKey)
+				break
+			}
+			if readErr != nil {
+				break
+			}
+			count++
+		}
+		rc.Close()
+		if readErr != nil {
+			if loadedCount > 0 {
+				l.table.Store(t)
+			}
+			return loadedCount, readErr
+		}
+
+		slog.Debug("loaded segment",
+			"branch", branch,
+			"segment_id", seg.SegmentId,
+			"records", count,
+			"load_dur", time.Since(loadStart),
+		)
+
 		l.loaded[seg.SegmentId] = true
 		loadedCount++
 	}
@@ -93,60 +157,4 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 	}
 
 	return loadedCount, nil
-}
-
-func (l *Loader) loadSegment(ctx context.Context, branch string, seg *storagepb.SegmentRef, t *Table) error {
-	segKey := seg.GetKey()
-	if segKey == "" {
-		return fmt.Errorf("query: segment ref missing key: %s", seg.GetSegmentId())
-	}
-
-	loadStart := time.Now()
-	rc, _, err := l.store.Get(ctx, segKey)
-	if err != nil {
-		return fmt.Errorf("get segment %s: %w", segKey, err)
-	}
-	defer rc.Close()
-
-	reader := segment.NewReader(rc)
-	count := 0
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		mut, err := reader.Next()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return fmt.Errorf("read mutation from %s: %w", segKey, err)
-		}
-		switch mut.Op {
-		case storagepb.MutationOp_PUT:
-			var rec cloudyneighpb.Record
-			if err := proto.Unmarshal(mut.Payload, &rec); err != nil {
-				return fmt.Errorf("unmarshal record from %s: %w", segKey, err)
-			}
-			if err := t.UpsertRecord(&rec); err != nil {
-				return fmt.Errorf("upsert record %s from %s: %w", rec.Id, segKey, err)
-			}
-		case storagepb.MutationOp_DELETE:
-			t.Delete(mut.DocId)
-		default:
-			return fmt.Errorf("unknown mutation op %v in %s", mut.Op, segKey)
-		}
-		count++
-	}
-
-	slog.Debug("loaded segment",
-		"branch", branch,
-		"segment_id", seg.SegmentId,
-		"records", count,
-		"load_dur", time.Since(loadStart),
-	)
-
-	return nil
 }

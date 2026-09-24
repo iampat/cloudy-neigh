@@ -119,6 +119,6 @@ func (e *Engine) Query(ctx context.Context, req Request) ([]*cloudyneighpb.Score
 		return nil, SearchStats{}, nil
 	}
 
-	table := loader.Table()
+	table := loader.table.Load()
 	return table.Search(col, req.Vector, req.TopK, cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE, req.Filter)
 }

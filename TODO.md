@@ -56,10 +56,10 @@
   - [X] Delete dead sentinels `ErrNilLog`, `recordio.ErrUnexpectedEOF`, and `ErrBufferTooSmall`. [#149]
   - [ ] Replace memory store mtime-based generation formatting (`objectstore/mem.go:127, 150`) with an atomic integer string.
   - [X] Delete single-caller helper `recordio.mask` (`recordio/crc.go:29-31`). Inline into `computeMaskedCRC`. [#149]
-  - [ ] Delete single-caller helper `resolveForkBranches` in `grpcapi/ingest.go:57-81`. Inline into `Fork`.
-  - [ ] Delete single-caller helper `parseStreamTarget` in `ingest/flusher.go:149-164`. Inline into `discoverStreams`.
-  - [ ] Delete single-caller helper `loadSegment` in `query/loader.go:98`. Inline into `Loader.Sync`.
-  - [ ] Delete `query/loader.go:43-45` `Table()` forwarding getter. Call `loader.table.Load()` directly.
+  - [X] Delete single-caller helper `resolveForkBranches` in `grpcapi/ingest.go:57-81`. Inline into `Fork`. [#151]
+  - [X] Delete single-caller helper `parseStreamTarget` in `ingest/flusher.go:149-164`. Inline into `discoverStreams`. [#151]
+  - [X] Delete single-caller helper `loadSegment` in `query/loader.go:98`. Inline into `Loader.Sync`. [#151]
+  - [X] Delete `query/loader.go:43-45` `Table()` forwarding getter. Call `loader.table.Load()` directly. [#151]
   - [ ] Inline server setup single-caller helpers in `cmd/cloudy/main.go:35-119, 216-292`.
   - [ ] Remove test-only accessors `Store()` and `Log()` from `ingest.Ingester` (`ingest/ingester.go:41-43, 60-63`).
 - [ ] KISS: prune internal invariant checks, unreachable modes, and dead code.
