@@ -21,8 +21,9 @@ var ErrNilStore = errors.New("ingest: nil store")
 type Ingester struct {
 	store objectstore.Store
 
-	mu   sync.Mutex
-	logs map[string]*logstream.Log
+	mu         sync.Mutex
+	logs       map[string]*logstream.Log
+	registered map[string]bool
 }
 
 func NewIngester(store objectstore.Store) (*Ingester, error) {
@@ -30,8 +31,9 @@ func NewIngester(store objectstore.Store) (*Ingester, error) {
 		return nil, ErrNilStore
 	}
 	return &Ingester{
-		store: store,
-		logs:  make(map[string]*logstream.Log),
+		store:      store,
+		logs:       make(map[string]*logstream.Log),
+		registered: make(map[string]bool),
 	}, nil
 }
 
@@ -39,13 +41,30 @@ func (ing *Ingester) Store() objectstore.Store {
 	return ing.store
 }
 
-func (ing *Ingester) getOrCreateLog(walPrefix string) (*logstream.Log, error) {
+func (ing *Ingester) getOrCreateLog(ctx context.Context, scope namespace.Scope) (*logstream.Log, error) {
+	walPrefix := scope.WALPrefix()
 	ing.mu.Lock()
 	defer ing.mu.Unlock()
 
 	if l, ok := ing.logs[walPrefix]; ok {
 		return l, nil
 	}
+
+	tenant := scope.Tenant
+	if tenant == "" {
+		tenant = namespace.DefaultTenant
+	}
+	ns := scope.Namespace
+	if ns == "" {
+		ns = namespace.DefaultNamespace
+	}
+	cachePath := scope.Prefix()
+	if !ing.registered[cachePath] {
+		_ = namespace.AddTenant(ctx, ing.store, tenant)
+		_, _, _ = namespace.CreateNamespace(ctx, ing.store, tenant, ns, time.Now())
+		ing.registered[cachePath] = true
+	}
+
 	l, err := logstream.New(ing.store, walPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("create logstream %s: %w", walPrefix, err)
@@ -56,7 +75,7 @@ func (ing *Ingester) getOrCreateLog(walPrefix string) (*logstream.Log, error) {
 
 func (ing *Ingester) Log(branchRef string) (*logstream.Log, error) {
 	scope, _ := namespace.ScopeFromRef(branchRef)
-	return ing.getOrCreateLog(scope.WALPrefix())
+	return ing.getOrCreateLog(context.Background(), scope)
 }
 
 func (ing *Ingester) Upsert(ctx context.Context, branch string, records []*cloudyneighpb.Record) error {
@@ -64,7 +83,7 @@ func (ing *Ingester) Upsert(ctx context.Context, branch string, records []*cloud
 		return nil
 	}
 	scope, _ := namespace.ScopeFromRef(branch)
-	log, err := ing.getOrCreateLog(scope.WALPrefix())
+	log, err := ing.getOrCreateLog(ctx, scope)
 	if err != nil {
 		return err
 	}
@@ -100,7 +119,7 @@ func (ing *Ingester) Delete(ctx context.Context, branch string, ids []string) er
 		return nil
 	}
 	scope, _ := namespace.ScopeFromRef(branch)
-	log, err := ing.getOrCreateLog(scope.WALPrefix())
+	log, err := ing.getOrCreateLog(ctx, scope)
 	if err != nil {
 		return err
 	}
@@ -158,7 +177,7 @@ func (ing *Ingester) Fork(ctx context.Context, source, target string) error {
 	recBytes, err := proto.Marshal(eventRec)
 	if err == nil {
 		var log *logstream.Log
-		log, err = ing.getOrCreateLog(targetScope.WALPrefix())
+		log, err = ing.getOrCreateLog(ctx, targetScope)
 		if err == nil {
 			_, err = log.Append(ctx, []logstream.Record{recBytes})
 		}

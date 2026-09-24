@@ -551,6 +551,7 @@ func TestMultiTenantFlusher_DiscoveryAndFlush(t *testing.T) {
 	require.NoError(t, in.Upsert(ctx, brB, []*cloudyneighpb.Record{{Id: "doc-b1"}}))
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
+		Tenants:      []string{"tenant-1", "tenant-2"},
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
