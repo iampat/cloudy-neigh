@@ -108,9 +108,6 @@ func (g *gcsStore) Delete(ctx context.Context, key string) error {
 }
 
 func (g *gcsStore) Put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
-	if err := cond.validate(key); err != nil {
-		return "", err
-	}
 	obj := g.bkt().Object(key)
 	switch {
 	case cond.Absent:

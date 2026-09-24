@@ -68,8 +68,7 @@ func TestScope_ZeroValue(t *testing.T) {
 }
 
 func TestScope_StorageHierarchy(t *testing.T) {
-	s, err := namespace.NewScope("acme-corp", "catalog")
-	require.NoError(t, err)
+	s := namespace.Scope{Tenant: "acme-corp", Namespace: "catalog"}
 	require.NoError(t, s.Validate())
 
 	assert.Equal(t, "acme-corp/ns/catalog", s.Prefix())
@@ -82,8 +81,8 @@ func TestScope_StorageHierarchy(t *testing.T) {
 }
 
 func TestScope_TenantOnly(t *testing.T) {
-	s, err := namespace.NewScope("tenant1", "")
-	require.NoError(t, err)
+	s := namespace.Scope{Tenant: "tenant1"}
+	require.NoError(t, s.Validate())
 
 	assert.Equal(t, "tenant1/ns/default", s.Prefix())
 	assert.Equal(t, "tenant1/ns.json", s.CatalogPath())
@@ -92,8 +91,8 @@ func TestScope_TenantOnly(t *testing.T) {
 }
 
 func TestScope_NamespaceOnly(t *testing.T) {
-	s, err := namespace.NewScope("", "wiki")
-	require.NoError(t, err)
+	s := namespace.Scope{Namespace: "wiki"}
+	require.NoError(t, s.Validate())
 
 	assert.Equal(t, "cloudy/ns/wiki", s.Prefix())
 	assert.Equal(t, "cloudy/ns.json", s.CatalogPath())
@@ -113,12 +112,6 @@ func TestBranchRef(t *testing.T) {
 }
 
 func TestScope_ValidationErrors(t *testing.T) {
-	_, err := namespace.NewScope("1bad", "wiki")
-	assert.ErrorIs(t, err, namespace.ErrInvalidName)
-
-	_, err = namespace.NewScope("tenant", "1bad")
-	assert.ErrorIs(t, err, namespace.ErrInvalidName)
-
 	invalidScope := namespace.Scope{Tenant: "1bad", Namespace: "wiki"}
 	assert.ErrorIs(t, invalidScope.Validate(), namespace.ErrInvalidName)
 

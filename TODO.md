@@ -65,11 +65,11 @@
 - [ ] KISS: prune internal invariant checks, unreachable modes, and dead code.
   - [ ] Remove defensive constructor nil checks for internal dependencies wired in `main.go` (`grpcapi/ingest.go:31`, `grpcapi/query.go:23`, `ingest/ingester.go:32`, `query/engine.go:33`, `query/loader.go:30`).
   - [ ] Remove redundant slice bounds checks and lazy map initialization in `query/table.go:83-87, 132, 139, 229`.
-  - [ ] Delete `Condition.validate` in `objectstore/objectstore.go:26-31`.
+  - [X] Delete `Condition.validate` in `objectstore/objectstore.go:26-31`.
   - [ ] Delete speculative files `namespace/catalog.go` and `namespace/tenant.go` until required by RPC handlers.
-  - [ ] Delete redundant `NewScope` constructor (`namespace/namespace.go:94-100`).
+  - [X] Delete redundant `NewScope` constructor (`namespace/namespace.go:94-100`).
   - [ ] Delete unused RecordIO options and traversal methods: `Skip`, `Offset`, `LastValidOffset`, `Reset`, and functional options (`recordio/scanner.go`, `recordio/writer.go`).
-  - [ ] Delete `Writer.Sync` capability sniffing in `recordio/writer.go:123-128`.
+  - [X] Delete `Writer.Sync` capability sniffing in `recordio/writer.go:123-128`.
   - [ ] Remove unreachable Euclidean and Dot Product branches in `query/table.go:273-290` until exposed by Query API.
   - [ ] Fix test goroutines calling `t.Errorf` directly. Propagate test failures to main test goroutines safely.
 - [ ] Prune unused protobuf schemas, fields, and speculative metadata.

@@ -276,9 +276,6 @@ func (d *localStore) Put(ctx context.Context, key string, r io.Reader, cond Cond
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if err := cond.validate(key); err != nil {
-		return "", err
-	}
 	target, err := d.path(key)
 	if err != nil {
 		return "", err

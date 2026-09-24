@@ -215,21 +215,6 @@ func runContract(t *testing.T, open func(t *testing.T) objectstore.Store, cfg co
 		assert.NotErrorIs(t, err, objectstore.ErrPreconditionFailed)
 	})
 
-	t.Run("InvalidCondition", func(t *testing.T) {
-		for name, cond := range map[string]objectstore.Condition{
-			"bothSet": {Absent: true, GenerationMatch: "12345"},
-		} {
-			t.Run(name, func(t *testing.T) {
-				s := open(t)
-				k := prefix(t, s) + "k"
-				put(t, s, k, "v1")
-				_, err := s.Put(ctx, k, strings.NewReader("v2"), cond)
-				assert.Error(t, err)
-				assert.NotErrorIs(t, err, objectstore.ErrPreconditionFailed)
-			})
-		}
-	})
-
 	t.Run("NilConditionOverwrites", func(t *testing.T) {
 		s := open(t)
 		k := prefix(t, s) + "k"
