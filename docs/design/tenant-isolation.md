@@ -26,7 +26,7 @@ The service loads tenant storage roots at startup. Each tenant controls an isola
 ```text
 ┌────────────────────────────────────────────────────────┐
 │                   Static Configuration                 │
-│                 (-tenants-file=tenants.json)           │
+│                (--tenants-file=tenants.json)           │
 │   tenant: "acme"        ▶  gs://acme-bucket/data/      │
 │   tenant: "krusty-krab" ▶  file:///data/krusty/        │
 └───────────────────────────┬────────────────────────────┘
@@ -68,7 +68,7 @@ A map structure gives O(1) lookup by tenant ID. It prevents duplicate registrati
 
 ### Service Configuration Flag
 
-The CLI takes a `-tenants-file=<path>` flag on `ingest` and `query` subcommands.
+The CLI takes a `--tenants-file=<path>` flag on `ingest` and `query` subcommands.
 Cloudy reads and unmarshals this JSON file during server initialization.
 If the file path is invalid or unmarshaling fails, the server stops immediately.
 
@@ -101,4 +101,4 @@ Unknown tenants fail fast with a not found error.
 
 ## Open
 
-`CONSIDER(ali):` Replace `-storage-root` with `-tenants-file` or treat `-storage-root` as the default tenant store.
+`CONSIDER(ali):` Replace `--storage-root` with `--tenants-file` or treat `--storage-root` as the default tenant store.
