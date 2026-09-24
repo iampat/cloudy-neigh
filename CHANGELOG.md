@@ -79,9 +79,9 @@
 
 ### Removed
 
-- `objectstore`: deleted `Condition.validate` and validation call sites.
-- `namespace`: deleted redundant `NewScope` constructor.
-- `recordio`: deleted `Writer.Sync` capability sniffing.
+- `objectstore`: deleted `Condition.validate` and validation call sites. [#150]
+- `namespace`: deleted redundant `NewScope` constructor. [#150]
+- `recordio`: deleted `Writer.Sync` capability sniffing. [#150]
 - Deleted dead sentinels `ErrNilLog`, `recordio.ErrUnexpectedEOF`, and `recordio.ErrBufferTooSmall`. [#149]
 - `query.Table.Builder`: deleted redundant forwarding builder wrapper and constructors. [#147]
 - `storage.proto`: deleted unused `BlockEntry` and `SegmentFooter` schemas and fields. [#146]
