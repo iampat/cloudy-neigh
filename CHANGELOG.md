@@ -56,6 +56,9 @@
 
 ### Changed
 
+- `grpcapi`: inlined single-caller `resolveForkBranches` helper into `Fork`. [#151]
+- `ingest`: inlined single-caller `parseStreamTarget` helper into `discoverStreams`. [#151]
+- `query`: inlined single-caller `loadSegment` helper into `Loader.Sync`. [#151]
 - `namespace`: unified `ValidateTenant`, `ValidateNamespace`, and `ValidateBranch` into single `ValidateName`. [#149]
 - `recordio`: inlined single-caller `mask` helper into `computeMaskedCRC`. [#149]
 - Inlined table mutations directly on `Table` and added nil guard to `Table.Clone`. [#147]
@@ -79,6 +82,7 @@
 
 ### Removed
 
+- `query.Loader.Table`: deleted forwarding getter in favor of direct atomic load. [#151]
 - `objectstore`: deleted `Condition.validate` and validation call sites. [#150]
 - `namespace`: deleted redundant `NewScope` constructor. [#150]
 - `recordio`: deleted `Writer.Sync` capability sniffing. [#150]

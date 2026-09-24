@@ -54,32 +54,6 @@ func resolveBranch(ns, rawBranch string) (string, error) {
 	return namespace.BranchRef("", ns, rawBranch), nil
 }
 
-func resolveForkBranches(ns, rawSrc, rawTarget string) (string, string, error) {
-	if rawTarget == "" {
-		return "", "", status.Error(codes.InvalidArgument, "grpcapi: target branch cannot be empty")
-	}
-	srcBranch := namespace.DefaultBranch
-	if rawSrc != "" {
-		srcBranch = rawSrc
-	}
-	if err := namespace.ValidateName(rawTarget); err != nil {
-		return "", "", status.Errorf(codes.InvalidArgument, "grpcapi: invalid target branch: %v", err)
-	}
-	if srcBranch == rawTarget {
-		return "", "", status.Error(codes.InvalidArgument, "grpcapi: source and target branch cannot be identical")
-	}
-
-	src, err := resolveBranch(ns, srcBranch)
-	if err != nil {
-		return "", "", err
-	}
-	target, err := resolveBranch(ns, rawTarget)
-	if err != nil {
-		return "", "", err
-	}
-	return src, target, nil
-}
-
 func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequest) (*cloudyneighpb.UpsertResponse, error) {
 	start := time.Now()
 	if req == nil {
@@ -178,7 +152,25 @@ func (s *IngestServer) Fork(ctx context.Context, req *cloudyneighpb.ForkRequest)
 	if err != nil {
 		return nil, err
 	}
-	src, target, err := resolveForkBranches(ns, req.SourceBranch, req.TargetBranch)
+	if req.TargetBranch == "" {
+		return nil, status.Error(codes.InvalidArgument, "grpcapi: target branch cannot be empty")
+	}
+	srcBranch := namespace.DefaultBranch
+	if req.SourceBranch != "" {
+		srcBranch = req.SourceBranch
+	}
+	if err := namespace.ValidateName(req.TargetBranch); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "grpcapi: invalid target branch: %v", err)
+	}
+	if srcBranch == req.TargetBranch {
+		return nil, status.Error(codes.InvalidArgument, "grpcapi: source and target branch cannot be identical")
+	}
+
+	src, err := resolveBranch(ns, srcBranch)
+	if err != nil {
+		return nil, err
+	}
+	target, err := resolveBranch(ns, req.TargetBranch)
 	if err != nil {
 		return nil, err
 	}
@@ -191,10 +183,6 @@ func (s *IngestServer) Fork(ctx context.Context, req *cloudyneighpb.ForkRequest)
 			return nil, status.Error(codes.DeadlineExceeded, err.Error())
 		}
 		if errors.Is(err, objectstore.ErrNotFound) {
-			srcBranch := namespace.DefaultBranch
-			if req.SourceBranch != "" {
-				srcBranch = req.SourceBranch
-			}
 			return nil, status.Errorf(codes.NotFound, "grpcapi: source branch not found: %s", srcBranch)
 		}
 		if errors.Is(err, manifest.ErrBranchAlreadyExists) {
