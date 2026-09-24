@@ -486,6 +486,8 @@ func FuzzNormalizeInPlace(f *testing.F) {
 	})
 }
 
+var benchDims = []int{32, 64, 128, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096}
+
 func BenchmarkDistance(b *testing.B) {
 	funcs := []struct {
 		name     string
@@ -509,7 +511,7 @@ func BenchmarkDistance(b *testing.B) {
 		},
 	}
 	for _, f := range funcs {
-		for _, dim := range []int{128, 768, 1024} {
+		for _, dim := range benchDims {
 			b.Run(f.name+"/pure/"+strconv.Itoa(dim), func(b *testing.B) {
 				v1 := randomVector(dim, 1)
 				v2 := randomVector(dim, 2)
@@ -530,7 +532,7 @@ func BenchmarkDistance(b *testing.B) {
 			})
 		}
 	}
-	for _, dim := range []int{128, 768, 1024} {
+	for _, dim := range benchDims {
 		b.Run("NormalizeInPlace/pure/"+strconv.Itoa(dim), func(b *testing.B) {
 			v := randomVector(dim, 1)
 			buf := slices.Clone(v)
