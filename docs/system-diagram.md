@@ -188,8 +188,8 @@ segments.
         │   ├── 00000000000000000002.recordio
         │   └── 00000000000000000003.recordio
         ├── segments/
-        │   ├── 00000000000000000001-<branch>.recordio
-        │   └── 00000000000000000002-<branch>.recordio
+        │   ├── 00000000000000000001.recordio
+        │   └── 00000000000000000002.recordio
         ├── branches.json
         └── refs/
             └── head/

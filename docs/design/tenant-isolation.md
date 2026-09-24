@@ -95,10 +95,8 @@ The query path never parses storage URLs during request execution.
 
 ### Request Routing
 
-Each protobuf request specifies the tenant identifier in a `tenant` message field.
-Ingest and query handlers resolve the tenant in the registry before accessing storage.
-Unknown tenants fail fast with a not found error.
-
-## Open
-
-`CONSIDER(ali):` Replace `--storage-root` with `--tenants-file` or treat `--storage-root` as the default tenant store.
+Clients pass the tenant identifier via `x-tenant-id` in gRPC metadata.
+A server unary interceptor extracts and validates the tenant into the context.
+Protobuf request messages contain no tenant field.
+Ingest and query handlers resolve the tenant store from the registry using the context.
+Missing or invalid tenants fail fast with an error.
