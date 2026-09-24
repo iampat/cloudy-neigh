@@ -8,22 +8,24 @@ This note defines physical storage isolation for tenants. Each tenant gets a ded
 
 ## Non-goals
 
+- Dynamic tenant discovery at runtime. Changing tenants requires a service restart.
 - Cross-tenant data sharing or federated queries.
 - Cloud IAM credential exchange. Cloudy uses ambient credentials for all storage URLs.
 
 ## Future work
 
+- Move tenant resolution from protobuf message fields to gRPC metadata headers and authentication tokens.
 - Workload Identity and cloud IAM role impersonation.
 - Customer-managed encryption keys per tenant.
 - Namespace storage quotas in a tenant.
 
 ## Model
 
-The control plane stores tenant locations in a central file. Each tenant controls an isolated storage tree.
+The service loads tenant storage roots at startup. Each tenant controls an isolated storage tree.
 
 ```text
 ┌────────────────────────────────────────────────────────┐
-│                   Global Control Plane                 │
+│                   Static Configuration                 │
 │                      (tenants.json)                    │
 │   tenant: "acme"        ▶  gs://acme-bucket/data/      │
 │   tenant: "krusty-krab" ▶  file:///data/krusty/        │
@@ -41,14 +43,14 @@ The control plane stores tenant locations in a central file. Each tenant control
 
 ## Decisions
 
-### Tenant Catalog Schema
+### Static Tenant Catalog Schema
 
-The control plane maintains a `tenants.json` file in master storage.
+Cloudy loads tenant mappings at boot from configuration or a static JSON file.
 It maps tenant identifiers to storage root URLs.
+We omit a version field because static configuration needs no optimistic concurrency control.
 
 ```json
 {
-  "version": 1,
   "tenants": {
     "acme": {
       "storage_url": "gs://acme-bucket/data"
@@ -79,17 +81,16 @@ The path drops the `<tenant>/` prefix because the storage URL isolates the root.
 
 ### In-Memory Tenant Registry
 
-Cloudy nodes cache open `objectstore.Store` instances in memory.
-A lookup uses an atomic pointer or read-write lock.
+Cloudy nodes open and cache `objectstore.Store` instances at startup.
+The registry stores instances in a read-only map.
 The query path never parses storage URLs during request execution.
 
 ### Request Routing
 
-Each request specifies the tenant identifier.
+Each protobuf request specifies the tenant identifier in a `tenant` message field.
 Ingest and query handlers resolve the tenant in the registry before accessing storage.
 Unknown tenants fail fast with a not found error.
 
 ## Open
 
-`CONSIDER(ali):` Pass tenant ID through a protobuf field or a gRPC metadata header.
-`CONSIDER(ali):` Define how flusher workers discover newly registered tenants without a process restart.
+`CONSIDER(ali):` Pass tenant configuration through a CLI flag file path or inline JSON string.
