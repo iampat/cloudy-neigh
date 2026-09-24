@@ -79,14 +79,6 @@ type Scope struct {
 	Namespace string
 }
 
-func NewScope(tenant, ns string) (Scope, error) {
-	s := Scope{Tenant: tenant, Namespace: ns}
-	if err := s.Validate(); err != nil {
-		return Scope{}, err
-	}
-	return s, nil
-}
-
 func (s Scope) Validate() error {
 	if s.Tenant != "" {
 		if err := ValidateName(s.Tenant); err != nil {

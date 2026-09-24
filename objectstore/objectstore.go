@@ -3,7 +3,6 @@ package objectstore
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 )
 
@@ -21,13 +20,6 @@ type Object struct {
 type Condition struct {
 	Absent          bool
 	GenerationMatch string
-}
-
-func (c Condition) validate(key string) error {
-	if c.Absent && c.GenerationMatch != "" {
-		return fmt.Errorf("objectstore: key %q: Condition sets both Absent and GenerationMatch", key)
-	}
-	return nil
 }
 
 type Store interface {

@@ -173,9 +173,7 @@ func (w *Writer) Close() error
 
 `WriteRecord` returns the total bytes written and the record start offset.
 
-`Sync` flushes user-space buffers and invokes `Sync()` on the destination if it
-implements `interface{ Sync() error }` (such as `*os.File`). A failed sync
-poisons the writer.
+`Sync` flushes user-space buffers. A failed sync poisons the writer.
 
 ### Scanner
 

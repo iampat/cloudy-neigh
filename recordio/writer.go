@@ -7,10 +7,6 @@ import (
 	"os"
 )
 
-type syncer interface {
-	Sync() error
-}
-
 type WriterOption func(*Writer)
 
 func WithWriterBufferSize(size int) WriterOption {
@@ -119,12 +115,6 @@ func (w *Writer) Sync() error {
 	if err := w.bw.Flush(); err != nil {
 		w.err = err
 		return err
-	}
-	if s, ok := w.w.(syncer); ok {
-		if err := s.Sync(); err != nil {
-			w.err = err
-			return err
-		}
 	}
 	return nil
 }

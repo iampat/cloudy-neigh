@@ -121,9 +121,6 @@ func (m *memStore) Put(ctx context.Context, key string, r io.Reader, cond Condit
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if err := cond.validate(key); err != nil {
-		return "", err
-	}
 	if cond.GenerationMatch != "" && !validLocalGeneration(cond.GenerationMatch) {
 		return "", fmt.Errorf("objectstore: key %q: malformed generation %q", key, cond.GenerationMatch)
 	}

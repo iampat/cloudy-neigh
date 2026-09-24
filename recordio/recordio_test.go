@@ -15,17 +15,15 @@ import (
 
 type mockSyncerCloser struct {
 	bytes.Buffer
-	synced bool
 	closed bool
 	err    error
 }
 
-func (m *mockSyncerCloser) Sync() error {
+func (m *mockSyncerCloser) Write(p []byte) (int, error) {
 	if m.err != nil {
-		return m.err
+		return 0, m.err
 	}
-	m.synced = true
-	return nil
+	return m.Buffer.Write(p)
 }
 
 func (m *mockSyncerCloser) Close() error {
@@ -91,7 +89,6 @@ func TestWriterSyncAndClose(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, writer.Flush())
-	assert.True(t, mock.synced)
 
 	require.NoError(t, writer.Close())
 	assert.True(t, mock.closed)
