@@ -39,7 +39,7 @@ func resolveNamespace(raw string) (string, error) {
 	if raw != "" {
 		ns = raw
 	}
-	if err := namespace.ValidateNamespace(ns); err != nil {
+	if err := namespace.ValidateName(ns); err != nil {
 		return "", status.Errorf(codes.InvalidArgument, "grpcapi: invalid namespace: %v", err)
 	}
 	return ns, nil
@@ -47,7 +47,7 @@ func resolveNamespace(raw string) (string, error) {
 
 func resolveBranch(ns, rawBranch string) (string, error) {
 	if rawBranch != "" {
-		if err := namespace.ValidateBranch(rawBranch); err != nil {
+		if err := namespace.ValidateName(rawBranch); err != nil {
 			return "", status.Errorf(codes.InvalidArgument, "grpcapi: invalid branch: %v", err)
 		}
 	}
@@ -62,7 +62,7 @@ func resolveForkBranches(ns, rawSrc, rawTarget string) (string, string, error) {
 	if rawSrc != "" {
 		srcBranch = rawSrc
 	}
-	if err := namespace.ValidateBranch(rawTarget); err != nil {
+	if err := namespace.ValidateName(rawTarget); err != nil {
 		return "", "", status.Errorf(codes.InvalidArgument, "grpcapi: invalid target branch: %v", err)
 	}
 	if srcBranch == rawTarget {

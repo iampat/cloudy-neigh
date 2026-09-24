@@ -56,6 +56,8 @@
 
 ### Changed
 
+- `namespace`: unified `ValidateTenant`, `ValidateNamespace`, and `ValidateBranch` into single `ValidateName`. [#149]
+- `recordio`: inlined single-caller `mask` helper into `computeMaskedCRC`. [#149]
 - Inlined table mutations directly on `Table` and added nil guard to `Table.Clone`. [#147]
 - Simplified `BranchLifecycleEvent.Type` enum and removed unused fields from `SegmentRef`. [#146]
 - `ingest`: routed log streams under tenant prefixes and removed root catalog fallbacks. [#144]
@@ -77,6 +79,7 @@
 
 ### Removed
 
+- Deleted dead sentinels `ErrNilLog`, `recordio.ErrUnexpectedEOF`, and `recordio.ErrBufferTooSmall`. [#149]
 - `query.Table.Builder`: deleted redundant forwarding builder wrapper and constructors. [#147]
 - `storage.proto`: deleted unused `BlockEntry` and `SegmentFooter` schemas and fields. [#146]
 - `kvfs`: deleted key-value filesystem package in favor of `manifest` package. [#142]

@@ -33,34 +33,26 @@ func TestValidate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			errTenant := namespace.ValidateTenant(tc.input)
-			errNS := namespace.ValidateNamespace(tc.input)
-			errBranch := namespace.ValidateBranch(tc.input)
+			err := namespace.ValidateName(tc.input)
 			if tc.wantErr {
-				require.Error(t, errTenant)
-				assert.True(t, errors.Is(errTenant, namespace.ErrInvalidName))
-				require.Error(t, errNS)
-				assert.True(t, errors.Is(errNS, namespace.ErrInvalidName))
-				require.Error(t, errBranch)
-				assert.True(t, errors.Is(errBranch, namespace.ErrInvalidName))
+				require.Error(t, err)
+				assert.True(t, errors.Is(err, namespace.ErrInvalidName))
 			} else {
-				require.NoError(t, errTenant)
-				require.NoError(t, errNS)
-				require.NoError(t, errBranch)
+				require.NoError(t, err)
 			}
 		})
 	}
 }
 
-func TestValidateAliases(t *testing.T) {
-	assert.NoError(t, namespace.ValidateTenant("tenant1"))
-	assert.ErrorIs(t, namespace.ValidateTenant("1tenant"), namespace.ErrInvalidName)
+func TestValidateName(t *testing.T) {
+	assert.NoError(t, namespace.ValidateName("tenant1"))
+	assert.ErrorIs(t, namespace.ValidateName("1tenant"), namespace.ErrInvalidName)
 
-	assert.NoError(t, namespace.ValidateNamespace("ns1"))
-	assert.ErrorIs(t, namespace.ValidateNamespace("1ns"), namespace.ErrInvalidName)
+	assert.NoError(t, namespace.ValidateName("ns1"))
+	assert.ErrorIs(t, namespace.ValidateName("1ns"), namespace.ErrInvalidName)
 
-	assert.NoError(t, namespace.ValidateBranch("main"))
-	assert.ErrorIs(t, namespace.ValidateBranch("1branch"), namespace.ErrInvalidName)
+	assert.NoError(t, namespace.ValidateName("main"))
+	assert.ErrorIs(t, namespace.ValidateName("1branch"), namespace.ErrInvalidName)
 }
 
 func TestScope_ZeroValue(t *testing.T) {
@@ -137,7 +129,7 @@ func TestScope_ValidationErrors(t *testing.T) {
 func BenchmarkValidate(b *testing.B) {
 	const name = "cloudy-benchmark_namespace-123"
 	for b.Loop() {
-		if err := namespace.ValidateNamespace(name); err != nil {
+		if err := namespace.ValidateName(name); err != nil {
 			b.Fatal(err)
 		}
 	}

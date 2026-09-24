@@ -16,10 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var (
-	ErrNilStore = errors.New("ingest: nil store")
-	ErrNilLog   = errors.New("ingest: nil log")
-)
+var ErrNilStore = errors.New("ingest: nil store")
 
 type Ingester struct {
 	store objectstore.Store
