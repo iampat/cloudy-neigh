@@ -10,7 +10,7 @@
 - [ ] Support capturing unflushed parent mutations before Fork manifest creation. Sequence the fork event in the flusher, flush active parent mutations to a segment, and create the child manifest at that exact sequence boundary.
 - [ ] Background compaction worker to merge flat immutable segments across branches and purge tombstoned rows.
 - [X] Move multi-tenant log stream routing into the `ingest` library. `cmd/cloudy` acts strictly as an assembly root using dependency injection, without hardcoded stream names or paths. [#144]
-- [ ] Implement tenant management mechanism and control-plane API to register, list, and delete tenants in root tenants.json with CAS updates.
+- [ ] Implement tenant management mechanism and control-plane API to register, list, and delete tenants in root tenants.json with CAS updates. Design note in `docs/design/tenant-isolation.md`. [#155]
 - [ ] Implement cross-tenant isolation across ingestion, query execution, local cache tiers, and storage keys.
 - [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
 - [ ] Expose branch deletion RPC in IngestService to remove branch pointers and update `branches.json`.
