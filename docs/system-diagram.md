@@ -36,7 +36,7 @@ and branch manifests to object storage.
                  ▼                                 ▼
    ┌─────────────────────────────────────────────────────────────┐
    │                    Cloud Object Storage                     │
-   │           <storage-root>/<tenant>/ns/<namespace>/           │
+   │            <tenant-storage-root>/ns/<namespace>/            │
    │  wal/             segments/          branches.json  refs/   │
    │  <seq>.recordio   <seg_id>.recordio                 head/   │
    └─────────────────────────────────────────────────────────────┘
@@ -179,27 +179,27 @@ pointers reference immutable manifests. Manifests reference immutable
 segments.
 
 ```text
-<storage-root>/
-└── <tenant>/
-    ├── ns.json
-    └── ns/
-        └── <namespace>/
-            ├── wal/
-            │   ├── 00000000000000000001.recordio
-            │   ├── 00000000000000000002.recordio
-            │   └── 00000000000000000003.recordio
-            ├── segments/
-            │   ├── 00000000000000000001-<branch>.recordio
-            │   └── 00000000000000000002-<branch>.recordio
-            ├── branches.json
-            └── refs/
-                └── head/
-                    ├── main
-                    └── <branch>
+<tenant-storage-root>/
+├── ns.json
+└── ns/
+    └── <namespace>/
+        ├── wal/
+        │   ├── 00000000000000000001.recordio
+        │   ├── 00000000000000000002.recordio
+        │   └── 00000000000000000003.recordio
+        ├── segments/
+        │   ├── 00000000000000000001-<branch>.recordio
+        │   └── 00000000000000000002-<branch>.recordio
+        ├── branches.json
+        └── refs/
+            └── head/
+                ├── main
+                └── <branch>
 ```
 
-Each tenant has its own folder. Inside it, `ns.json` lists namespaces and
-`ns/` holds namespace directories.
+Each tenant has its own isolated storage root URL configured via `--tenants-file`
+(or a dedicated `<tenant>/` directory in shared storage). Inside it, `ns.json`
+lists namespaces and `ns/` holds namespace directories.
 Each namespace contains:
 - `wal/`: append-only write-ahead log files.
 - `segments/`: flat immutable columnar segment files without branch

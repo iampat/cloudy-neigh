@@ -3,16 +3,18 @@
 ## Problem
 
 Cloudy-neigh needs clear multi-tenant isolation and namespace lifecycle management.
-Creating a namespace should not depend on write-ahead logs (WAL).
+Creating a namespace does not depend on write-ahead logs (WAL).
 Ingest nodes must validate namespaces with zero storage round trips.
 Deleting and recreating a namespace must avoid storage path collisions.
 
 ## Storage Layout
 
 Storage separates the control-plane catalog from the data-plane storage tree.
+In a dedicated tenant store, the root URL isolates the tenant.
+In a shared store, paths nest under `<tenant>/`.
 
 ```text
-<tenant>/
+<tenant-storage-root>/
 ├── ns.json
 └── ns/<namespace>/<epoch>/
     ├── refs/heads/
@@ -28,16 +30,16 @@ Storage separates the control-plane catalog from the data-plane storage tree.
 
 ### Hierarchy
 
-1. **Tenant** (`<tenant>/`):
+1. **Tenant** (`<tenant-storage-root>/` or `<tenant>/`):
    - Strongest isolation boundary.
    - Represents an organization or billing account.
    - Cross-tenant access is strictly prohibited.
-2. **Catalog** (`<tenant>/ns.json`):
+2. **Catalog** (`ns.json` or `<tenant>/ns.json`):
    - Single control-plane metadata object per tenant.
    - Maps namespace names to metadata and active epochs.
 3. **Namespace Epoch** (`ns/<namespace>/<epoch>/`):
    - Autonomous dataset with dedicated WAL and segment store.
-   - `<epoch>` increments upon recreation to isolate data lifecycles.
+   - `<epoch>` increments on recreation to isolate data lifecycles.
 4. **Branch** (`refs/heads/<branch>`):
    - Lightweight reference pointer to a branch manifest.
    - Branches inside the same namespace share immutable segments.
