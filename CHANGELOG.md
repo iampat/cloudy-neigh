@@ -56,6 +56,7 @@
 
 ### Changed
 
+- `.bazelrc`: set race flag directly on build to avoid double config expansion. [#153]
 - `ingest`: replaced flusher store key crawling with tenant-scoped `namespace.ActiveNamespaces` discovery and auto-registered scopes on ingest. [#152]
 - `grpcapi`: inlined single-caller `resolveForkBranches` helper into `Fork`. [#151]
 - `ingest`: inlined single-caller `parseStreamTarget` helper into `discoverStreams`. [#151]
@@ -82,9 +83,9 @@
 - `logstream`: Unified stream and prefix into a single prefix path parameter in `logstream.New`. Removed `WithPrefix` option. [#81]
 
 ### Removed
-
 - `segment.Writer`: deleted manual `Flush` and `Close` forwarding methods in favor of embedded `recordio.Writer`. [#154]
 - `objectstore`: deleted `gcsStore.bkt()` forwarding helper in favor of struct field. [#154]
+- `.bazelrc`: removed `--test_output=streamed` from fuzz tests to re-enable sharding. [#153]
 - `query.Loader.Table`: deleted forwarding getter in favor of direct atomic load. [#151]
 - `objectstore`: deleted `Condition.validate` and validation call sites. [#150]
 - `namespace`: deleted redundant `NewScope` constructor. [#150]
