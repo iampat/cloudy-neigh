@@ -170,8 +170,8 @@
       Replace `Next() (*DocumentMutation, error)` returning `io.EOF` with `Scan() bool`, `Mutation() *DocumentMutation`, and `Err() error`. [#107]
 - [ ] Use nil-safe protobuf getters across the codebase. Replace a nil check
       plus field access with `GetX()`. `docs/guidelines/go.md` has the rule. [#125]
-- [ ] Fix the double expansion of `--config=race`. `.bazelrc` sets it by default, so an explicit `--config=race` expands it twice. [#108]
-- [ ] Drop `--test_output=streamed` from `test:fuzz`. It disables sharding and serializes the test run. [#108]
+- [X] Fix the double expansion of `--config=race`. `.bazelrc` sets it by default, so an explicit `--config=race` expands it twice. [#108, #153]
+- [X] Drop `--test_output=streamed` from `test:fuzz`. It disables sharding and serializes the test run. [#108, #153]
 - [ ] Build fuzz targets with coverage instrumentation. Without it, fuzzing runs without coverage guidance. [#82, #108]
 
 ## Done
