@@ -44,7 +44,7 @@ func Open(ctx context.Context, rawURL string) (Store, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &gcsStore{client: clientHandle, bucket: bucket}, nil
+		return newGCS(clientHandle, bucket), nil
 	default:
 		return nil, fmt.Errorf("objectstore: unsupported scheme %q in %q (supported: file, gs, mem)", u.Scheme, rawURL)
 	}

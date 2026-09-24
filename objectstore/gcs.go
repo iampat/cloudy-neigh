@@ -16,19 +16,22 @@ import (
 
 type gcsStore struct {
 	client *storage.Client
-	bucket string
+	bkt    *storage.BucketHandle
+}
+
+func newGCS(client *storage.Client, bucket string) *gcsStore {
+	return &gcsStore{
+		client: client,
+		bkt:    client.Bucket(bucket),
+	}
 }
 
 func (g *gcsStore) Close() error {
 	return g.client.Close()
 }
 
-func (g *gcsStore) bkt() *storage.BucketHandle {
-	return g.client.Bucket(g.bucket)
-}
-
 func (g *gcsStore) Stat(ctx context.Context, key string) (Object, error) {
-	attrs, err := g.bkt().Object(key).Attrs(ctx)
+	attrs, err := g.bkt.Object(key).Attrs(ctx)
 	if err != nil {
 		return Object{}, translateGCS(key, err)
 	}
@@ -40,7 +43,7 @@ func (g *gcsStore) Stat(ctx context.Context, key string) (Object, error) {
 }
 
 func (g *gcsStore) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
-	r, err := g.bkt().Object(key).NewReader(ctx)
+	r, err := g.bkt.Object(key).NewReader(ctx)
 	if err != nil {
 		return nil, Object{}, translateGCS(key, err)
 	}
@@ -69,7 +72,7 @@ func (g *gcsStore) ReadRange(ctx context.Context, key string, offset, length int
 	if length == 0 {
 		return g.readEmptyRange(ctx, key, offset)
 	}
-	r, err := g.bkt().Object(key).NewRangeReader(ctx, offset, length)
+	r, err := g.bkt.Object(key).NewRangeReader(ctx, offset, length)
 	if err != nil {
 		var gerr *googleapi.Error
 		if errors.As(err, &gerr) && gerr.Code == http.StatusRequestedRangeNotSatisfiable {
@@ -85,7 +88,7 @@ func (g *gcsStore) ReadRange(ctx context.Context, key string, offset, length int
 }
 
 func (g *gcsStore) Exists(ctx context.Context, key string) (bool, error) {
-	_, err := g.bkt().Object(key).Attrs(ctx)
+	_, err := g.bkt.Object(key).Attrs(ctx)
 	if err == nil {
 		return true, nil
 	}
@@ -100,7 +103,7 @@ func (g *gcsStore) Exists(ctx context.Context, key string) (bool, error) {
 }
 
 func (g *gcsStore) Delete(ctx context.Context, key string) error {
-	err := g.bkt().Object(key).Delete(ctx)
+	err := g.bkt.Object(key).Delete(ctx)
 	if err != nil {
 		return translateGCS(key, err)
 	}
@@ -108,7 +111,7 @@ func (g *gcsStore) Delete(ctx context.Context, key string) error {
 }
 
 func (g *gcsStore) Put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
-	obj := g.bkt().Object(key)
+	obj := g.bkt.Object(key)
 	switch {
 	case cond.Absent:
 		obj = obj.If(storage.Conditions{DoesNotExist: true})
@@ -135,7 +138,7 @@ func (g *gcsStore) List(ctx context.Context, prefix, startAfter string, limit in
 	if startAfter != "" {
 		query.StartOffset = startAfter
 	}
-	it := g.bkt().Objects(ctx, query)
+	it := g.bkt.Objects(ctx, query)
 	var out []Object
 	for {
 		if limit > 0 && len(out) == limit {

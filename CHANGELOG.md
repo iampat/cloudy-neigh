@@ -83,6 +83,8 @@
 
 ### Removed
 
+- `segment.Writer`: deleted manual `Flush` and `Close` forwarding methods in favor of embedded `recordio.Writer`. [#154]
+- `objectstore`: deleted `gcsStore.bkt()` forwarding helper in favor of struct field. [#154]
 - `query.Loader.Table`: deleted forwarding getter in favor of direct atomic load. [#151]
 - `objectstore`: deleted `Condition.validate` and validation call sites. [#150]
 - `namespace`: deleted redundant `NewScope` constructor. [#150]

@@ -47,10 +47,10 @@
 - [ ] Remove forwarding wrappers, redundant types, and single-caller helpers.
   - [X] Delete `Table.Builder` forwarding wrapper and constructors (`query/table.go:397-426`). Mutate cloned `Table` directly. [#147]
   - [ ] Clean up distance kernel forwarders (`query/distance/distance_fallback.go:9-39`, `distance_simd.go:20-34`, `distance.go:42-44`). Delete `*Portable` forwarders and `NormalizeInPlace` wrapper.
-  - [ ] Delete `segment.Writer` lifecycle wrappers (`segment/writer.go:45-51`). Call `recordio.Writer` directly.
+  - [X] Delete `segment.Writer` lifecycle wrappers (`segment/writer.go:45-51`). Call `recordio.Writer` directly. [#154]
   - [X] Unify redundant name validators (`namespace/namespace.go:43-53`). Export single `ValidateName`. [#149]
   - [ ] Delete `objectstore.Store.Exists` method (`objectstore/objectstore.go:40`). Callers inspect `Stat` errors.
-  - [ ] Delete `objectstore.gcsStore.bkt()` forwarding helper (`objectstore/gcs.go:26-28`). Store `*storage.BucketHandle` on struct.
+  - [X] Delete `objectstore.gcsStore.bkt()` forwarding helper (`objectstore/gcs.go:26-28`). Store `*storage.BucketHandle` on struct. [#154]
   - [ ] Replace `logstream.Record` named type (`logstream/log.go:22`) with standard `[]byte` and `[][]byte`.
   - [ ] Delete duplicate `distance.ErrDimensionMismatch` sentinel (`query/distance/distance.go:9`). Keep `query.ErrDimensionMismatch`.
   - [X] Delete dead sentinels `ErrNilLog`, `recordio.ErrUnexpectedEOF`, and `ErrBufferTooSmall`. [#149]

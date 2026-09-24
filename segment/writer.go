@@ -19,12 +19,12 @@ func Key(segID string) string {
 var ErrNilMutation = errors.New("segment: nil mutation")
 
 type Writer struct {
-	w   *recordio.Writer
+	*recordio.Writer
 	buf []byte
 }
 
 func NewWriter(w io.Writer) *Writer {
-	return &Writer{w: recordio.NewWriter(w)}
+	return &Writer{Writer: recordio.NewWriter(w)}
 }
 
 func (w *Writer) Write(m *storagepb.DocumentMutation) error {
@@ -36,16 +36,8 @@ func (w *Writer) Write(m *storagepb.DocumentMutation) error {
 	if err != nil {
 		return fmt.Errorf("segment write: marshal: %w", err)
 	}
-	if _, _, err := w.w.WriteRecord(w.buf); err != nil {
+	if _, _, err := w.WriteRecord(w.buf); err != nil {
 		return fmt.Errorf("segment write: %w", err)
 	}
 	return nil
-}
-
-func (w *Writer) Flush() error {
-	return w.w.Flush()
-}
-
-func (w *Writer) Close() error {
-	return w.w.Close()
 }
