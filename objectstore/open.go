@@ -33,9 +33,17 @@ func Open(ctx context.Context, rawURL string) (Store, error) {
 		}
 		return newLocalStore(path)
 	case "gs":
-		bucket := u.Host
-		if bucket == "" {
-			bucket = strings.Trim(u.Path, "/")
+		var bucket, prefix string
+		if u.Host != "" {
+			bucket = u.Host
+			prefix = strings.Trim(u.Path, "/")
+		} else {
+			trimmed := strings.Trim(u.Path, "/")
+			parts := strings.SplitN(trimmed, "/", 2)
+			bucket = parts[0]
+			if len(parts) > 1 {
+				prefix = parts[1]
+			}
 		}
 		if bucket == "" {
 			return nil, fmt.Errorf("objectstore: gs URL requires a bucket name: %q", rawURL)
@@ -44,7 +52,7 @@ func Open(ctx context.Context, rawURL string) (Store, error) {
 		if err != nil {
 			return nil, err
 		}
-		return newGCS(clientHandle, bucket), nil
+		return newGCS(clientHandle, bucket, prefix), nil
 	default:
 		return nil, fmt.Errorf("objectstore: unsupported scheme %q in %q (supported: file, gs, mem)", u.Scheme, rawURL)
 	}

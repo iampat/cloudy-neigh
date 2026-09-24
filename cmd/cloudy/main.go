@@ -15,7 +15,7 @@ import (
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
 	"github.com/iampat/cloudy-neigh/ingest"
-	"github.com/iampat/cloudy-neigh/objectstore"
+	"github.com/iampat/cloudy-neigh/namespace"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query"
 	"github.com/iampat/cloudy-neigh/query/distance"
@@ -27,7 +27,7 @@ const maxMsgSize = 64 * 1024 * 1024
 
 type ingestConfig struct {
 	addr         string
-	storageRoot  string
+	tenantsFile  string
 	pollInterval time.Duration
 	debug        bool
 }
@@ -37,7 +37,7 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 
 	var cfg ingestConfig
 	fs.StringVar(&cfg.addr, "addr", ":50051", "address:port to listen on")
-	fs.StringVar(&cfg.storageRoot, "storage-root", "file:///tmp/cloudy-demo?create_dir=true", "storage root URI")
+	fs.StringVar(&cfg.tenantsFile, "tenants-file", "", "path to static tenants configuration file")
 	fs.DurationVar(&cfg.pollInterval, "poll-interval", 100*time.Millisecond, "WAL poll interval")
 	fs.BoolVar(&cfg.debug, "debug", false, "enable debug logging")
 
@@ -50,8 +50,8 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 	if cfg.addr == "" {
 		return ingestConfig{}, errors.New("-addr cannot be empty")
 	}
-	if cfg.storageRoot == "" {
-		return ingestConfig{}, errors.New("-storage-root cannot be empty")
+	if cfg.tenantsFile == "" {
+		return ingestConfig{}, errors.New("-tenants-file required")
 	}
 	if cfg.pollInterval <= 0 {
 		return ingestConfig{}, errors.New("-poll-interval must be positive")
@@ -62,53 +62,63 @@ func parseIngestFlags(args []string) (ingestConfig, error) {
 type ingestServer struct {
 	lis        net.Listener
 	grpcServer *grpc.Server
-	store      objectstore.Store
-	flusher    *ingest.Flusher
+	reg        *namespace.Registry
+	flushers   []*ingest.Flusher
 }
 
 func newIngestServer(ctx context.Context, cfg ingestConfig) (*ingestServer, error) {
-	store, err := objectstore.Open(ctx, cfg.storageRoot)
+	reg, err := namespace.LoadRegistry(ctx, cfg.tenantsFile)
 	if err != nil {
-		return nil, fmt.Errorf("open store: %w", err)
+		return nil, fmt.Errorf("load tenants registry: %w", err)
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			reg.Close()
+		}
+	}()
+
+	ingesters := make(map[string]grpcapi.Ingester)
+	var flushers []*ingest.Flusher
+
+	for tenant, store := range reg.Stores() {
+		ing, err := ingest.NewIngester(store)
+		if err != nil {
+			return nil, fmt.Errorf("create ingester for tenant %s: %w", tenant, err)
+		}
+		flusher, err := ingest.NewFlusher(store, ingest.Config{
+			PollInterval: cfg.pollInterval,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create flusher for tenant %s: %w", tenant, err)
+		}
+		ingesters[tenant] = ing
+		flushers = append(flushers, flusher)
 	}
 
-	ingester, err := ingest.NewIngester(store)
+	srv, err := grpcapi.NewIngestServer(ingesters)
 	if err != nil {
-		store.Close()
-		return nil, fmt.Errorf("create ingester: %w", err)
-	}
-
-	srv, err := grpcapi.NewIngestServer(ingester)
-	if err != nil {
-		store.Close()
 		return nil, fmt.Errorf("create ingest server: %w", err)
-	}
-
-	flusher, err := ingest.NewFlusher(store, ingest.Config{
-		PollInterval: cfg.pollInterval,
-	})
-	if err != nil {
-		store.Close()
-		return nil, fmt.Errorf("create flusher: %w", err)
 	}
 
 	grpcServer := grpc.NewServer(
 		grpc.MaxRecvMsgSize(maxMsgSize),
 		grpc.MaxSendMsgSize(maxMsgSize),
+		grpc.UnaryInterceptor(grpcapi.TenantInterceptor),
 	)
 	cloudyneighpb.RegisterIngestServiceServer(grpcServer, srv)
 
 	lis, err := net.Listen("tcp", cfg.addr)
 	if err != nil {
-		store.Close()
 		return nil, fmt.Errorf("listen on %s: %w", cfg.addr, err)
 	}
 
+	ok = true
 	return &ingestServer{
 		lis:        lis,
 		grpcServer: grpcServer,
-		store:      store,
-		flusher:    flusher,
+		reg:        reg,
+		flushers:   flushers,
 	}, nil
 }
 
@@ -118,7 +128,7 @@ func (s *ingestServer) Addr() net.Addr {
 
 func (s *ingestServer) Serve(ctx context.Context) (err error) {
 	defer func() {
-		if closeErr := s.store.Close(); closeErr != nil {
+		if closeErr := s.reg.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
 	}()
@@ -134,11 +144,15 @@ func (s *ingestServer) Serve(ctx context.Context) (err error) {
 		return err
 	})
 
-	g.Go(func() error {
-		err := s.flusher.Run(flusherCtx)
-		s.grpcServer.Stop()
-		return err
-	})
+	for _, flusher := range s.flushers {
+		g.Go(func() error {
+			if err := flusher.Run(flusherCtx); err != nil {
+				s.grpcServer.Stop()
+				return err
+			}
+			return nil
+		})
+	}
 
 	return g.Wait()
 }
@@ -201,14 +215,14 @@ func runIngest(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("ingest server listening", "addr", srv.Addr().String(), "storage_root", cfg.storageRoot)
+	slog.Info("ingest server listening", "addr", srv.Addr().String(), "tenants_file", cfg.tenantsFile)
 
 	return srv.Serve(ctx)
 }
 
 type queryConfig struct {
 	addr         string
-	storageRoot  string
+	tenantsFile  string
 	syncInterval time.Duration
 	debug        bool
 }
@@ -218,7 +232,7 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 
 	var cfg queryConfig
 	fs.StringVar(&cfg.addr, "addr", ":50052", "address:port to listen on")
-	fs.StringVar(&cfg.storageRoot, "storage-root", "file:///tmp/cloudy-demo?create_dir=true", "storage root URI")
+	fs.StringVar(&cfg.tenantsFile, "tenants-file", "", "path to static tenants configuration file")
 	fs.DurationVar(&cfg.syncInterval, "sync-interval", 2*time.Second, "background sync interval")
 	fs.BoolVar(&cfg.debug, "debug", false, "enable debug logging")
 
@@ -231,8 +245,8 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 	if cfg.addr == "" {
 		return queryConfig{}, errors.New("-addr cannot be empty")
 	}
-	if cfg.storageRoot == "" {
-		return queryConfig{}, errors.New("-storage-root cannot be empty")
+	if cfg.tenantsFile == "" {
+		return queryConfig{}, errors.New("-tenants-file required")
 	}
 	if cfg.syncInterval <= 0 {
 		return queryConfig{}, errors.New("-sync-interval must be positive")
@@ -243,45 +257,57 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 type queryServer struct {
 	lis        net.Listener
 	grpcServer *grpc.Server
-	store      objectstore.Store
-	engine     *query.Engine
+	reg        *namespace.Registry
+	engines    []*query.Engine
 }
 
 func newQueryServer(ctx context.Context, cfg queryConfig) (*queryServer, error) {
-	store, err := objectstore.Open(ctx, cfg.storageRoot)
+	reg, err := namespace.LoadRegistry(ctx, cfg.tenantsFile)
 	if err != nil {
-		return nil, fmt.Errorf("open store: %w", err)
+		return nil, fmt.Errorf("load tenants registry: %w", err)
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			reg.Close()
+		}
+	}()
+
+	engines := make(map[string]grpcapi.QueryEngine)
+	var runners []*query.Engine
+
+	for tenant, store := range reg.Stores() {
+		engine, err := query.NewEngine(store, cfg.syncInterval)
+		if err != nil {
+			return nil, fmt.Errorf("create query engine for tenant %s: %w", tenant, err)
+		}
+		engines[tenant] = engine
+		runners = append(runners, engine)
 	}
 
-	engine, err := query.NewEngine(store, cfg.syncInterval)
+	srv, err := grpcapi.NewQueryServer(engines)
 	if err != nil {
-		store.Close()
-		return nil, fmt.Errorf("create query engine: %w", err)
-	}
-
-	srv, err := grpcapi.NewQueryServer(engine)
-	if err != nil {
-		store.Close()
 		return nil, fmt.Errorf("create query server: %w", err)
 	}
 
 	grpcServer := grpc.NewServer(
 		grpc.MaxRecvMsgSize(maxMsgSize),
 		grpc.MaxSendMsgSize(maxMsgSize),
+		grpc.UnaryInterceptor(grpcapi.TenantInterceptor),
 	)
 	cloudyneighpb.RegisterQueryServiceServer(grpcServer, srv)
 
 	lis, err := net.Listen("tcp", cfg.addr)
 	if err != nil {
-		store.Close()
 		return nil, fmt.Errorf("listen on %s: %w", cfg.addr, err)
 	}
 
+	ok = true
 	return &queryServer{
 		lis:        lis,
 		grpcServer: grpcServer,
-		store:      store,
-		engine:     engine,
+		reg:        reg,
+		engines:    runners,
 	}, nil
 }
 
@@ -291,7 +317,7 @@ func (s *queryServer) Addr() net.Addr {
 
 func (s *queryServer) Serve(ctx context.Context) (err error) {
 	defer func() {
-		if closeErr := s.store.Close(); closeErr != nil {
+		if closeErr := s.reg.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
 	}()
@@ -307,11 +333,15 @@ func (s *queryServer) Serve(ctx context.Context) (err error) {
 		return err
 	})
 
-	g.Go(func() error {
-		err := s.engine.Run(syncCtx)
-		s.grpcServer.Stop()
-		return err
-	})
+	for _, eng := range s.engines {
+		g.Go(func() error {
+			if err := eng.Run(syncCtx); err != nil {
+				s.grpcServer.Stop()
+				return err
+			}
+			return nil
+		})
+	}
 
 	return g.Wait()
 }
@@ -331,7 +361,7 @@ func runQuery(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("query server listening", "addr", srv.Addr().String(), "storage_root", cfg.storageRoot, "kernel", distance.Implementation())
+	slog.Info("query server listening", "addr", srv.Addr().String(), "tenants_file", cfg.tenantsFile, "kernel", distance.Implementation())
 
 	return srv.Serve(ctx)
 }

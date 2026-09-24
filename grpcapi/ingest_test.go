@@ -20,12 +20,23 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
 )
 
-func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *ingest.Ingester) {
+func testTenantClientInterceptor(tenant string) grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		md, _ := metadata.FromOutgoingContext(ctx)
+		md = md.Copy()
+		md.Set(grpcapi.TenantHeader, tenant)
+		ctx = metadata.NewOutgoingContext(ctx, md)
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+}
+
+func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *ingest.Ingester, objectstore.Store) {
 	t.Helper()
 	store, err := objectstore.Open(context.Background(), "mem://")
 	require.NoError(t, err)
@@ -34,11 +45,13 @@ func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *ingest.Inge
 	ingester, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
-	srv, err := grpcapi.NewIngestServer(ingester)
+	srv, err := grpcapi.NewIngestServer(map[string]grpcapi.Ingester{
+		namespace.DefaultTenant: ingester,
+	})
 	require.NoError(t, err)
 
 	lis := bufconn.Listen(1024 * 1024)
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.UnaryInterceptor(grpcapi.TenantInterceptor))
 	cloudyneighpb.RegisterIngestServiceServer(s, srv)
 
 	go func() {
@@ -54,11 +67,12 @@ func setupTestEnv(t *testing.T) (cloudyneighpb.IngestServiceClient, *ingest.Inge
 			return lis.Dial()
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(testTenantClientInterceptor(namespace.DefaultTenant)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 
-	return cloudyneighpb.NewIngestServiceClient(conn), ingester
+	return cloudyneighpb.NewIngestServiceClient(conn), ingester, store
 }
 
 func TestNewIngestServer_NilIngester(t *testing.T) {
@@ -71,7 +85,7 @@ func stringAttr(s string) *cloudyneighpb.AttributeValue {
 }
 
 func TestUpsert_Success(t *testing.T) {
-	client, ing := setupTestEnv(t)
+	client, ing, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	rec1 := &cloudyneighpb.Record{
@@ -102,7 +116,7 @@ func TestUpsert_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.UpsertedCount)
 
-	log, err := ing.Log(namespace.BranchRef("", "default", ""))
+	log, err := ing.Log(namespace.BranchRef("default", namespace.DefaultBranch))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -115,7 +129,7 @@ func TestUpsert_Success(t *testing.T) {
 
 	var walRec1 storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[0], &walRec1))
-	assert.Equal(t, namespace.BranchRef("", "default", ""), walRec1.GetMutation().Branch)
+	assert.Equal(t, namespace.BranchRef("default", namespace.DefaultBranch), walRec1.GetMutation().Branch)
 	assert.Equal(t, "doc-1", walRec1.GetMutation().DocId)
 	assert.Equal(t, storagepb.MutationOp_PUT, walRec1.GetMutation().Op)
 
@@ -127,7 +141,7 @@ func TestUpsert_Success(t *testing.T) {
 
 	var walRec2 storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[1], &walRec2))
-	assert.Equal(t, namespace.BranchRef("", "default", ""), walRec2.GetMutation().Branch)
+	assert.Equal(t, namespace.BranchRef("default", namespace.DefaultBranch), walRec2.GetMutation().Branch)
 	assert.Equal(t, "doc-2", walRec2.GetMutation().DocId)
 
 	var payload2 cloudyneighpb.Record
@@ -136,7 +150,7 @@ func TestUpsert_Success(t *testing.T) {
 }
 
 func TestUpsert_EmptyRecords(t *testing.T) {
-	client, ing := setupTestEnv(t)
+	client, ing, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
@@ -146,7 +160,7 @@ func TestUpsert_EmptyRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), resp.UpsertedCount)
 
-	log, err := ing.Log(namespace.BranchRef("", "default", ""))
+	log, err := ing.Log(namespace.BranchRef("default", namespace.DefaultBranch))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -155,7 +169,7 @@ func TestUpsert_EmptyRecords(t *testing.T) {
 }
 
 func TestUpsert_Validation(t *testing.T) {
-	client, _ := setupTestEnv(t)
+	client, _, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	validRec := &cloudyneighpb.Record{Id: "doc-1"}
@@ -206,7 +220,7 @@ func TestUpsert_Validation(t *testing.T) {
 }
 
 func TestUpsert_DefaultNamespace(t *testing.T) {
-	client, ing := setupTestEnv(t)
+	client, ing, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
@@ -216,7 +230,7 @@ func TestUpsert_DefaultNamespace(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), resp.UpsertedCount)
 
-	log, err := ing.Log(namespace.BranchRef("", "", ""))
+	log, err := ing.Log(namespace.BranchRef(namespace.DefaultNamespace, namespace.DefaultBranch))
 	require.NoError(t, err)
 
 	records, err := log.Read(ctx, 1)
@@ -225,12 +239,12 @@ func TestUpsert_DefaultNamespace(t *testing.T) {
 
 	var walRec storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[0], &walRec))
-	assert.Equal(t, namespace.BranchRef("", "", ""), walRec.GetMutation().Branch)
+	assert.Equal(t, namespace.BranchRef(namespace.DefaultNamespace, namespace.DefaultBranch), walRec.GetMutation().Branch)
 	assert.Equal(t, "doc-default", walRec.GetMutation().DocId)
 }
 
 func TestDelete_Success(t *testing.T) {
-	client, ing := setupTestEnv(t)
+	client, ing, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -240,7 +254,7 @@ func TestDelete_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.DeletedCount)
 
-	log, err := ing.Log(namespace.BranchRef("", "default", ""))
+	log, err := ing.Log(namespace.BranchRef("default", namespace.DefaultBranch))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -258,7 +272,7 @@ func TestDelete_Success(t *testing.T) {
 
 		mutation := rec.GetMutation()
 		require.NotNil(t, mutation)
-		assert.Equal(t, namespace.BranchRef("", "default", ""), mutation.Branch)
+		assert.Equal(t, namespace.BranchRef("default", namespace.DefaultBranch), mutation.Branch)
 		assert.Equal(t, wantIds[i], mutation.DocId)
 		assert.Equal(t, storagepb.MutationOp_DELETE, mutation.Op)
 		assert.Empty(t, mutation.Payload)
@@ -266,7 +280,7 @@ func TestDelete_Success(t *testing.T) {
 }
 
 func TestDelete_Empty(t *testing.T) {
-	client, ing := setupTestEnv(t)
+	client, ing, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -276,7 +290,7 @@ func TestDelete_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), resp.DeletedCount)
 
-	log, err := ing.Log(namespace.BranchRef("", "default", ""))
+	log, err := ing.Log(namespace.BranchRef("default", namespace.DefaultBranch))
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -285,7 +299,7 @@ func TestDelete_Empty(t *testing.T) {
 }
 
 func TestDelete_Validation(t *testing.T) {
-	client, _ := setupTestEnv(t)
+	client, _, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -320,7 +334,7 @@ func TestDelete_Validation(t *testing.T) {
 }
 
 func TestDelete_DefaultNamespace(t *testing.T) {
-	client, ing := setupTestEnv(t)
+	client, ing, _ := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -330,7 +344,7 @@ func TestDelete_DefaultNamespace(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), resp.DeletedCount)
 
-	log, err := ing.Log(namespace.BranchRef("", "", ""))
+	log, err := ing.Log(namespace.BranchRef(namespace.DefaultNamespace, namespace.DefaultBranch))
 	require.NoError(t, err)
 
 	records, err := log.Read(ctx, 1)
@@ -339,13 +353,13 @@ func TestDelete_DefaultNamespace(t *testing.T) {
 
 	var walRec storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[0], &walRec))
-	assert.Equal(t, namespace.BranchRef("", "", ""), walRec.GetMutation().Branch)
+	assert.Equal(t, namespace.BranchRef(namespace.DefaultNamespace, namespace.DefaultBranch), walRec.GetMutation().Branch)
 	assert.Equal(t, "doc-default", walRec.GetMutation().DocId)
 	assert.Equal(t, storagepb.MutationOp_DELETE, walRec.GetMutation().Op)
 }
 
 func TestFork(t *testing.T) {
-	client, ing := setupTestEnv(t)
+	client, ing, store := setupTestEnv(t)
 	ctx := context.Background()
 
 	_, err := client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -358,7 +372,7 @@ func TestFork(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.NotFound, st.Code())
 
-	_, err = manifest.Write(ctx, ing.Store(), namespace.BranchRef("", "wiki", "parent"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, store, namespace.BranchRef("wiki", "parent"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -398,7 +412,7 @@ func TestFork(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.AlreadyExists, st.Code())
 
-	log, err := ing.Log(namespace.BranchRef("", "wiki", "child"))
+	log, err := ing.Log(namespace.BranchRef("wiki", "child"))
 	require.NoError(t, err)
 
 	records, err := log.Read(ctx, 1)
@@ -410,10 +424,10 @@ func TestFork(t *testing.T) {
 	evt := walRec.GetBranchEvent()
 	require.NotNil(t, evt)
 	assert.Equal(t, storagepb.BranchLifecycleEvent_FORK, evt.Type)
-	assert.Equal(t, namespace.BranchRef("", "wiki", "child"), evt.Branch)
-	assert.Equal(t, namespace.BranchRef("", "wiki", "parent"), evt.ParentBranch)
+	assert.Equal(t, namespace.BranchRef("wiki", "child"), evt.Branch)
+	assert.Equal(t, namespace.BranchRef("wiki", "parent"), evt.ParentBranch)
 
-	_, err = manifest.Write(ctx, ing.Store(), namespace.BranchRef("", "", "main"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, store, namespace.BranchRef(namespace.DefaultNamespace, "main"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -425,7 +439,7 @@ func TestFork(t *testing.T) {
 }
 
 func TestUpsert_CanceledContext(t *testing.T) {
-	client, _ := setupTestEnv(t)
+	client, _, _ := setupTestEnv(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -448,11 +462,13 @@ func TestLocalFSBackend(t *testing.T) {
 	ingester, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
-	srv, err := grpcapi.NewIngestServer(ingester)
+	srv, err := grpcapi.NewIngestServer(map[string]grpcapi.Ingester{
+		namespace.DefaultTenant: ingester,
+	})
 	require.NoError(t, err)
 
 	lis := bufconn.Listen(1024 * 1024)
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.UnaryInterceptor(grpcapi.TenantInterceptor))
 	cloudyneighpb.RegisterIngestServiceServer(s, srv)
 
 	go func() {
@@ -469,6 +485,7 @@ func TestLocalFSBackend(t *testing.T) {
 			return lis.Dial()
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(testTenantClientInterceptor(namespace.DefaultTenant)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
@@ -501,8 +518,8 @@ func TestLocalFSBackend(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), dResp.DeletedCount)
 
-	seg1Path := filepath.Join(dir, "cloudy", "ns", "wiki", "wal", "00000000000000000001.recordio")
-	seg2Path := filepath.Join(dir, "cloudy", "ns", "wiki", "wal", "00000000000000000002.recordio")
+	seg1Path := filepath.Join(dir, "ns", "wiki", "wal", "00000000000000000001.recordio")
+	seg2Path := filepath.Join(dir, "ns", "wiki", "wal", "00000000000000000002.recordio")
 
 	info1, err := os.Stat(seg1Path)
 	require.NoError(t, err)
@@ -522,7 +539,7 @@ func TestLocalFSBackend(t *testing.T) {
 	require.NoError(t, proto.Unmarshal(scanner1.Record(), &rec1))
 	m1 := rec1.GetMutation()
 	require.NotNil(t, m1)
-	assert.Equal(t, namespace.BranchRef("", "wiki", ""), m1.Branch)
+	assert.Equal(t, namespace.BranchRef("wiki", namespace.DefaultBranch), m1.Branch)
 	assert.Equal(t, "wiki-101", m1.DocId)
 	assert.Equal(t, storagepb.MutationOp_PUT, m1.Op)
 
@@ -543,11 +560,54 @@ func TestLocalFSBackend(t *testing.T) {
 	require.NoError(t, proto.Unmarshal(scanner2.Record(), &rec2))
 	m2 := rec2.GetMutation()
 	require.NotNil(t, m2)
-	assert.Equal(t, namespace.BranchRef("", "wiki", ""), m2.Branch)
+	assert.Equal(t, namespace.BranchRef("wiki", namespace.DefaultBranch), m2.Branch)
 	assert.Equal(t, "wiki-102", m2.DocId)
 	assert.Equal(t, storagepb.MutationOp_DELETE, m2.Op)
 	assert.Empty(t, m2.Payload)
 	assert.False(t, scanner2.Scan())
 	require.NoError(t, scanner2.Err())
 	t.Logf("Validated segment 2: %s (%d bytes), deleted doc_id=%s", seg2Path, info2.Size(), m2.DocId)
+}
+
+func TestIngest_UnknownTenant(t *testing.T) {
+	store, err := objectstore.Open(context.Background(), "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	ing, err := ingest.NewIngester(store)
+	require.NoError(t, err)
+
+	srv, err := grpcapi.NewIngestServer(map[string]grpcapi.Ingester{
+		"tenant-a": ing,
+	})
+	require.NoError(t, err)
+
+	lis := bufconn.Listen(1024 * 1024)
+	s := grpc.NewServer(grpc.UnaryInterceptor(grpcapi.TenantInterceptor))
+	cloudyneighpb.RegisterIngestServiceServer(s, srv)
+	go func() { _ = s.Serve(lis) }()
+	t.Cleanup(func() {
+		s.GracefulStop()
+		lis.Close()
+	})
+
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return lis.Dial()
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	client := cloudyneighpb.NewIngestServiceClient(conn)
+	ctx := metadata.AppendToOutgoingContext(context.Background(), grpcapi.TenantHeader, "unknown-tenant")
+	_, err = client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
+		Namespace: "default",
+		Records:   []*cloudyneighpb.Record{{Id: "doc-1"}},
+	})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.NotFound, st.Code())
 }

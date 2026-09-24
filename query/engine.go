@@ -47,32 +47,35 @@ func (e *Engine) SyncOnce(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	branches, err := namespace.ListBranches(ctx, e.store, "")
+	namespaces, err := namespace.ActiveNamespaces(ctx, e.store)
 	if err != nil {
-		return fmt.Errorf("list branches: %w", err)
+		return fmt.Errorf("list namespaces: %w", err)
 	}
-
-	for _, branch := range branches {
-		if err := ctx.Err(); err != nil {
-			return err
+	for _, ns := range namespaces {
+		scope := namespace.Scope{Namespace: ns}
+		branches, err := scope.ListBranches(ctx, e.store)
+		if err != nil {
+			return fmt.Errorf("list branches for %s: %w", scope.Prefix(), err)
 		}
-		e.mu.Lock()
-		loader, ok := e.loaders[branch]
-		if !ok {
-			var table atomic.Pointer[Table]
-			table.Store(NewTable())
-			var err error
-			loader, err = NewLoader(e.store, &table)
-			if err == nil {
-				e.loaders[branch] = loader
+		for _, branch := range branches {
+			e.mu.Lock()
+			loader, ok := e.loaders[branch]
+			if !ok {
+				var table atomic.Pointer[Table]
+				table.Store(NewTable())
+				var err error
+				loader, err = NewLoader(e.store, &table)
+				if err == nil {
+					e.loaders[branch] = loader
+				}
 			}
-		}
-		e.mu.Unlock()
-		if loader == nil {
-			continue
-		}
-		if _, err := loader.Sync(ctx, branch); err != nil {
-			slog.Error("sync branch failed", "branch", branch, "err", err)
+			e.mu.Unlock()
+			if loader == nil {
+				continue
+			}
+			if _, err := loader.Sync(ctx, branch); err != nil {
+				slog.Error("sync branch failed", "branch", branch, "err", err)
+			}
 		}
 	}
 	return nil

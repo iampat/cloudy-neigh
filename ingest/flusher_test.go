@@ -24,10 +24,10 @@ import (
 )
 
 func testBranch(name string) string {
-	return namespace.BranchRef("", "", name)
+	return namespace.BranchRef(namespace.DefaultNamespace, name)
 }
 
-const defaultWAL = "cloudy/ns/default/wal"
+const defaultWAL = "ns/default/wal"
 
 func appendDoc(t *testing.T, ctx context.Context, log *logstream.Log, branch, docID string, payload []byte) uint64 {
 	t.Helper()
@@ -73,7 +73,7 @@ func waitForManifest(t *testing.T, ctx context.Context, store objectstore.Store,
 
 func readSegmentMutations(t *testing.T, ctx context.Context, store objectstore.Store, branch, segID string) []*storagepb.DocumentMutation {
 	t.Helper()
-	scope, _ := namespace.ScopeFromRef(branch)
+	scope := namespace.Scope{Namespace: namespace.DefaultNamespace}
 	key := scope.SegmentKey(segID)
 	rc, _, err := store.Get(ctx, key)
 	require.NoError(t, err)
@@ -143,7 +143,7 @@ func TestBatchFlush(t *testing.T) {
 	assert.Equal(t, uint64(1), manifest.CheckpointSeq)
 	require.Len(t, manifest.Segments, 1)
 	assert.Equal(t, uint64(3), manifest.Segments[0].DocCount)
-	scope, _ := namespace.ScopeFromRef(br)
+	scope := namespace.Scope{Namespace: namespace.DefaultNamespace}
 	assert.Equal(t, scope.SegmentKey(manifest.Segments[0].SegmentId), manifest.Segments[0].Key)
 
 	mutations := readSegmentMutations(t, ctx, store, br, manifest.Segments[0].SegmentId)
@@ -533,7 +533,7 @@ func TestPartialSequenceShutdownFlush(t *testing.T) {
 	assert.Len(t, m2.Segments, 1)
 }
 
-func TestMultiTenantFlusher_DiscoveryAndFlush(t *testing.T) {
+func TestFlusher_MultiNamespaceDiscoveryAndFlush(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -544,14 +544,13 @@ func TestMultiTenantFlusher_DiscoveryAndFlush(t *testing.T) {
 	in, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
-	brA := namespace.BranchRef("tenant-1", "ns-a", "main")
-	brB := namespace.BranchRef("tenant-2", "ns-b", "main")
+	brA := namespace.BranchRef("ns-a", "main")
+	brB := namespace.BranchRef("ns-b", "main")
 
 	require.NoError(t, in.Upsert(ctx, brA, []*cloudyneighpb.Record{{Id: "doc-a1"}, {Id: "doc-a2"}}))
 	require.NoError(t, in.Upsert(ctx, brB, []*cloudyneighpb.Record{{Id: "doc-b1"}}))
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
-		Tenants:      []string{"tenant-1", "tenant-2"},
 		PollInterval: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)

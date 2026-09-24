@@ -6,6 +6,7 @@ go_library(
         "branch.go",
         "catalog.go",
         "namespace.go",
+        "registry.go",
         "tenant.go",
     ],
     importpath = "github.com/iampat/cloudy-neigh/namespace",
@@ -24,6 +25,7 @@ go_test(
         "branch_test.go",
         "catalog_test.go",
         "namespace_test.go",
+        "registry_test.go",
         "tenant_test.go",
     ],
     deps = [

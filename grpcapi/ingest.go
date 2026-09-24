@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-var ErrNilIngester = errors.New("grpcapi: nil ingester")
+var ErrNilIngester = errors.New("grpcapi: nil ingesters")
 
 type Ingester interface {
 	Upsert(ctx context.Context, branch string, records []*cloudyneighpb.Record) error
@@ -24,14 +24,14 @@ type Ingester interface {
 
 type IngestServer struct {
 	cloudyneighpb.UnimplementedIngestServiceServer
-	ingester Ingester
+	ingesters map[string]Ingester
 }
 
-func NewIngestServer(ingester Ingester) (*IngestServer, error) {
-	if ingester == nil {
+func NewIngestServer(ingesters map[string]Ingester) (*IngestServer, error) {
+	if ingesters == nil {
 		return nil, ErrNilIngester
 	}
-	return &IngestServer{ingester: ingester}, nil
+	return &IngestServer{ingesters: ingesters}, nil
 }
 
 func resolveNamespace(raw string) (string, error) {
@@ -46,18 +46,26 @@ func resolveNamespace(raw string) (string, error) {
 }
 
 func resolveBranch(ns, rawBranch string) (string, error) {
+	branch := namespace.DefaultBranch
 	if rawBranch != "" {
-		if err := namespace.ValidateName(rawBranch); err != nil {
-			return "", status.Errorf(codes.InvalidArgument, "grpcapi: invalid branch: %v", err)
-		}
+		branch = rawBranch
 	}
-	return namespace.BranchRef("", ns, rawBranch), nil
+	if err := namespace.ValidateName(branch); err != nil {
+		return "", status.Errorf(codes.InvalidArgument, "grpcapi: invalid branch: %v", err)
+	}
+	return namespace.BranchRef(ns, branch), nil
 }
 
 func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequest) (*cloudyneighpb.UpsertResponse, error) {
 	start := time.Now()
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: nil request")
+	}
+
+	tenant := TenantFrom(ctx)
+	ing, ok := s.ingesters[tenant]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "grpcapi: unknown tenant %q", tenant)
 	}
 
 	ns, err := resolveNamespace(req.Namespace)
@@ -82,7 +90,7 @@ func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequ
 		}
 	}
 
-	if err := s.ingester.Upsert(ctx, targetBranch, req.Records); err != nil {
+	if err := ing.Upsert(ctx, targetBranch, req.Records); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, status.Error(codes.Canceled, err.Error())
 		}
@@ -109,6 +117,12 @@ func (s *IngestServer) Delete(ctx context.Context, req *cloudyneighpb.DeleteRequ
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: nil request")
 	}
 
+	tenant := TenantFrom(ctx)
+	ing, ok := s.ingesters[tenant]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "grpcapi: unknown tenant %q", tenant)
+	}
+
 	ns, err := resolveNamespace(req.Namespace)
 	if err != nil {
 		return nil, err
@@ -128,7 +142,7 @@ func (s *IngestServer) Delete(ctx context.Context, req *cloudyneighpb.DeleteRequ
 		}
 	}
 
-	if err := s.ingester.Delete(ctx, targetBranch, req.Ids); err != nil {
+	if err := ing.Delete(ctx, targetBranch, req.Ids); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, status.Error(codes.Canceled, err.Error())
 		}
@@ -146,6 +160,12 @@ func (s *IngestServer) Delete(ctx context.Context, req *cloudyneighpb.DeleteRequ
 func (s *IngestServer) Fork(ctx context.Context, req *cloudyneighpb.ForkRequest) (*cloudyneighpb.ForkResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: nil request")
+	}
+
+	tenant := TenantFrom(ctx)
+	ing, ok := s.ingesters[tenant]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "grpcapi: unknown tenant %q", tenant)
 	}
 
 	ns, err := resolveNamespace(req.Namespace)
@@ -175,7 +195,7 @@ func (s *IngestServer) Fork(ctx context.Context, req *cloudyneighpb.ForkRequest)
 		return nil, err
 	}
 
-	if err := s.ingester.Fork(ctx, src, target); err != nil {
+	if err := ing.Fork(ctx, src, target); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, status.Error(codes.Canceled, err.Error())
 		}

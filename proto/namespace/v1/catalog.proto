@@ -22,3 +22,11 @@ message TenantCatalog {
   uint64 version = 2;
   map<string, NamespaceMetadata> namespaces = 3;
 }
+
+message TenantConfig {
+  string storage_url = 1;
+}
+
+message TenantsConfigFile {
+  map<string, TenantConfig> tenants = 1;
+}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/googleapi"
@@ -17,13 +18,32 @@ import (
 type gcsStore struct {
 	client *storage.Client
 	bkt    *storage.BucketHandle
+	prefix string
 }
 
-func newGCS(client *storage.Client, bucket string) *gcsStore {
+func newGCS(client *storage.Client, bucket, prefix string) *gcsStore {
 	return &gcsStore{
 		client: client,
 		bkt:    client.Bucket(bucket),
+		prefix: prefix,
 	}
+}
+
+func (g *gcsStore) resolveKey(key string) string {
+	if g.prefix == "" {
+		return key
+	}
+	if key == "" {
+		return g.prefix
+	}
+	return g.prefix + "/" + key
+}
+
+func (g *gcsStore) trimKey(key string) string {
+	if g.prefix == "" {
+		return key
+	}
+	return strings.TrimPrefix(strings.TrimPrefix(key, g.prefix), "/")
 }
 
 func (g *gcsStore) Close() error {
@@ -31,7 +51,8 @@ func (g *gcsStore) Close() error {
 }
 
 func (g *gcsStore) Stat(ctx context.Context, key string) (Object, error) {
-	attrs, err := g.bkt.Object(key).Attrs(ctx)
+	resolved := g.resolveKey(key)
+	attrs, err := g.bkt.Object(resolved).Attrs(ctx)
 	if err != nil {
 		return Object{}, translateGCS(key, err)
 	}
@@ -43,7 +64,8 @@ func (g *gcsStore) Stat(ctx context.Context, key string) (Object, error) {
 }
 
 func (g *gcsStore) Get(ctx context.Context, key string) (io.ReadCloser, Object, error) {
-	r, err := g.bkt.Object(key).NewReader(ctx)
+	resolved := g.resolveKey(key)
+	r, err := g.bkt.Object(resolved).NewReader(ctx)
 	if err != nil {
 		return nil, Object{}, translateGCS(key, err)
 	}
@@ -72,7 +94,8 @@ func (g *gcsStore) ReadRange(ctx context.Context, key string, offset, length int
 	if length == 0 {
 		return g.readEmptyRange(ctx, key, offset)
 	}
-	r, err := g.bkt.Object(key).NewRangeReader(ctx, offset, length)
+	resolved := g.resolveKey(key)
+	r, err := g.bkt.Object(resolved).NewRangeReader(ctx, offset, length)
 	if err != nil {
 		var gerr *googleapi.Error
 		if errors.As(err, &gerr) && gerr.Code == http.StatusRequestedRangeNotSatisfiable {
@@ -88,7 +111,8 @@ func (g *gcsStore) ReadRange(ctx context.Context, key string, offset, length int
 }
 
 func (g *gcsStore) Exists(ctx context.Context, key string) (bool, error) {
-	_, err := g.bkt.Object(key).Attrs(ctx)
+	resolved := g.resolveKey(key)
+	_, err := g.bkt.Object(resolved).Attrs(ctx)
 	if err == nil {
 		return true, nil
 	}
@@ -103,7 +127,8 @@ func (g *gcsStore) Exists(ctx context.Context, key string) (bool, error) {
 }
 
 func (g *gcsStore) Delete(ctx context.Context, key string) error {
-	err := g.bkt.Object(key).Delete(ctx)
+	resolved := g.resolveKey(key)
+	err := g.bkt.Object(resolved).Delete(ctx)
 	if err != nil {
 		return translateGCS(key, err)
 	}
@@ -111,7 +136,8 @@ func (g *gcsStore) Delete(ctx context.Context, key string) error {
 }
 
 func (g *gcsStore) Put(ctx context.Context, key string, r io.Reader, cond Condition) (string, error) {
-	obj := g.bkt.Object(key)
+	resolved := g.resolveKey(key)
+	obj := g.bkt.Object(resolved)
 	switch {
 	case cond.Absent:
 		obj = obj.If(storage.Conditions{DoesNotExist: true})
@@ -134,9 +160,13 @@ func (g *gcsStore) Put(ctx context.Context, key string, r io.Reader, cond Condit
 }
 
 func (g *gcsStore) List(ctx context.Context, prefix, startAfter string, limit int) ([]Object, error) {
-	query := &storage.Query{Prefix: prefix}
+	resolvedPrefix := g.resolveKey(prefix)
+	if g.prefix != "" && prefix == "" {
+		resolvedPrefix = g.prefix + "/"
+	}
+	query := &storage.Query{Prefix: resolvedPrefix}
 	if startAfter != "" {
-		query.StartOffset = startAfter
+		query.StartOffset = g.resolveKey(startAfter)
 	}
 	it := g.bkt.Objects(ctx, query)
 	var out []Object
@@ -151,11 +181,12 @@ func (g *gcsStore) List(ctx context.Context, prefix, startAfter string, limit in
 		if err != nil {
 			return nil, err
 		}
-		if attrs.Name <= startAfter {
+		name := g.trimKey(attrs.Name)
+		if startAfter != "" && name <= startAfter {
 			continue
 		}
 		out = append(out, Object{
-			Key:        attrs.Name,
+			Key:        name,
 			Generation: strconv.FormatInt(attrs.Generation, 10),
 			Size:       attrs.Size,
 		})

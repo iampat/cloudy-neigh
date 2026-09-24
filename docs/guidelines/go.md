@@ -39,12 +39,25 @@ Simplicity beats cleverness. Fallback mechanisms make code reasoning difficult
 and break future features. Never add a fallback unless it is explicit and
 strictly required to deliver user value.
 
+No path parsing for discovery. Never parse storage paths or reference strings to
+extract namespaces, branches, or tenants. Use explicit parameters and control
+plane catalogs (`branches.json`, `tenants.json`).
+
 One implementation, never one per backend. Before you write the second
 backend, find the library's unified interface. Push the backend-specific code
 into the smallest hook the library offers, such as the `As` escape hatch in
 `gocloud.dev/blob`. A constructor per backend is the smell this rule prevents.
 
 No premature optimization. Always start with a vanilla implementation. Only move to complex structures when profiling proves the vanilla version is a bottleneck.
+
+## Dependency injection
+
+Use dependency injection to make abstractions simple to reason about.
+A component receives only the exact resources it operates on.
+Never pass a broad registry, service locator, or multi-resource container into core logic.
+Inject the specific dependency directly, such as a single store or stream.
+Boundary layers like `main` or gRPC dispatch handle lookups and route requests to the target instance.
+This practice keeps internal logic single-purposed, isolates state, and makes testing trivial.
 
 ## Dependencies
 

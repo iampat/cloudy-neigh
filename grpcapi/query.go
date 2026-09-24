@@ -14,17 +14,21 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type QueryServer struct {
-	cloudyneighpb.UnimplementedQueryServiceServer
-	engine *query.Engine
+type QueryEngine interface {
+	Query(ctx context.Context, req query.Request) ([]*cloudyneighpb.ScoredRecord, query.SearchStats, error)
 }
 
-func NewQueryServer(engine *query.Engine) (*QueryServer, error) {
-	if engine == nil {
-		return nil, errors.New("grpcapi: nil engine")
+type QueryServer struct {
+	cloudyneighpb.UnimplementedQueryServiceServer
+	engines map[string]QueryEngine
+}
+
+func NewQueryServer(engines map[string]QueryEngine) (*QueryServer, error) {
+	if engines == nil {
+		return nil, errors.New("grpcapi: nil engines")
 	}
 	return &QueryServer{
-		engine: engine,
+		engines: engines,
 	}, nil
 }
 
@@ -35,6 +39,12 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 	}
 	if err := namespace.ValidateName(req.Namespace); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "grpcapi: invalid namespace: %v", err)
+	}
+
+	tenant := TenantFrom(ctx)
+	eng, ok := s.engines[tenant]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "grpcapi: unknown tenant %q", tenant)
 	}
 
 	targetBranch, err := resolveBranch(req.Namespace, req.Branch)
@@ -51,7 +61,7 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 
 	valDur := time.Since(valStart)
 	searchStart := time.Now()
-	hits, stats, err := s.engine.Query(ctx, query.Request{
+	hits, stats, err := eng.Query(ctx, query.Request{
 		Namespace:    targetBranch,
 		VectorColumn: req.VectorColumn,
 		Vector:       req.Vector,

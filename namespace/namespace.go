@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"strings"
 )
 
 const (
 	DefaultTenant    = "cloudy"
 	DefaultNamespace = "default"
 	DefaultBranch    = "main"
+	CatalogFile      = "ns.json"
 	NamespaceDir     = "ns"
 	RefHead          = "refs/head"
 )
@@ -40,75 +40,24 @@ func ValidateName(name string) error {
 	return nil
 }
 
-func BranchRef(tenant, ns, branch string) string {
-	if tenant == "" {
-		tenant = DefaultTenant
-	}
-	if ns == "" {
-		ns = DefaultNamespace
-	}
-	if branch == "" {
-		branch = DefaultBranch
-	}
-	return path.Join(tenant, NamespaceDir, ns, RefHead, branch)
+func BranchRef(ns, branch string) string {
+	return path.Join(NamespaceDir, ns, RefHead, branch)
 }
 
-func SegmentKey(tenant, ns, segID string) string {
-	if tenant == "" {
-		tenant = DefaultTenant
-	}
-	if ns == "" {
-		ns = DefaultNamespace
-	}
-	return path.Join(tenant, NamespaceDir, ns, "segments", segID+".recordio")
-}
-
-func ScopeFromRef(branchRef string) (Scope, string) {
-	if prefix, branch, ok := strings.Cut(branchRef, "/"+RefHead+"/"); ok {
-		tenant, ns, _ := strings.Cut(prefix, "/"+NamespaceDir+"/")
-		return Scope{Tenant: tenant, Namespace: ns}, branch
-	}
-	if branch, ok := strings.CutPrefix(branchRef, RefHead+"/"); ok {
-		return Scope{}, branch
-	}
-	return Scope{}, branchRef
+func SegmentKey(ns, segID string) string {
+	return path.Join(NamespaceDir, ns, "segments", segID+".recordio")
 }
 
 type Scope struct {
-	Tenant    string
 	Namespace string
 }
 
 func (s Scope) Validate() error {
-	if s.Tenant != "" {
-		if err := ValidateName(s.Tenant); err != nil {
-			return err
-		}
-	}
-	if s.Namespace != "" {
-		if err := ValidateName(s.Namespace); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s Scope) tenant() string {
-	if s.Tenant != "" {
-		return s.Tenant
-	}
-	return DefaultTenant
-}
-
-func (s Scope) namespace() string {
-	if s.Namespace != "" {
-		return s.Namespace
-	}
-	return DefaultNamespace
+	return ValidateName(s.Namespace)
 }
 
 func (s Scope) Prefix() string {
-	return path.Join(s.tenant(), NamespaceDir, s.namespace())
+	return path.Join(NamespaceDir, s.Namespace)
 }
 
 func (s Scope) Path(subpath string) string {
@@ -120,9 +69,6 @@ func (s Scope) WALPrefix() string {
 }
 
 func (s Scope) BranchRef(branch string) string {
-	if branch == "" {
-		branch = DefaultBranch
-	}
 	return s.Path(path.Join(RefHead, branch))
 }
 
@@ -138,23 +84,6 @@ func (s Scope) BranchesPath() string {
 	return s.Path("branches.json")
 }
 
-func BranchesPath(tenant, ns string) string {
-	if tenant == "" {
-		tenant = DefaultTenant
-	}
-	if ns == "" {
-		ns = DefaultNamespace
-	}
-	return path.Join(tenant, NamespaceDir, ns, "branches.json")
-}
-
-func (s Scope) CatalogPath() string {
-	return CatalogPath(s.Tenant)
-}
-
-func CatalogPath(tenant string) string {
-	if tenant == "" {
-		tenant = DefaultTenant
-	}
-	return path.Join(tenant, "ns.json")
+func BranchesPath(ns string) string {
+	return path.Join(NamespaceDir, ns, "branches.json")
 }

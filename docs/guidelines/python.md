@@ -23,3 +23,4 @@ Python edit in a task. Review Python changes against them.
 - Follow the Google Python Style Guide.
 - Use modern type annotations (`int | None`, `list[str]`).
 - Do not add shebang lines (`#!/usr/bin/env python3`).
+- Do not use `__init__.py` files. They do not work well with Bazel runfiles.

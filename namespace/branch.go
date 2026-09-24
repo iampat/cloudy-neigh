@@ -120,7 +120,7 @@ func ListBranches(ctx context.Context, store objectstore.Store, branchesPath str
 		return nil, fmt.Errorf("namespace: list branches: %w", err)
 	}
 	if len(branches) == 0 {
-		return []string{BranchRef("", "", DefaultBranch)}, nil
+		return []string{BranchRef(DefaultNamespace, DefaultBranch)}, nil
 	}
 	return branches, nil
 }

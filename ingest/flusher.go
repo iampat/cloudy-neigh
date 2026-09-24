@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path"
 	"sync"
 	"time"
 
@@ -23,7 +24,6 @@ const defaultPollInterval = 100 * time.Millisecond
 
 type Config struct {
 	PollInterval time.Duration
-	Tenants      []string
 }
 
 type Flusher struct {
@@ -57,10 +57,23 @@ func (f *Flusher) Run(ctx context.Context) error {
 	f.cancels = make(map[string]context.CancelFunc)
 	f.mu.Unlock()
 
-	discoverCtx, cancelDiscover := context.WithTimeout(context.Background(), 5*time.Second)
+	discoverCtx, cancelDiscover := context.WithTimeout(ctx, 5*time.Second)
 	initialTargets, err := f.discoverStreams(discoverCtx)
 	cancelDiscover()
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			targets, discErr := f.discoverStreams(shutdownCtx)
+			if discErr != nil {
+				return nil
+			}
+			for _, target := range targets {
+				_ = f.startStream(ctx, &g, target)
+			}
+			f.stopAllStreams()
+			return g.Wait()
+		}
 		return err
 	}
 	for _, target := range initialTargets {
@@ -101,27 +114,18 @@ type streamTarget struct {
 	walPrefix string
 }
 
-func (f *Flusher) tenants() []string {
-	if len(f.cfg.Tenants) > 0 {
-		return f.cfg.Tenants
-	}
-	return []string{namespace.DefaultTenant}
-}
-
 func (f *Flusher) discoverStreams(ctx context.Context) ([]streamTarget, error) {
+	namespaces, err := namespace.ActiveNamespaces(ctx, f.store)
+	if err != nil {
+		return nil, err
+	}
 	var targets []streamTarget
-	for _, tenant := range f.tenants() {
-		namespaces, err := namespace.ActiveNamespaces(ctx, f.store, tenant)
-		if err != nil {
-			return nil, err
-		}
-		for _, ns := range namespaces {
-			scope := namespace.Scope{Tenant: tenant, Namespace: ns}
-			targets = append(targets, streamTarget{
-				scope:     scope,
-				walPrefix: scope.WALPrefix(),
-			})
-		}
+	for _, ns := range namespaces {
+		scope := namespace.Scope{Namespace: ns}
+		targets = append(targets, streamTarget{
+			scope:     scope,
+			walPrefix: scope.WALPrefix(),
+		})
 	}
 	return targets, nil
 }
@@ -332,9 +336,9 @@ func (s *streamFlusher) flushBranch(ctx context.Context, branch string, mutation
 	}
 	data := buf.Bytes()
 
-	scope, branchName := namespace.ScopeFromRef(branch)
+	branchName := path.Base(branch)
 	segID := fmt.Sprintf("%020d-%s", seq, branchName)
-	segKey := scope.SegmentKey(segID)
+	segKey := s.scope.SegmentKey(segID)
 	if _, err := s.store.Put(ctx, segKey, bytes.NewReader(data), objectstore.Condition{Absent: true}); err != nil {
 		return fmt.Errorf("upload segment %s: %w", segKey, err)
 	}
@@ -378,7 +382,7 @@ func (s *streamFlusher) flushBranch(ctx context.Context, branch string, mutation
 
 		_, err = manifest.Write(ctx, s.store, branch, m, gen)
 		if err == nil {
-			_ = scope.AddBranch(ctx, s.store, branch)
+			_ = s.scope.AddBranch(ctx, s.store, branch)
 			s.branchCheckpoints[branch] = seq
 			casDur := time.Since(casStart)
 

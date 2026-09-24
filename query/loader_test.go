@@ -615,10 +615,10 @@ func TestLoader_ForkBranch_Inheritance(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	mainBranch := namespace.BranchRef("", "", "main")
-	stagingBranch := namespace.BranchRef("", "", "staging")
+	mainBranch := namespace.BranchRef(namespace.DefaultNamespace, "main")
+	stagingBranch := namespace.BranchRef(namespace.DefaultNamespace, "staging")
 
-	log, err := logstream.New(store, namespace.Scope{}.WALPrefix())
+	log, err := logstream.New(store, namespace.Scope{Namespace: namespace.DefaultNamespace}.WALPrefix())
 	require.NoError(t, err)
 
 	appendWALRecord(t, ctx, log, mainBranch, "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
@@ -661,11 +661,11 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	log, err := logstream.New(store, namespace.Scope{}.WALPrefix())
+	log, err := logstream.New(store, namespace.Scope{Namespace: namespace.DefaultNamespace}.WALPrefix())
 	require.NoError(t, err)
 
-	mainBranch := namespace.BranchRef("", "", "main")
-	stagingBranch := namespace.BranchRef("", "", "staging")
+	mainBranch := namespace.BranchRef(namespace.DefaultNamespace, "main")
+	stagingBranch := namespace.BranchRef(namespace.DefaultNamespace, "staging")
 
 	appendWALRecord(t, ctx, log, mainBranch, "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
 	flushBranch(t, ctx, store, mainBranch, 1)

@@ -5,6 +5,7 @@ py_binary(
     srcs = ["demoload.py"],
     visibility = ["//:__subpackages__"],
     deps = [
+        ":interceptor",
         "//proto/cloudyneigh/v1:cloudyneighpb_py_grpc",
         "@pip//absl_py",
         "@pip//grpcio",
@@ -13,17 +14,11 @@ py_binary(
 )
 
 py_library(
-    name = "scripts",
-    srcs = [
-        "demoload.py",
-        "querybench.py",
-    ],
+    name = "interceptor",
+    srcs = ["interceptor.py"],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//proto/cloudyneigh/v1:cloudyneighpb_py_grpc",
-        "@pip//absl_py",
         "@pip//grpcio",
-        "@pip//pyarrow",
     ],
 )
 
@@ -32,6 +27,7 @@ py_binary(
     srcs = ["querybench.py"],
     visibility = ["//:__subpackages__"],
     deps = [
+        ":interceptor",
         "//proto/cloudyneigh/v1:cloudyneighpb_py_grpc",
         "@pip//absl_py",
         "@pip//grpcio",
