@@ -84,6 +84,8 @@
 
 ### Removed
 
+- `segment.Writer`: deleted manual `Flush` and `Close` forwarding methods in favor of embedded `recordio.Writer`. [#154]
+- `objectstore`: deleted `gcsStore.bkt()` forwarding helper in favor of struct field. [#154]
 - `.bazelrc`: removed `--test_output=streamed` from fuzz tests to re-enable sharding. [#153]
 - `query.Loader.Table`: deleted forwarding getter in favor of direct atomic load. [#151]
 - `objectstore`: deleted `Condition.validate` and validation call sites. [#150]
