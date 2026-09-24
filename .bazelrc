@@ -5,7 +5,7 @@ test --test_output=errors
 test --test_arg=-test.shuffle=on
 
 build:race --@rules_go//go/config:race
-build --config=race
+build --@rules_go//go/config:race
 # Workaround for grpc C++ build failure with Apple Clang modules (grpc/grpc#29749).
 build --features=-use_header_modules
 build --features=-module_maps
@@ -13,5 +13,4 @@ build --features=-module_maps
 test:fuzz --test_arg=-test.fuzz=.
 test:fuzz --test_arg=-test.fuzztime=600s
 test:fuzz --test_arg=-test.fuzzcachedir=/tmp/fuzzcache
-test:fuzz --test_output=streamed
 test:fuzz --nocache_test_results
