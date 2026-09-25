@@ -9,6 +9,9 @@ Python edit in a task. Review Python changes against them.
 - Use Astral tooling: `uv` for package management and `ruff` for formatting and linting.
 - Format with `ruff format`. Check with `ruff check`.
 - Prefer jq over Python scripts when analysing JSON files.
+- Every Python program is a Bazel `py_binary`, tooling and benchmark scripts included. Never run a `.py` file with `python` or `uv run`.
+- A shell script runs a Bazel program in two steps: `bazel build <target>`, then the executable that `bazel cquery --output=files <target>` names. It does not call `bazel run`.
+- A new third-party package goes into `requirements.in`, then `bazel run //:requirements` and `bazel run //:gazelle_python_manifest.update`.
 
 ## Dependencies
 

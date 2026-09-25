@@ -1,0 +1,30 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+py_binary(
+    name = "analyze",
+    srcs = ["analyze.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@pip//absl_py",
+        "@pip//numpy",
+        "@pip//pyarrow",
+    ],
+)
+
+py_binary(
+    name = "groundtruth",
+    srcs = ["groundtruth.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@pip//absl_py",
+        "@pip//numpy",
+        "@pip//pyarrow",
+    ],
+)
+
+py_binary(
+    name = "report",
+    srcs = ["report.py"],
+    visibility = ["//:__subpackages__"],
+    deps = ["@pip//absl_py"],
+)

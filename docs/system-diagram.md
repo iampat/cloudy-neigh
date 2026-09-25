@@ -2,8 +2,8 @@
 
 Cloudy-neigh is a cloud-native search engine. It decouples compute from
 storage and uses cloud object storage as the source of truth. Stateless
-ingest and query nodes persist write-ahead logs, immutable columnar segments,
-and branch manifests to object storage.
+ingest and query nodes persist write-ahead logs, immutable segments, and
+branch manifests to object storage.
 
 ---
 
@@ -38,7 +38,7 @@ and branch manifests to object storage.
    │                    Cloud Object Storage                     │
    │            <tenant-storage-root>/ns/<namespace>/            │
    │  wal/             segments/          branches.json  refs/   │
-   │  <seq>.recordio   <sha256>.recordio                 head/   │
+   │  <seq>.recordio   <seq>.recordio                    heads/  │
    └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -48,8 +48,8 @@ and branch manifests to object storage.
 
 Clients write document mutations and branch lifecycle events over gRPC. The
 ingest node appends records synchronously to the write-ahead log, tails the
-log in a background flusher, and materializes immutable columnar segments to
-object storage.
+log in a background flusher, and materializes immutable segments to object
+storage.
 
 ```text
 ┌─────────────┐
@@ -81,8 +81,8 @@ object storage.
 │     ingest.Flusher      │ Buffers mutations per sequence in memory
 └──────┬──────────────────┘
        │ Flush on sequence commit or shutdown
-       ├──▶ Writes segments/<sha256>.recordio with segment.Writer
-       ├──▶ Updates refs/head/<branch> manifest with manifest.Write
+       ├──▶ Writes segments/<020d_seq>.recordio with segment.Writer
+       ├──▶ Updates refs/heads/<branch>.json manifest with manifest.Write
        └──▶ Registers branch in branches.json with namespace.AddBranch
 ```
 
@@ -91,24 +91,24 @@ object storage.
 ```text
 grpcapi.IngestServer.Upsert
   resolveNamespace
-  resolveBranch (namespace.BranchRef)
-  ingest.Ingester.Upsert
+  resolveBranch
+  ingest.Ingester.Upsert (namespace, branch)
     logstream.Log.Append
       recordio.Writer.WriteRecord
       objectstore.Store.Put (wal/<020d_seq>.recordio)
 grpcapi.IngestServer.Fork
-  resolveForkBranches
-  ingest.Ingester.Fork
-    manifest.Read (source)
-    manifest.Write (target, Absent: true)
+  resolveNamespace, validate source and target branches
+  ingest.Ingester.Fork (namespace, source, target)
+    manifest.Read (Scope.ManifestKey(source))
+    manifest.Write (Scope.ManifestKey(target), Absent: true)
     namespace.AddBranch (branches.json)
     logstream.Log.Append (BranchLifecycleEvent_FORK)
 ingest.Flusher.Run (Background goroutine)
   logstream.Log.Read
   ingest.Flusher.processRecords
   ingest.Flusher.flushBranch
-    segment.Writer.Write (segments/<sha256>.recordio)
-    manifest.Write (refs/head/<branch>, CAS generation)
+    segment.Writer.Write (segments/<020d_seq>.recordio)
+    manifest.Write (refs/heads/<branch>.json, CAS generation)
     namespace.AddBranch (branches.json)
 ```
 
@@ -116,9 +116,9 @@ ingest.Flusher.Run (Background goroutine)
 
 ## Query Pipeline (Read Path)
 
-Query nodes read immutable segment references from branch pointers. They load
-columnar segments into flat memory. They compute exact k-NN vector distances
-and attribute filters.
+Query nodes read immutable segment references from branch manifests. They
+replay segments into a flat in-memory table. They compute exact k-NN vector
+distances and attribute filters.
 
 ```text
 ┌─────────────┐
@@ -137,7 +137,7 @@ and attribute filters.
        │ Sync / Load manifests
        ▼
 ┌─────────────────────────┐
-│      query.Loader       │ Reads refs/head/<branch> and segments
+│      query.Loader       │ Reads refs/heads/<branch>.json and segments
 └──────┬──────────────────┘
        │ Stream segment records into table
        ▼
@@ -147,7 +147,7 @@ and attribute filters.
        │ Compute distance & filter attributes
        ▼
 ┌─────────────────────────┐
-│     query/distance      │ Cosine, DotProduct, L2Squared (SIMD / Scalar)
+│         vector          │ Kernel set chosen by the -distance variant
 └─────────────────────────┘
 ```
 
@@ -155,17 +155,18 @@ and attribute filters.
 
 ```text
 query.Engine.Run (Background sync loop)
-  namespace.ListBranches (reads branches.json)
-  query.Loader.Sync
-    manifest.Read (refs/head/<branch>)
-    segment.NewReader (segments/<sha256>.recordio)
-    table.Builder.UpsertRecord (appends into flat []float32)
+  namespace.ActiveNamespaces (ns.json, skips deleted_at != 0)
+  namespace.ListBranches (branch names from branches.json)
+  query.Loader.Sync (Scope.ManifestKey(branch))
+    manifest.Read (refs/heads/<branch>.json)
+    segment.NewReader (segments/<020d_seq>.recordio)
+    query.Table.Clone, then Table.UpsertRecord (flat []float32 or []uint16)
 grpcapi.QueryServer.Query
-  resolveBranch (namespace.BranchRef)
-  query.Engine.Query
-    loader.Table (atomic read of immutable table)
+  namespace.ValidateName, resolveBranch
+  query.Engine.Query (namespace, branch)
+    atomic load of the branch table
     query.Table.Search
-      query/distance.DotProduct / Cosine / L2Squared
+      vector.DotProduct / Cosine / L2Squared
       evaluate attribute equality predicates
       bounded min-heap top-k selection
 ```
@@ -175,8 +176,7 @@ grpcapi.QueryServer.Query
 ## Storage Layout & Hierarchy
 
 Cloud object storage maintains strict isolation through path prefixes. Branch
-pointers reference immutable manifests. Manifests reference immutable
-segments.
+manifests under `refs/heads/` reference immutable segments.
 
 ```text
 <tenant-storage-root>/
@@ -188,13 +188,13 @@ segments.
         │   ├── 00000000000000000002.recordio
         │   └── 00000000000000000003.recordio
         ├── segments/
-        │   ├── 3a7f4c9b201d...recordio
-        │   └── e8b10f4a82c3...recordio
+        │   ├── 00000000000000000001.recordio
+        │   └── 00000000000000000003.recordio
         ├── branches.json
         └── refs/
-            └── head/
-                ├── main
-                └── <branch>
+            └── heads/
+                ├── main.json
+                └── <branch>.json
 ```
 
 Each tenant has its own isolated storage root URL configured via `--tenants-file`
@@ -202,11 +202,27 @@ Each tenant has its own isolated storage root URL configured via `--tenants-file
 lists namespaces and `ns/` holds namespace directories.
 Each namespace contains:
 - `wal/`: append-only write-ahead log files.
-- `segments/`: flat immutable columnar segment files without branch
-  subdirectories.
-- `branches.json`: catalog of active branches in the namespace.
-- `refs/head/`: protobuf manifest files tracking checkpoint sequence and
-  segment IDs per branch.
+- `segments/`: flat immutable segment files, one per flushed WAL entry,
+  named by the WAL sequence number.
+- `branches.json`: a `BranchCatalog` in protojson. It maps each branch name
+  to its metadata, e.g. `{"branches":{"main":{}}}`.
+- `refs/heads/<branch>.json`: the branch manifest, a `BranchManifest` from
+  `proto/storage/v1/storage.proto` in protojson. It holds the checkpoint
+  sequence and the segment references of the branch.
+
+```json
+{
+  "checkpoint_seq": "996",
+  "schema_version": "1",
+  "segments": [
+    {
+      "segment_id": "00000000000000000996",
+      "doc_count": "1000",
+      "docs_size": "5242880"
+    }
+  ]
+}
+```
 
 The server CLI (`cmd/cloudy`) acts strictly as an assembly root with
 dependency injection, delegating multi-tenant log stream routing to the
@@ -216,16 +232,21 @@ dependency injection, delegating multi-tenant log stream routing to the
 
 1. **WAL records are immutable**: Once written, a WAL sequence file is never
    modified or overwritten.
-2. **Segment blobs are content-addressed**: Segment files contain immutable
-   vector and document data. The segment ID is the SHA-256 hash of the
-   serialized segment bytes (`<sha256>.recordio`). Segments live directly
-   under `segments/` without branch subdirectories and are shared across
-   forked branches.
+2. **The WAL sequence names a segment**: A segment holds the mutations of one
+   WAL entry. One WAL entry holds the mutations of one branch. Thus the
+   sequence number alone names the segment (`<020d_seq>.recordio`). The name
+   holds no branch. Segments live directly under `segments/` and forked
+   branches share them.
 3. **Branch heads advance monotonically**: Manifest commits update
-   `<tenant>/ns/<namespace>/refs/head/<branch>` with `manifest.Write` using
-   conditional creates (`Absent: true`) or generation-matched CAS updates.
-4. **Branch catalog**: Active branches are cataloged in `branches.json` with
-   CAS updates.
+   `<tenant-storage-root>/ns/<namespace>/refs/heads/<branch>.json` with
+   `manifest.Write` using conditional creates (`Absent: true`) or
+   generation-matched CAS updates.
+4. **Branch catalog**: `branches.json` holds branch names, not storage keys.
+   CAS updates change it.
+5. **Package `namespace` owns the key layout**: A caller asks
+   `namespace.Scope.ManifestKey(branch)` for a manifest key. WAL records
+   and APIs carry the branch name. No code parses a key to find a namespace
+   or a branch.
 
 ---
 
@@ -240,7 +261,7 @@ dependency injection, delegating multi-tenant log stream routing to the
 | `logstream` | WAL | Monotonic append-only log over RecordIO |
 | `recordio` | Framing | Framed binary reader, writer, and scanner |
 | `query` | Engine | Columnar in-memory table and manifest loader |
-| `query/distance` | Math | Distance kernels (scalar and portable SIMD) |
+| `vector` | Math | Distance kernels per variant (see `docs/design/distance-variants.md`) |
 | `segment` | Storage | Segment encoding and decoding over RecordIO |
 | `manifest` | Storage | Branch manifest read and CAS write |
 | `objectstore` | Storage | Store drivers (GCS, local disk, memory) |

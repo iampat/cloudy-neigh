@@ -211,7 +211,7 @@ Support multi-vector document representations and modern retrieval models.
 
 Provide Git-like dataset branching and point-in-time snapshot isolation.
 
-- **Branch head references (Done)**: Atomic branch pointers in object storage (`refs/head/<branch>`) referencing immutable manifests. [#78, #79, #142]
+- **Branch head references (Done)**: Each branch keeps its manifest at `refs/heads/<branch>.json` in object storage. A compare-and-swap (CAS) write updates it. [#78, #79, #142, #157]
 - **Branch catalog (Done)**: Active branch catalog in `branches.json` per namespace with CAS updates. [#142]
 - **Dynamic branch discovery**: Discover and synchronize namespace-scoped branches in the query engine from `branches.json`.
 - **Branch deletion RPC**: Expose administrative RPC in `IngestService` to remove branch pointers and update `branches.json`.
@@ -259,3 +259,8 @@ Complete the developer workflow and harden production operations.
 - Cross-region replication and multi-region read replicas.
 - Cross-encoder server-side reranking pipelines.
 - Natural language query interface compiling to structured query messages.
+- Low priority: store vectors as fp16 or bf16 in segments, next to the fp32 WAL as the source of truth. It halves segment bytes and cold-start reads. A per-namespace setting selects the stored forms. [#157]
+- Low priority: native 16-bit arithmetic kernels: `VDPBF16PS` bf16 dot (Emerald Rapids, Granite Rapids) and `VFMADD231PH` fp16 FMA (Granite Rapids). They help rows in cache only, and the fp16 FMA needs a periodic fp32 flush. [#157]
+- Low priority: AMX bf16 and fp16 tile kernels for batched queries. [#157]
+- Low priority: bf16 rows as a `-distance` variant on amd64 and arm64. The paired bf16 layout scanned 1M rows at 168 to 213 ns per row, with recall@10 0.9987 on the Cohere corpus. [#157]
+- Low priority: int8 rows with a per-row scale. They cut the row stream to a quarter of fp32, and half of fp16. Measure recall@10 on the Cohere corpus against fp16. [#157]

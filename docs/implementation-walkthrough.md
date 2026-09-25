@@ -8,9 +8,9 @@ Client ──gRPC Upsert──▶ Ingest Engine ──batch──▶ WAL (LogStr
                             [Process 1]                      │
                                                              │ tails WAL
                                                              ▼
-                                                         Memtable
+                                                          Flusher
                                                              │
-                                                             │ flush
+                                                             │ per WAL entry
                                                              ▼
                                                       segment.Writer
                                                              │ [Process 2]
@@ -30,16 +30,17 @@ No external database or consensus coordinator exists.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Layer 2: Ingestion & Columnar Segments (segment/, ingest/, kvfs/)           │
-│ • Immutable RecordIO segment files: segments/<branch>/<segID>.recordio      │
-│ • Mutable branch heads: refs/heads/<branch> storing BranchManifest          │
+│ Layer 2: Segments and Manifests (segment/, manifest/, namespace/, ingest/)  │
+│ • Immutable RecordIO segments: ns/<ns>/segments/<020d_seq>.recordio         │
+│ • Branch manifests: ns/<ns>/refs/heads/<branch>.json in protojson           │
+│ • Branch names: ns/<ns>/branches.json                                       │
 │ • Zero-copy branch forks with Compare-And-Swap manifest updates             │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
                                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ Layer 1: Global Write-Ahead Log (logstream/)                                │
-│ • Append-only sequenced keys: wal/<020d_seq>.recordio                       │
+│ • One log per namespace: ns/<ns>/wal/<020d_seq>.recordio                    │
 │ • Conditional object creation: If-Generation-Match=0 (Absent: true)         │
 │ • Log-scale tail discovery via exponential probe and binary search          │
 └──────────────────────────────────────┬──────────────────────────────────────┘
@@ -47,13 +48,13 @@ No external database or consensus coordinator exists.
                                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ Layer 0: Object Store Adapter (objectstore/)                                │
-│ • Unified driver: GCS, AWS S3, and local filesystem                         │
+│ • Drivers: GCS, local disk, and memory                                      │
 │ • Atomic preconditions: Absent (create-if-not-exists) and GenerationMatch   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 The system uses two atomic object storage primitives:
-1. `Absent: true`. Maps to `if-generation-match=0` on GCS and `If-None-Match: *` on S3.
+1. `Absent: true`. Maps to `if-generation-match=0` on GCS.
 2. `GenerationMatch: <gen>`. Maps to `if-generation-match=<gen>` on GCS for Compare-And-Swap.
 
 ## 2. Framing and Checksums: `recordio`
@@ -95,6 +96,7 @@ Scanner behavior on corruption:
 ## 3. The Global Write-Ahead Log: `logstream`
 
 `logstream.Log` provides a distributed, append-only log without a sequencer daemon.
+Each namespace has one log under `ns/<namespace>/wal/`.
 
 ```
 wal/
@@ -156,9 +158,9 @@ No serialization or WAL implementation details reside inside `grpcapi`.
 
 ```go
 type Ingester interface {
-	Upsert(ctx context.Context, namespace string, records []*cloudyneighpb.Record) error
-	Delete(ctx context.Context, namespace string, ids []string) error
-	Fork(ctx context.Context, source, target string) error
+	Upsert(ctx context.Context, ns, branch string, records []*cloudyneighpb.Record) error
+	Delete(ctx context.Context, ns, branch string, ids []string) error
+	Fork(ctx context.Context, ns, source, target string) error
 }
 ```
 
@@ -175,21 +177,24 @@ Client (batch=200) ──▶ IngestServer ──▶ Ingester.Upsert()
 ```
 
 1. Client sends batch requests (e.g. 200 records) to `IngestService.Upsert`.
-2. `IngestServer` validates namespace and record IDs, then delegates to `ingester.Upsert`.
-3. `ingest.Ingester` marshals the batch into `WalRecord` envelopes and appends them directly to `logstream.Log`.
-4. The client call returns success once the batch commits to object storage.
-5. If the WAL write fails, the client immediately receives the error. Client requests receive success only after durability is guaranteed.
+2. `IngestServer` validates the namespace, the branch, and the record IDs. It passes the namespace and the branch as separate parameters to `ingester.Upsert`.
+3. On the first write to a namespace, the ingester adds it to `ns.json`.
+4. `ingest.Ingester` marshals the batch into `WalRecord` envelopes and appends them directly to `logstream.Log`.
+5. The client call returns success once the batch commits to object storage.
+6. If the WAL write fails, the client immediately receives the error. Client requests receive success only after durability is guaranteed.
 
 ## 5. Materialization and Flusher: `ingest.Flusher`
 
-`Flusher` tails the global WAL, routes records to branch memtables, and flushes segments.
+`Flusher` reads the active namespaces from `ns.json` at each poll interval. It
+runs one stream per namespace. A stream tails the namespace WAL and flushes one
+segment per branch in each WAL entry. There is no memtable.
 
 ### Checkpoint Initialization
 
-On startup, `Flusher.Run` scans all branches in `refs/heads/`:
-1. `kvfs.ListBranches` returns all branch names.
-2. `kvfs.ResolveBranch` reads each branch manifest.
-3. `minCheckpoint = min(manifest.CheckpointSeq)` across all active branches.
+On startup, each stream does these steps:
+1. `Scope.ListBranches` reads the branch names from `branches.json`.
+2. `manifest.Read` reads `refs/heads/<branch>.json` for each branch.
+3. `minCheckpoint = min(manifest.CheckpointSeq)` across all branches.
 4. The tail loop starts at `seq = minCheckpoint + 1`.
 
 ### Ingestion Loop and Routing
@@ -203,6 +208,10 @@ readLoop:
 
   for rec in records:
     walRec = unmarshal(rec)
+    if walRec is FORK:
+      flushBranch(parent, branchMutations[parent], seq)
+      branchCheckpoints[child] = seq
+      continue
     mut = walRec.GetMutation()
     if seq <= branchCheckpoints[mut.Branch]:
       continue // Skip already-materialized mutation
@@ -210,10 +219,11 @@ readLoop:
 
   for branch, muts in branchMutations:
     flushBranch(ctx, branch, muts, seq)
+  seq++
 ```
 
 Segment flush triggers:
-- Materialization occurs immediately per WAL sequence batch.
+- Materialization occurs immediately per WAL entry.
 - Batching occurs at the client request boundary, maximizing object storage write efficiency.
 - Graceful shutdown initiates: drains WAL to tail and flushes all pending sequences.
 
@@ -225,38 +235,39 @@ Flusher                           Object Store
    ├─── 1. Write RecordIO segment      │
    │       to memory buffer            │
    │                                   │
-   ├─── 2. Generate segment ID:        │
-   │       YYYYMMDDHHMMSS-micros-rand  │
+   ├─── 2. Segment ID = WAL seq        │
+   │       (20-digit, zero-padded)     │
    │                                   │
-   ├─── 3. Put segment blob ──────────▶│ segments/<branch>/<id>.recordio
+   ├─── 3. Put segment blob ──────────▶│ segments/<020d_seq>.recordio
    │       (Condition: Absent=true)    │
    │                                   │
    │    ┌─── CAS Commit Loop ──────────┤
    │    │                              │
-   ├───┼─── 4. ResolveBranch ─────────▶│ refs/heads/<branch>
+   ├───┼─── 4. manifest.Read ─────────▶│ refs/heads/<branch>.json
    │   │◀── Manifest + Generation ─────┤
    │   │                               │
    │   ├─── 5. Append SegmentRef       │
    │   │       Set CheckpointSeq       │
    │   │                               │
-   │   ├─── 6. Put manifest ──────────▶│ refs/heads/<branch>
+   │   ├─── 6. manifest.Write ────────▶│ refs/heads/<branch>.json
    │   │       (GenMatch = Generation) │
    │   │                               │
    │   │   [If 412: Retry CAS loop]    │
    │   └───[If 200: Break] ────────────│
    │                                   │
+   ├─── 7. Scope.AddBranch ───────────▶│ branches.json
+   │                                   │
    └─── Update in-memory checkpoint    │
 ```
 
-Segment ID format:
-- Timestamp: `YYYYMMDDHHMMSS` in UTC.
-- Microsecond suffix: ensures monotonic growth within the same second.
-- 5 random bytes: avoids collisions across distributed flushers.
+A WAL entry holds the mutations of one branch. Thus the WAL sequence number
+alone names the segment. The name holds no branch, so forks share segments.
 
-## 6. Branch Management: `kvfs`
+## 6. Branch Management: `manifest` and `namespace`
 
-Branch heads live under `refs/heads/<branch>`.
-The object body contains a serialized `BranchManifest` protobuf.
+The branch manifest lives at `ns/<namespace>/refs/heads/<branch>.json`. The
+object body is a `BranchManifest` in protojson. `branches.json` holds a
+`BranchCatalog` with the branch names, e.g. `{"branches":{"main":{}}}`.
 
 ```proto
 message BranchManifest {
@@ -267,15 +278,20 @@ message BranchManifest {
 ```
 
 Operations:
-- `ResolveBranch`: reads `refs/heads/<branch>`, unmarshals manifest, returns storage generation.
-- `UpdateBranch`: writes manifest using `Condition{GenerationMatch: gen}`.
-- `CreateBranch`: copies parent manifest to `refs/heads/<new>` with `Condition{Absent: true}`.
+- `manifest.Read`: reads the manifest and returns the storage generation.
+- `manifest.Write`: writes the manifest with `Condition{GenerationMatch: gen}`, or with `Condition{Absent: true}` when `gen` is empty.
+- `Ingester.Fork`: copies the source manifest to `refs/heads/<target>.json` with `Condition{Absent: true}`. It adds the target to `branches.json` and appends a `FORK` event to the WAL.
+- `Scope.ListBranches`, `Scope.AddBranch`, `Scope.RemoveBranch`: read and change `branches.json` with CAS.
 - Zero-copy forks require no segment duplication. Segments remain immutable and shared.
+
+Callers pass the namespace and the branch as separate parameters. Package
+`namespace` builds every key. No code parses a key to find a namespace or a
+branch.
 
 ## 7. Query Engine and Incremental Loader: `query`
 
 The query engine decouples read serving from ingestion.
-It maintains an in-memory, chunked columnar table per branch.
+It keeps one in-memory `Table` and one `Loader` per namespace and branch.
 
 ```
 Background Ticker (2s)                   Query Worker
@@ -283,80 +299,61 @@ Background Ticker (2s)                   Query Worker
          ▼                                    ▼
    SyncOnce(ctx)                        Query(ctx, req)
          │                                    │
-         ├─ ResolveBranch(branch)             ├─ atomic.Pointer.Load()
-         ├─ gen == lastGen? Skip              ├─ Table.SearchWithStats()
-         │                                    │   ├─ Filter check
-         ├─ New segments?                     │   ├─ SIMD Cosine distance
-         │   └─ Stream segment.Reader         │   └─ Top-K min-heap culling
-         │   └─ Apply to Builder              │
-         │                                    └─ Materialize top hits
-         └─ atomic.Pointer.Store(newTable)
+         ├─ ActiveNamespaces (ns.json)        ├─ atomic.Pointer.Load()
+         ├─ ListBranches (branches.json)      ├─ Table.Search()
+         ├─ manifest.Read(branch)             │   ├─ Filter check
+         ├─ gen == lastGen? Skip              │   ├─ Variant kernel dot
+         │                                    │   └─ Top-K min-heap culling
+         ├─ New segments?                     │
+         │   └─ Table.Clone()                 └─ Materialize top hits
+         │   └─ Stream segment.Reader
+         │   └─ Apply to the clone
+         └─ atomic.Pointer.Store(clone)
 ```
 
 ### Manifest Polling and Incremental Loading
 
-`query.Loader.Sync` executes every `syncInterval` (default: 2 seconds):
-1. Resolves `refs/heads/<branch>` to obtain the latest manifest and object generation.
+`query.Engine.SyncOnce` runs every `syncInterval` (default: 2 seconds). It
+lists the active namespaces and their branches. For each branch,
+`query.Loader.Sync` does these steps:
+1. Reads `refs/heads/<branch>.json` to get the latest manifest and object generation.
 2. If `gen == lastGen`, the branch has not changed. The loader exits immediately.
 3. For each `SegmentRef` in `manifest.Segments`:
    - Checks `loaded[seg.SegmentId]`. Skips previously loaded segments.
-   - Downloads `segments/<branch>/<segID>.recordio`.
+   - Clones the current table on the first new segment.
+   - Downloads the object at `scope.SegmentKey(seg.SegmentId)`.
    - Scans records with `segment.Reader`.
-   - PUT operations call `Builder.UpsertRecord`.
-   - DELETE operations call `Builder.Delete`.
+   - PUT operations call `Table.UpsertRecord`.
+   - DELETE operations call `Table.Delete`.
    - Marks `loaded[seg.SegmentId] = true`.
-4. Calls `Builder.Build()` to create a new `*Table`.
-5. Swaps pointer via `atomic.Pointer[Table].Store(newTable)`.
-6. Active reader goroutines continue scanning previous table instances with zero lock contention.
+4. Swaps pointer via `atomic.Pointer[Table].Store(clone)`.
+5. Active reader goroutines continue scanning previous table instances with zero lock contention.
 
-## 8. In-Memory Chunked Columnar Table: `query.Table`
+## 8. In-Memory Table: `query.Table`
 
-`query.Table` organizes records into 1024-row chunks to eliminate heap fragmentation.
+`query.Table` stores rows in flat, row-indexed slices.
 
 ```
-Table (Chunk size = 1024)
-├── docIDs:      [chunk 0: 1024 strings] [chunk 1: 1024 strings] ...
-├── tombstones:  [chunk 0: 1024 bools]   [chunk 1: 1024 bools]   ...
-├── index:       [map 0: base] [map 1: delta] ... [up to 16 maps]
+Table
+├── docIDs:      []string
+├── index:       map[string]int          doc ID to row
+├── tombstones:  []bool
 ├── vectors:
-│   └── "default" ──▶ packedVectorCol
-│                     ├── chunks:   [chunk 0: 1024 * dim float32] ...
-│                     ├── vecToRow: [chunk 0: 1024 ints] ...
-│                     └── rowToVec: [chunk 0: 1024 ints] ...
+│   └── "default" ──▶ flatVectorCol
+│                     ├── data:     []float32  (float32 variants)
+│                     ├── data16:   []uint16   (fp16 variant)
+│                     ├── hasVec:   []bool
+│                     └── invNorms: []float32
 └── attrs:
-    └── "lang"    ──▶ [chunk 0: 1024 *AttributeValue] ...
+    └── "lang"    ──▶ []*AttributeValue
 ```
 
-Fast bitwise index translation:
-```go
-const (
-	chunkSize  = 1024
-	chunkMask  = 1023
-	chunkShift = 10
-)
+An upsert of a known doc ID overwrites its row. A new doc ID appends a row. A
+delete sets the tombstone. `Table.Clone` copies every slice, so a sync pass
+costs memory in proportion to the table size.
 
-func chunkIndex(i int) (int, int) {
-	return i >> chunkShift, i & chunkMask
-}
-```
-
-### Copy-on-Write Structural Sharing
-
-When `Builder` constructs a new table revision from an existing table:
-1. It copies chunk pointer slices, setting `chunkShared[c] = true`.
-2. When a row updates inside chunk $C$, only chunk $C$ is cloned via `slices.Clone`.
-3. Unmodified chunks remain shared between old and new tables.
-4. Memory allocation is proportional to batch size rather than table size.
-
-### Packed Vector Storage
-
-Vectors reside in dense, contiguous slices:
-- Each vector chunk allocates `chunkSize * dim` contiguous `float32` values.
-- No slice header or pointer indirection exists per vector.
-- Vector row mapping:
-  - `vecToRow[chunk][offset]` translates vector slot to table row.
-  - `rowToVec[chunk][offset]` translates table row to vector slot.
-  - Deletions set `rowToVec` to `-1` and set the tombstone flag.
+The `-distance` flag selects the row format and the kernel set. See
+`docs/design/distance-variants.md`.
 
 ### Search Execution Pipeline
 
@@ -364,14 +361,14 @@ Vectors reside in dense, contiguous slices:
 Query Vector + Filter
         │
         ▼
-   Iterate vector chunks (1024 vectors per chunk)
+   Iterate rows
         │
-        ├── 1. Check tombstone bit ──▶ If true, continue
+        ├── 1. Check tombstone ──▶ If true, continue
         │
-        ├── 2. Evaluate filter on attribute chunk ──▶ If mismatch, continue
+        ├── 2. Evaluate filter on attribute column ──▶ If mismatch, continue
         │
-        ├── 3. Compute distance via SIMD kernel:
-        │      Cosine(query, storedVector)
+        ├── 3. Compute cosine with the variant kernel:
+        │      dot(query, row) * invNorm(query) * invNorm(row)
         │
         └── 4. Top-K Min-Heap Culling:
                ├─ Heap size < topK ──▶ Push candidate
@@ -386,7 +383,7 @@ Query Vector + Filter
 ```
 
 1. Scalar pre-filtering runs before distance calculation.
-2. Distance kernels leverage SIMD via `simd.Float32s` and fused multiply-add.
+2. The variant kernel computes the dot product. The table stores the inverse norm of each row.
 3. Min-heap culling avoids sorting all candidates.
 4. Protobuf materialization occurs only for the final top-$k$ hits.
 
@@ -396,46 +393,43 @@ Query Vector + Filter
 | :--- | :--- |
 | Crash during `logstream.Append` | Conditional `Absent: true` prevents partial overwrite. Caller retries at next sequence. Contiguity preserved. |
 | Ingest node crash | Stateless process. Incoming requests fail over to another ingest node immediately. |
-| Crash during segment upload | Upload uses random segment ID and `Absent: true`. Unreferenced segment file remains garbage, never enters manifest. |
-| Crash between segment upload and CAS | Uncommitted segment is ignored. On restart, Flusher re-tails WAL from `checkpoint_seq + 1` and flushes a new segment. |
+| Crash during segment upload | Upload uses `Absent: true`. An unreferenced segment file never enters a manifest. |
+| Crash between segment upload and CAS | On restart, Flusher re-tails WAL from `checkpoint_seq + 1`. The segment key exists, so the `Absent: true` Put fails and the stream stops with an error. CONSIDER(ali): accept an existing key on replay. |
 | Race on manifest commit (HTTP 412) | Flusher catches `ErrPreconditionFailed`, re-resolves manifest, merges new segment into refreshed segment list, retries CAS. |
-| Query node crash | Stateless process. On restart, polls manifest from GCS, downloads segments, rebuilds columnar memory table. |
+| Query node crash | Stateless process. On restart, polls manifest from GCS, downloads segments, rebuilds the in-memory table. |
 | Torn write in segment or WAL | RecordIO reader checks length, header CRC, and footer CRC. Returns `ErrTornWrite` on truncation. |
 
 ## 10. End-to-End Concrete Dataflow Trace
 
 ```
-1. Client calls Upsert (1000 records)
+1. Client calls Upsert (namespace "default", branch "main", 1000 records)
    │
-2. IngestServer packages records into WalRecord protobufs
+2. Ingester packages records into WalRecord protobufs
    │
-3. logstream.Log creates wal/00000000000000000104.recordio
+3. logstream.Log creates ns/default/wal/00000000000000000104.recordio
    │  Put with Condition{Absent: true} succeeds
    ▼
 4. Flusher tails sequence 104
-   │  Decodes mutations, appends to branch memtable
-   ▼
-5. Memtable hits threshold (10,000 docs)
-   │  Writes segments/main/20260914150000-000120ab12cd34ef.recordio
+   │  Writes ns/default/segments/00000000000000000104.recordio
    │  Uploads with Condition{Absent: true}
    ▼
-6. Flusher executes CAS on refs/heads/main
+5. Flusher executes CAS on ns/default/refs/heads/main.json
    │  Updates CheckpointSeq = 104
    │  Appends new SegmentRef
    │  Put with Condition{GenerationMatch: gen} succeeds
    ▼
-7. Query Engine background ticker fires
-   │  Resolves refs/heads/main, detects new generation
-   │  Streams segments/main/20260914150000-000120ab12cd34ef.recordio
-   │  Builder clones modified chunks, creates new Table
-   │  atomic.Pointer[Table].Store(newTable)
+6. Query Engine background ticker fires
+   │  Reads ns/default/refs/heads/main.json, detects new generation
+   │  Streams ns/default/segments/00000000000000000104.recordio
+   │  Clones the table, applies the records
+   │  atomic.Pointer[Table].Store(clone)
    ▼
-8. Client calls Query(vector, top_k=10, filter={lang: "en"})
+7. Client calls Query(vector, top_k=10, filter={lang: "en"})
    │  QueryServer loads active table snapshot
-   │  Scans chunks: pre-filters lang="en", computes SIMD cosine
+   │  Scans rows: pre-filters lang="en", computes cosine
    │  Top-10 min-heap returns scored results
    ▼
-9. Query returns 10 ScoredRecord hits
+8. Query returns 10 ScoredRecord hits
 ```
 
 ## 11. Cohere Wikipedia Dataset and Segment Counts
@@ -444,11 +438,11 @@ Query Vector + Filter
 - Total documents: 1,000,000 documents across 10 Parquet files.
 - Vector dimension: 1024 float32 values per document.
 - Batching threshold: Batch size of 10,000 docs per WAL sequence.
-- Continuous streaming into namespace `main` produces exactly:
+- Continuous streaming into namespace `default`, branch `main`, produces exactly:
   $$1,000,000 \text{ docs} / 10,000 \text{ docs/segment} = \mathbf{100} \text{ segment files}$$
 - Storage footprints:
-  - 100 segment files under `segments/main/<id>.recordio` (~45 MB per segment, ~4.5 GB total).
-  - 1 branch manifest at `refs/heads/main` tracking 100 `SegmentRef` entries.
+  - 100 segment files under `ns/default/segments/<020d_seq>.recordio` (~45 MB per segment, ~4.5 GB total).
+  - 1 branch manifest at `ns/default/refs/heads/main.json` tracking 100 `SegmentRef` entries.
 
 ## 12. Benchmark Measurements (Apple M3 Max)
 

@@ -1,15 +1,17 @@
 # Storage and Query Simplification
 
-**Status:** Accepted, 2026-09-03, v1
+**Status:** Accepted, 2026-09-03, v1. Partly built. Sections 1 and 5 shipped
+in a simpler form, and `ReadRange` from section 4 exists. The rest is future
+work. `storage.md` describes the current layout.
 
 ## Problem
 
-The current storage design has three limitations that degrade read latency on
-Google Cloud Storage (GCS):
+The kvfs storage design, now removed, had three limitations that degraded read
+latency on Google Cloud Storage (GCS):
 
-1. Cold reads execute three sequential GCS round trips (`refs/heads` to
+1. Cold reads executed three sequential GCS round trips (`refs/heads` to
    `manifests/` to `cas/`), causing 60 to 90 ms latency.
-2. Reads execute a network check on `refs/heads` on every call, preventing
+2. Reads executed a network check on `refs/heads` on every call, preventing
    zero-network query execution.
 3. The manifest stores a flat key map that grows to 106 MB for one million
    documents, causing high CPU unmarshaling and memory pressure.
@@ -21,7 +23,7 @@ coordination services.
 ## Model
 
 ```text
-Current Architecture (3 GCS Hops, Multi-WAL, Monolithic Manifest):
+Previous Architecture (kvfs, removed):
 Query ──▶ refs/heads (25ms) ──▶ manifests/ CAS (25ms) ──▶ cas/ Blob (25ms)
 Ingestion ──▶ KVFS Store ──▶ Per-Branch WAL ──▶ Flush to CAS ──▶ Map Manifest
 
@@ -36,7 +38,7 @@ Ingestion ──▶ Single Global WAL ──▶ Memtable ──▶ Columnar File
 
 ### Problem
 
-`kvfs/store.go` executes three sequential round trips for cold reads:
+`kvfs/store.go` executed three sequential round trips for cold reads:
 1. `store.Get` on `refs/heads/<branch>` to resolve the manifest hash.
 2. `store.Get` on `manifests/<hash>` to fetch the manifest protobuf.
 3. `store.Get` on `cas/<hash>` to fetch the payload blob.
@@ -46,7 +48,14 @@ require 60 to 90 ms.
 
 ### Design
 
-Write the segment descriptor list directly into `refs/heads/<branch>`.
+Built in a simpler form. The manifest lives at
+`ns/<namespace>/refs/heads/<branch>.json` in protojson. A segment is one
+recordio file of `DocumentMutation` protos. `SegmentRef` holds `segment_id`,
+`doc_count`, and `docs_size`. The loader derives the object key from the
+namespace and the segment ID. The columnar split and the extra `SegmentRef`
+fields that follow are future work.
+
+Write the segment descriptor list directly into `refs/heads/<branch>.json`.
 Eliminate the intermediate `manifests/` content-addressed storage (CAS) layer.
 One GCS read returns both the branch generation and the segment list.
 
@@ -89,9 +98,11 @@ connections.
 
 ## 2. Zero-RTT Hot Reads via Global WAL Tailing
 
+Future work.
+
 ### Problem
 
-`kvfs/store.go` checks `refs/heads/<branch>` on every read call. Even when a
+`kvfs/store.go` checked `refs/heads/<branch>` on every read call. Even when a
 manifest is cached in memory, the read incurs a 20 to 30 ms network check.
 Writes committed to the write-ahead log (WAL) remain invisible until flushes
 commit to GCS.
@@ -148,9 +159,11 @@ deleted only when `refCount == 0` and the retention period has expired.
 
 ## 3. Bounded Segment Descriptors and Footer Metadata
 
+Future work. Segments have no footer and no block index.
+
 ### Problem
 
-`proto/kvfs/v1/kvfs.proto` defines `Manifest` as `map<string, ManifestEntry>`.
+`proto/kvfs/v1/kvfs.proto` defined `Manifest` as `map<string, ManifestEntry>`.
 At one million documents, the manifest reaches 106 MB. Unmarshaling takes 800
 to 2200 ms of CPU time and 400 MB of heap memory.
 
@@ -190,9 +203,12 @@ with Roaring Bitsets. Purge tombstones during Level 2 compaction.
 
 ## 4. Google Cloud Storage Engine with Local NVMe SSD Cache
 
+`objectstore.Store` has `ReadRange`. The block compression and the NVMe cache
+are future work.
+
 ### Problem
 
-`objectstore.Store` lacks range read support. Reading a 4 KiB footer or 128 KiB
+`objectstore.Store` lacked range read support. Reading a 4 KiB footer or 128 KiB
 chunk downloads the entire 64 MiB segment file, requiring 400 to 800 ms.
 
 ### Design
@@ -230,38 +246,43 @@ Deploy an ephemeral local NVMe solid-state drive (SSD) cache on GCE instances:
 
 ### Problem
 
-`wal.md` and `kvfs/store.go` define per-branch WAL paths (`wal/<branch>/`), but
+`wal.md` and `kvfs/store.go` defined per-branch WAL paths (`wal/<branch>/`), but
 `ingestion.md` mandates a single global WAL (`wal/<020d_seq>.recordio`). Tailing
 hundreds of branch prefixes causes high GCS List operation costs.
 
 ### Design
 
+Built. `kvfs` is deleted. Each namespace has one WAL at `ns/<namespace>/wal/`.
+Ingestion does not use a Memtable yet. The flusher writes one segment per WAL
+entry.
+
 Delete `kvfs/store.go`. Standardize on a single global append-only log using
 `logstream.Log`.
 
-Retain branch compare-and-swap mechanics (`kvfs/branch.go`) using GCS generation
-match on `refs/heads/<branch>`.
+Retain branch compare-and-swap mechanics using GCS generation match on
+`refs/heads/<branch>.json`.
 
 Ingestion workers tail the global WAL, route mutations to in-memory Memtables,
 and flush columnar segments directly to GCS.
 
 ```text
-Consolidated Layout:
-[Bucket Root]
-├── refs/heads/               <-- Inlined Manifests (<14 KiB)
-│   ├── main                  --> {checkpoint_seq: 104, segments: [...]}
-│   └── dev                   --> {checkpoint_seq: 82,  segments: [...]}
-├── segments/                 <-- Columnar Files (128/256 KiB blocks)
-│   ├── seg_001.vec           --> Dense float vectors
-│   ├── seg_001.post          --> Inverted postings & dictionaries
-│   └── seg_001.doc           --> Document attributes & footers
-└── wal/                      <-- Single Global WAL
-    ├── 00000000000000000001.recordio
-    └── 00000000000000000002.recordio
+Built layout:
+<tenant-storage-root>/
+├── ns.json
+└── ns/<namespace>/
+    ├── branches.json
+    ├── refs/heads/
+    │   ├── main.json         --> {checkpoint_seq: 104, segments: [...]}
+    │   └── dev.json          --> {checkpoint_seq: 82,  segments: [...]}
+    ├── segments/
+    │   └── 00000000000000000104.recordio
+    └── wal/
+        ├── 00000000000000000001.recordio
+        └── 00000000000000000104.recordio
 ```
 
-To protect shared copy-on-write segments across branches, garbage collection
-scans all active branch heads under `refs/heads/*` before deleting unreferenced
+Future work: to protect segments that forks share, garbage collection reads
+`branches.json` and every branch manifest. Then it deletes unreferenced
 segments whose 2-hour retention period has expired.
 
 ## Latency Summary

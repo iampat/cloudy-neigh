@@ -14,7 +14,7 @@ This note defines physical storage isolation for tenants. Each tenant gets a ded
 
 ## Future work
 
-- Move tenant resolution from protobuf message fields to gRPC metadata headers and authentication tokens.
+- Resolve the tenant from an authentication token instead of the `x-tenant-id` header.
 - Workload Identity and cloud IAM role impersonation.
 - Customer-managed encryption keys per tenant.
 - Namespace storage quotas in a tenant.
@@ -81,7 +81,8 @@ The path drops the `<tenant>/` prefix because the storage URL isolates the root.
 ```text
 <tenant-storage-root>/
 ├── ns.json
-└── ns/<namespace>/<epoch>/
+└── ns/<namespace>/
+    ├── branches.json
     ├── refs/heads/
     ├── segments/
     └── wal/
@@ -101,9 +102,8 @@ Protobuf request messages contain no tenant field.
 Ingest and query handlers resolve the tenant store from the registry using the context.
 Missing or invalid tenants fail fast with an error.
 
-### Content-Addressed Segments
+### Segment Names
 
-Segments are named after the SHA-256 hash of their serialized bytes (`<sha256>.recordio`).
-Content addressing decouples segments from branches and enables zero-copy branch forks.
-It eliminates collisions when multiple indexes flush within the same WAL batch.
-Replays remain idempotent without distributed coordination.
+The WAL sequence number names a segment (`<020d_seq>.recordio`).
+A WAL entry holds the mutations of one branch, so one entry makes at most one segment.
+The name holds no branch, so forked branches share segments.

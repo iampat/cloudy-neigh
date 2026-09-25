@@ -89,7 +89,7 @@ Compactor detects Bucket B exceeds threshold
   ├─▶ 3. Partition vectors into Bucket B1 and Bucket B2 (~10,000 vectors each)
   ├─▶ 4. Build Block Bloom filters for B1 and B2 from document attributes
   ├─▶ 5. Write segments/B1.vec and segments/B2.vec (Condition: Absent=true)
-  └─▶ 6. Commit atomic CAS update on refs/heads/<branch>:
+  └─▶ 6. Commit atomic CAS update on refs/heads/<branch>.json:
          - Remove centroid c
          - Add centroids c1 and c2
          - Mark bucket B superseded (retained for reader lease TTL)

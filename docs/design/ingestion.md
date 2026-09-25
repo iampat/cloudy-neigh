@@ -1,16 +1,20 @@
 # Ingestion and Materialization
 
+**Status:** Partly built. The architecture, the record format, the ingestion
+protocol, and the flusher describe the code. Memtables, point-in-time queries,
+bulk backfill, and synchronous ingestion are future work.
+
 ## Problem
 
 A search engine must ingest real-time document mutations across multiple dataset branches. It must also support bulk backfills and point-in-time recovery. Running external coordination or workflow clusters increases operational cost.
 
 ## Goals
 
-- Single unified write-ahead log for all document mutations across branches.
+- One write-ahead log (WAL) per namespace for all document mutations across its branches.
 - In-memory dispatch of log records to per-branch Memtables.
 - Point-in-time recovery and snapshot queries through manifest sequence anchors.
 - Bulk backfill via direct immutable segment creation with zero external coordination.
-- Periodic flushing of Memtables into immutable CAS segment blobs.
+- Periodic flushing of Memtables into immutable segments.
 
 ## Non-goals
 
@@ -20,49 +24,47 @@ A search engine must ingest real-time document mutations across multiple dataset
 
 ## Architecture
 
+All keys sit under `ns/<namespace>/`.
+
 ```
-Ingestion & Materialization Pipeline
-┌────────────────────────┐ Write(branch, doc)
-│ Ingestion Client       ├─────────────────────────────────────────┐
-└────────────────────────┘                                         ▼
-┌────────────────────────┐ Write(branch, doc) ┌────────────────────────────┐
-│ Bulk Ingest Worker     ├───────────────────►│ Global WAL (logstream.Log) │
-└────────────────────────┘                    │ wal/<020d_seq>.recordio    │
-                                              └─────────────┬──────────────┘
-                                                            │ Read(seq)
-┌───────────────────────────────────────────────────────────▼──────────────┐
-│ Consumer & Branch Router                                                 │
-│ (Tails global WAL, inspects record.Branch, routes to Memtable)           │
-└──────────────┬────────────────────────────────────────────┬──────────────┘
-               │                                            │
-               ▼                                            ▼
-┌────────────────────────────┐               ┌─────────────────────────────┐
-│ Branch "main" Memtable     │               │ Branch "dev" Memtable       │
-│ (Vectors, Postings, Docs)  │               │ (Vectors, Postings, Docs)   │
-└──────────────┬─────────────┘               └──────────────┬──────────────┘
-               │ Flush at size/time threshold               │ Flush at size/time threshold
-               │ (e.g. 64 MB / 1 min)                       │ (e.g. 64 MB / 1 min)
-               ▼                                            ▼
-┌────────────────────────────┐               ┌─────────────────────────────┐
-│ refs/heads/main            │               │ refs/heads/dev              │
-│ (Inlined BranchManifest)   │               │ (Inlined BranchManifest)    │
-└──────────────┬─────────────┘               └──────────────┬──────────────┘
-               │                                            │
-               └─────────────────────┬──────────────────────┘
-                                     ▼
-                      ┌────────────────────────────┐
-                      │ segments/                  │
-                      │ seg_001.{vec,post,doc}     │
-                      └────────────────────────────┘
+┌──────────────────────────┐ Upsert / Delete / Fork (namespace, branch)
+│ grpcapi.IngestServer     ├───────────────┐
+└──────────────────────────┘               ▼
+                             ┌──────────────────────────┐
+                             │ ingest.Ingester          │
+                             └─────────────┬────────────┘
+                                           │ Append
+                                           ▼
+                             ┌──────────────────────────┐
+                             │ wal/<020d_seq>.recordio  │
+                             └─────────────┬────────────┘
+                                           │ Read(seq)
+                                           ▼
+                             ┌──────────────────────────┐
+                             │ ingest.Flusher           │
+                             │ one stream per namespace │
+                             └─────────────┬────────────┘
+                                           │ one segment per WAL entry
+                                           ▼
+                             ┌──────────────────────────┐
+                             │ segments/<020d_seq>      │
+                             │   .recordio              │
+                             └─────────────┬────────────┘
+                                           │ CAS
+                                           ▼
+                             ┌──────────────────────────┐
+                             │ refs/heads/<branch>.json │
+                             │ branches.json            │
+                             └──────────────────────────┘
 ```
 
 ## Record Format
 
-Mutations and branch lifecycle events serialize into RecordIO frames inside the global WAL.
+Mutations and branch lifecycle events serialize into RecordIO frames inside the
+WAL. The messages live in `proto/storage/v1/storage.proto`.
 
 ```proto
-syntax = "proto3";
-package cloudyneigh.ingest;
+package cloudyneigh.storage.v1;
 
 enum MutationOp {
   MUTATION_OP_UNSPECIFIED = 0;
@@ -79,9 +81,9 @@ message DocumentMutation {
 
 message BranchLifecycleEvent {
   enum Type {
-    TYPE_UNSPECIFIED = 0;
+    UNSPECIFIED = 0;
     FORK = 1;
-    DELETE = 2;
+    // DELETE = 2;
   }
   Type type = 1;
   string branch = 2;
@@ -96,27 +98,65 @@ message WalRecord {
 }
 ```
 
+A segment is one recordio file of `DocumentMutation` protos.
+
 ## Ingestion Protocol
 
-1. Client sends a document mutation or branch lifecycle request.
-2. The ingestion node wraps the operation into a `WalRecord`.
-3. The node appends the record to `logstream.Log`.
-4. `logstream.Log` commits the segment file under `wal/<020d_seq>.recordio`.
-5. The node returns sequence number `seq` to the client.
+Upsert and Delete:
+
+1. Client sends a batch of mutations for one namespace and one branch.
+2. On the first write to a namespace, the ingester adds it to `ns.json`.
+3. The ingester wraps each mutation into a `WalRecord`.
+4. The ingester appends the batch to `logstream.Log` as one WAL entry.
+5. `logstream.Log` commits the entry under `ns/<namespace>/wal/<020d_seq>.recordio`.
+6. The node returns success after the WAL write commits.
+
+Fork:
+
+1. The ingester copies the source manifest to `refs/heads/<target>.json` with
+   `Absent: true`.
+2. It adds the target to `branches.json`.
+3. It appends a `FORK` event to the WAL.
+4. If the append fails, it deletes the target manifest and removes the target
+   from `branches.json`.
+
+## Flusher
+
+`ingest.Flusher` reads the active namespaces from `ns.json` at each poll
+interval (default 100 ms). It starts one stream per namespace.
+
+1. A stream reads `branches.json` and the manifest of each branch. It starts at
+   the minimum `checkpoint_seq + 1`.
+2. For each WAL entry at `seq`, it groups the mutations by branch. It skips a
+   mutation when the branch checkpoint is at `seq` or later.
+3. On a `FORK` event, it flushes the pending parent mutations of the entry. It
+   sets the child checkpoint to `seq`.
+4. For each branch, it writes one segment `segments/<020d_seq>.recordio` with
+   `Absent: true`.
+5. It reads the branch manifest, appends the `SegmentRef`, and sets
+   `checkpoint_seq = seq`. It writes the manifest with a generation match and
+   retries on `412`.
+6. It adds the branch to `branches.json`.
+7. On shutdown, it drains the WAL to its end.
+
+Each WAL entry that holds mutations becomes a segment. The flusher has no
+Memtable, and no size or time threshold.
 
 ## Consumer and Memtable Materialization
+
+Future work.
 
 1. The consumer tails `logstream.Log` sequentially starting from `checkpoint_seq + 1`.
 2. For each `WalRecord`:
    - If `branch_event.type == FORK`:
      1. Freeze the parent branch Memtable.
-     2. Flush parent Memtable into columnar segment files.
+     2. Flush parent Memtable into segment files.
      3. Commit updated `BranchManifest` for parent branch (`checkpoint_seq = fork_seq`).
-     4. Write `refs/heads/<child>` with parent `BranchManifest` and precondition `Absent: true`.
+     4. Write `refs/heads/<child>.json` with parent `BranchManifest` and precondition `Absent: true`.
      5. Open new active Memtables for both parent and child branches.
    - If `branch_event.type == DELETE`:
      1. Purge the in-memory Memtable, index structures, and lookup maps for the target branch.
-     2. Delete `refs/heads/<branch>`.
+     2. Delete `refs/heads/<branch>.json`.
    - If `mutation`:
      1. Route the mutation to the target branch active Memtable.
 3. The branch Memtable updates its internal structures:
@@ -128,7 +168,7 @@ message WalRecord {
 
 ## Memtable Flush Protocol
 
-A branch Memtable flushes on two independent triggers:
+Future work. A branch Memtable flushes on two independent triggers:
 - **Size threshold (e.g. 64 MB):** Bounds memory usage under high write throughput.
 - **Time threshold (e.g. 1 minute):** Bounds persistence latency for idle or low-volume branches. A single document flushes even if no further writes arrive.
 
@@ -139,12 +179,13 @@ When either threshold triggers:
    - `segments/<id>.post`
    - `segments/<id>.doc`
 3. Store columnar files in `objectstore.Store`.
-4. Commit updated `BranchManifest` directly to `refs/heads/<branch>` with GCS `if-generation-match`.
+4. Commit updated `BranchManifest` directly to `refs/heads/<branch>.json` with GCS `if-generation-match`.
 5. Discard the frozen Memtable.
 
 ## Point-in-Time Recovery and Queries
 
-Each branch manifest records `checkpoint_seq` and `fork_seq`.
+Future work. Each branch manifest records `checkpoint_seq`. A `fork_seq` field
+does not exist yet.
 
 To query branch `B` at historical sequence `T`:
 1. Load the manifest snapshot on branch `B` with `checkpoint_seq <= T`.
@@ -155,22 +196,22 @@ To query branch `B` at historical sequence `T`:
 
 ## Bulk Backfill Orchestration
 
-Bulk backfills bypass the sequential write-ahead log.
+Future work. Bulk backfills bypass the sequential write-ahead log.
 
 1. **Segment Generation**:
-   Workers read source datasets and write immutable columnar segment files directly to `segments/`.
+   Workers read source datasets and write immutable segment files directly to `segments/`.
 2. **Manifest Commit Batches**:
-   Workers commit segment references in chunks directly to `refs/heads/<branch>`.
+   Workers commit segment references in chunks directly to `refs/heads/<branch>.json`.
    Commits use conditional GCS `if-generation-match` writes.
 3. **Crash Recovery**:
-   If a worker crashes, the replacement worker reads `refs/heads/<branch>`.
+   If a worker crashes, the replacement worker reads `refs/heads/<branch>.json`.
    It resumes backfill from the last committed segment chunk.
 4. **Zero Coordination**:
    The protocol requires no external database or workflow orchestrator.
 
 ## Concurrency and Coordination Model
 
-Document ingestion and materialization split concurrency across two distinct phases:
+Future work. Document ingestion and materialization split concurrency across two distinct phases:
 
 ### In-Memory Mutation Dispatch (Hot Path)
 
@@ -189,24 +230,27 @@ Document ingestion and materialization split concurrency across two distinct pha
   - `segments/<id>.doc`
   - `segments/<id>.post`
   - `segments/<id>.vec`
-- After all uploads succeed, a single atomic commit updates `refs/heads/<branch>`.
+- After all uploads succeed, a single atomic commit updates `refs/heads/<branch>.json`.
 
 ## Appendix: Ingestion Modes (Async vs Sync)
 
-The ingestion pipeline supports two delivery modes:
+The ingestion pipeline supports asynchronous ingestion. Synchronous ingestion
+is future work.
 
 ### 1. Asynchronous Ingestion (Default)
 
 - The write returns immediately after appending to `logstream.Log`.
-- The consumer tails the log and updates the branch Memtable in the background.
-- Read queries observe mutations only after Memtable dispatch.
+- The flusher tails the log and writes segments in the background.
+- Read queries observe mutations after the flush and the next query sync.
 
 ### 2. Synchronous Ingestion (Read-After-Write)
 
-- The write ensures immediate read visibility.
+Future work.
+
+- A read sees the write as soon as the write returns.
 - Writers return once the log write commits. They do not wait for index materialization.
 - The query engine executes across two sources:
-  1. The indexed dataset (active Memtable and columnar segment files).
+  1. The indexed dataset (active Memtable and segment files).
   2. The unindexed pending buffer in `logstream.Log`.
 - The engine unions and deduplicates candidates before ranking.
 - Linear scan over small unindexed buffers keeps write and read latencies balanced.
