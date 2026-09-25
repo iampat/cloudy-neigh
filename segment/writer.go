@@ -10,12 +10,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const KeyPattern = "segments/%s.recordio"
-
-func Key(segID string) string {
-	return fmt.Sprintf(KeyPattern, segID)
-}
-
 var ErrNilMutation = errors.New("segment: nil mutation")
 
 type Writer struct {

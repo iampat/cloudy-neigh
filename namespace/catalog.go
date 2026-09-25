@@ -95,9 +95,7 @@ func CreateNamespace(ctx context.Context, store objectstore.Store, name string, 
 			return nil, generation, ErrNamespaceAlreadyExists
 		}
 
-		catalog.Version++
 		meta := &namespacepb.NamespaceMetadata{
-			Status:    namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE,
 			Epoch:     0,
 			CreatedAt: createdAt,
 		}
@@ -121,7 +119,7 @@ func DeleteNamespace(ctx context.Context, store objectstore.Store, name string, 
 	if err := ValidateName(name); err != nil {
 		return nil, "", err
 	}
-	deletedAt := max(now.Unix(), 0)
+	deletedAt := max(now.Unix(), 1)
 
 	for {
 		catalog, generation, err := ReadTenantCatalog(ctx, store)
@@ -135,12 +133,10 @@ func DeleteNamespace(ctx context.Context, store objectstore.Store, name string, 
 		if !ok {
 			return nil, generation, ErrNamespaceNotFound
 		}
-		if meta.Status == namespacepb.NamespaceStatus_NAMESPACE_STATUS_DELETED {
+		if meta.DeletedAt != 0 {
 			return proto.Clone(meta).(*namespacepb.NamespaceMetadata), generation, nil
 		}
 
-		catalog.Version++
-		meta.Status = namespacepb.NamespaceStatus_NAMESPACE_STATUS_DELETED
 		meta.DeletedAt = deletedAt
 
 		newGen, err := putTenantCatalog(ctx, store, catalog, generation)
@@ -164,7 +160,7 @@ func ActiveNamespaces(ctx context.Context, store objectstore.Store) ([]string, e
 	}
 	var names []string
 	for name, meta := range cat.GetNamespaces() {
-		if meta.GetStatus() != namespacepb.NamespaceStatus_NAMESPACE_STATUS_DELETED {
+		if meta.GetDeletedAt() == 0 {
 			names = append(names, name)
 		}
 	}
@@ -194,7 +190,7 @@ func (c *CatalogCache) LookupNamespace(ctx context.Context, name string) (*names
 	}
 
 	if meta, ok := c.lookupCached(name); ok {
-		if meta.Status != namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE {
+		if meta.DeletedAt != 0 {
 			return nil, ErrNamespaceDeleted
 		}
 		return meta, nil
@@ -208,7 +204,7 @@ func (c *CatalogCache) LookupNamespace(ctx context.Context, name string) (*names
 	if !ok {
 		return nil, ErrNamespaceNotFound
 	}
-	if meta.Status != namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE {
+	if meta.DeletedAt != 0 {
 		return nil, ErrNamespaceDeleted
 	}
 	return proto.Clone(meta).(*namespacepb.NamespaceMetadata), nil

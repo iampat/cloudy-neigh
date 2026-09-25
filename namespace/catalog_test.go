@@ -22,17 +22,14 @@ import (
 
 func TestTenantCatalogJSONRoundTrip(t *testing.T) {
 	catalog := &namespacepb.TenantCatalog{
-		Tenant:  "acme-corp",
-		Version: 4,
+		Tenant: "acme-corp",
 		Namespaces: map[string]*namespacepb.NamespaceMetadata{
 			"analytics": {
-				Status:    namespacepb.NamespaceStatus_NAMESPACE_STATUS_DELETED,
 				Epoch:     1,
 				CreatedAt: 1773000000,
 				DeletedAt: 1773500000,
 			},
 			"catalog": {
-				Status:    namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE,
 				Epoch:     0,
 				CreatedAt: 1774000000,
 			},
@@ -43,7 +40,6 @@ func TestTenantCatalogJSONRoundTrip(t *testing.T) {
 	data, err := opts.Marshal(catalog)
 	require.NoError(t, err)
 
-	assert.Contains(t, string(data), `"status":"NAMESPACE_STATUS_ACTIVE"`)
 	assert.Contains(t, string(data), `"created_at"`)
 	assert.Contains(t, string(data), `"deleted_at"`)
 
@@ -55,11 +51,9 @@ func TestTenantCatalogJSONRoundTrip(t *testing.T) {
 
 func TestTenantCatalogProtoRoundTrip(t *testing.T) {
 	catalog := &namespacepb.TenantCatalog{
-		Tenant:  "acme",
-		Version: 2,
+		Tenant: "acme",
 		Namespaces: map[string]*namespacepb.NamespaceMetadata{
 			"catalog": {
-				Status:    namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE,
 				Epoch:     0,
 				CreatedAt: 1774000000,
 			},
@@ -85,7 +79,7 @@ func TestReadTenantCatalogIfGeneration(t *testing.T) {
 	catalog, gotGen, err := namespace.ReadTenantCatalogIfGeneration(ctx, store, gen)
 	require.NoError(t, err)
 	assert.Equal(t, gen, gotGen)
-	assert.Equal(t, namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE, catalog.Namespaces["catalog"].Status)
+	assert.Contains(t, catalog.Namespaces, "catalog")
 
 	_, _, err = namespace.ReadTenantCatalogIfGeneration(ctx, store, "stale")
 	assert.ErrorIs(t, err, namespace.ErrGenerationMismatch)
@@ -98,14 +92,12 @@ func TestCreateNamespaceRetriesCASConflict(t *testing.T) {
 	store := &injectConflictStore{Store: base}
 	meta, _, err := namespace.CreateNamespace(ctx, store, "catalog", time.Unix(1774000000, 0))
 	require.NoError(t, err)
-	assert.Equal(t, namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE, meta.Status)
-	assert.Equal(t, uint64(0), meta.Epoch)
+	assert.Equal(t, int64(1774000000), meta.CreatedAt)
 
 	catalog, _, err := namespace.ReadTenantCatalog(ctx, base)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(2), catalog.Version)
-	assert.Equal(t, namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE, catalog.Namespaces["catalog"].Status)
-	assert.Equal(t, namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE, catalog.Namespaces["other"].Status)
+	assert.Contains(t, catalog.Namespaces, "catalog")
+	assert.Contains(t, catalog.Namespaces, "other")
 }
 
 func TestDeleteNamespaceCannotBeRecreated(t *testing.T) {
@@ -115,17 +107,16 @@ func TestDeleteNamespaceCannotBeRecreated(t *testing.T) {
 	created, _, err := namespace.CreateNamespace(ctx, store, "analytics", time.Unix(1773000000, 0))
 	require.NoError(t, err)
 	assert.Equal(t, uint64(0), created.Epoch)
-	assert.Equal(t, namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE, created.Status)
+	assert.Zero(t, created.DeletedAt)
 
 	deleted, _, err := namespace.DeleteNamespace(ctx, store, "analytics", time.Unix(1773500000, 0))
 	require.NoError(t, err)
-	assert.Equal(t, namespacepb.NamespaceStatus_NAMESPACE_STATUS_DELETED, deleted.Status)
 	assert.Equal(t, uint64(0), deleted.Epoch)
 	assert.Equal(t, int64(1773500000), deleted.DeletedAt)
 
 	deletedAgain, _, err := namespace.DeleteNamespace(ctx, store, "analytics", time.Unix(1773600000, 0))
 	require.NoError(t, err)
-	assert.Equal(t, namespacepb.NamespaceStatus_NAMESPACE_STATUS_DELETED, deletedAgain.Status)
+	assert.Equal(t, int64(1773500000), deletedAgain.DeletedAt)
 
 	_, _, err = namespace.CreateNamespace(ctx, store, "analytics", time.Unix(1773700000, 0))
 	assert.ErrorIs(t, err, namespace.ErrNamespaceAlreadyExists)
@@ -141,16 +132,14 @@ func TestCatalogCacheLookupAndInvalidate(t *testing.T) {
 	cache, err := namespace.NewCatalogCache(store, time.Hour)
 	require.NoError(t, err)
 
-	meta, err := cache.LookupNamespace(ctx, "catalog")
+	_, err = cache.LookupNamespace(ctx, "catalog")
 	require.NoError(t, err)
-	assert.Equal(t, namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE, meta.Status)
 
 	_, _, err = namespace.DeleteNamespace(ctx, store, "catalog", time.Unix(1774100000, 0))
 	require.NoError(t, err)
 
-	meta, err = cache.LookupNamespace(ctx, "catalog")
+	_, err = cache.LookupNamespace(ctx, "catalog")
 	require.NoError(t, err)
-	assert.Equal(t, namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE, meta.Status)
 
 	cache.Invalidate()
 	_, err = cache.LookupNamespace(ctx, "catalog")
@@ -209,13 +198,8 @@ func TestCatalogCacheConcurrentReads(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for range iterations {
-				meta, err := cache.LookupNamespace(ctx, "ns-0")
-				if err != nil {
+				if _, err := cache.LookupNamespace(ctx, "ns-0"); err != nil {
 					errCh <- err
-					return
-				}
-				if meta.Status != namespacepb.NamespaceStatus_NAMESPACE_STATUS_ACTIVE {
-					errCh <- fmt.Errorf("unexpected status: %v", meta.Status)
 					return
 				}
 			}
@@ -290,7 +274,7 @@ func (s *injectConflictStore) Put(ctx context.Context, key string, r io.Reader, 
 	defer s.mu.Unlock()
 	if !s.injected && key == namespace.CatalogFile && cond.Absent {
 		s.injected = true
-		_, err := s.Store.Put(ctx, key, strings.NewReader(`{"version":1,"namespaces":{"other":{"status":"NAMESPACE_STATUS_ACTIVE","epoch":0,"created_at":1773990000}}}`), objectstore.Condition{Absent: true})
+		_, err := s.Store.Put(ctx, key, strings.NewReader(`{"namespaces":{"other":{"epoch":0,"created_at":1773990000}}}`), objectstore.Condition{Absent: true})
 		if err != nil {
 			return "", err
 		}

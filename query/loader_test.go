@@ -21,6 +21,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+var defaultScope = namespace.Scope{Namespace: namespace.DefaultNamespace}
+
+func newLoader(t *testing.T, store objectstore.Store, table *atomic.Pointer[query.Table], branch string) *query.Loader {
+	t.Helper()
+	loader, err := query.NewLoader(store, table, defaultScope, branch)
+	require.NoError(t, err)
+	return loader
+}
+
 func writeSegment(t *testing.T, store objectstore.Store, branch, segID string, mutations []*storagepb.DocumentMutation) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -29,7 +38,7 @@ func writeSegment(t *testing.T, store objectstore.Store, branch, segID string, m
 		require.NoError(t, w.Write(m))
 	}
 	require.NoError(t, w.Close())
-	segKey := segment.Key(segID)
+	segKey := defaultScope.SegmentKey(segID)
 	_, err := store.Put(context.Background(), segKey, bytes.NewReader(buf.Bytes()), objectstore.Condition{Absent: true})
 	require.NoError(t, err)
 }
@@ -71,14 +80,13 @@ func updateManifest(t *testing.T, store objectstore.Store, branch string, segIDs
 	for _, id := range segIDs {
 		segs = append(segs, &storagepb.SegmentRef{
 			SegmentId: id,
-			Key:       segment.Key(id),
 		})
 	}
 	m := &storagepb.BranchManifest{
 		SchemaVersion: 1,
 		Segments:      segs,
 	}
-	gen, err := manifest.Write(context.Background(), store, branch, m, expectedGen)
+	gen, err := manifest.Write(context.Background(), store, defaultScope.ManifestKey(branch), m, expectedGen)
 	require.NoError(t, err)
 	return gen
 }
@@ -91,8 +99,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-1", []float32{1.0, 2.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")}),
@@ -100,7 +107,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	})
 	gen := updateManifest(t, store, "main", []string{"seg-1"}, "")
 
-	loaded, err := loader.Sync(ctx, "main")
+	loaded, err := loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
@@ -109,7 +116,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.True(t, proto.Equal(stringAttr("doc1"), rec1.Attributes["title"]))
 	require.Equal(t, []float32{1.0, 2.0}, rec1.Vectors["default"].Values)
 
-	loaded, err = loader.Sync(ctx, "main")
+	loaded, err = loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 0, loaded)
 
@@ -120,7 +127,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	})
 	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, gen)
 
-	loaded, err = loader.Sync(ctx, "main")
+	loaded, err = loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
@@ -137,7 +144,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, proto.Equal(stringAttr("doc3"), rec3.Attributes["title"]))
 
-	loaded, err = loader.Sync(ctx, "main")
+	loaded, err = loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 0, loaded)
 }
@@ -150,8 +157,7 @@ func TestLoader_UnknownMutationOp(t *testing.T) {
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-unknown", []*storagepb.DocumentMutation{
 		{
@@ -162,7 +168,7 @@ func TestLoader_UnknownMutationOp(t *testing.T) {
 	})
 	updateManifest(t, store, "main", []string{"seg-unknown"}, "")
 
-	_, err = loader.Sync(ctx, "main")
+	_, err = loader.Sync(ctx)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown mutation op")
 }
@@ -175,10 +181,9 @@ func TestLoader_EmptyBranch(t *testing.T) {
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "nonexistent")
 
-	loaded, err := loader.Sync(ctx, "nonexistent")
+	loaded, err := loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 0, loaded)
 }
@@ -192,13 +197,13 @@ func TestLoader_Validation(t *testing.T) {
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
 
-	_, err = query.NewLoader(nil, &table)
+	_, err = query.NewLoader(nil, &table, defaultScope, "main")
 	require.Error(t, err)
 
-	_, err = query.NewLoader(store, nil)
+	_, err = query.NewLoader(store, nil, defaultScope, "main")
 	require.Error(t, err)
 
-	_, err = query.NewLoader(store, &table)
+	_, err = query.NewLoader(store, &table, defaultScope, "main")
 	require.NoError(t, err)
 }
 
@@ -210,8 +215,7 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-1", []float32{1.0}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v1")}),
@@ -219,7 +223,7 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	})
 	gen := updateManifest(t, store, "main", []string{"seg-1"}, "")
 
-	loaded, err := loader.Sync(ctx, "main")
+	loaded, err := loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
@@ -234,7 +238,7 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	})
 	gen = updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, gen)
 
-	loaded, err = loader.Sync(ctx, "main")
+	loaded, err = loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
@@ -250,7 +254,7 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	})
 	gen = updateManifest(t, store, "main", []string{"seg-1", "seg-2", "seg-3"}, gen)
 
-	loaded, err = loader.Sync(ctx, "main")
+	loaded, err = loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
@@ -265,7 +269,7 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	})
 	updateManifest(t, store, "main", []string{"seg-1", "seg-2", "seg-3", "seg-4"}, gen)
 
-	loaded, err = loader.Sync(ctx, "main")
+	loaded, err = loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
@@ -281,15 +285,14 @@ func TestLoader_VectorDimensionMismatch(t *testing.T) {
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-1", []float32{1.0, 2.0}, nil),
 	})
 	gen := updateManifest(t, store, "main", []string{"seg-1"}, "")
 
-	loaded, err := loader.Sync(ctx, "main")
+	loaded, err := loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
@@ -298,7 +301,7 @@ func TestLoader_VectorDimensionMismatch(t *testing.T) {
 	})
 	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, gen)
 
-	loaded, err = loader.Sync(ctx, "main")
+	loaded, err = loader.Sync(ctx)
 	require.Error(t, err)
 	require.ErrorIs(t, err, query.ErrDimensionMismatch)
 	require.Equal(t, 0, loaded)
@@ -315,23 +318,22 @@ func TestLoader_GenerationSkip(t *testing.T) {
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-1", []float32{1.0}, map[string]*cloudyneighpb.AttributeValue{"k": stringAttr("v1")}),
 	})
 	updateManifest(t, store, "main", []string{"seg-1"}, "")
 
-	loaded, err := loader.Sync(ctx, "main")
+	loaded, err := loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
-	segKey := segment.Key("seg-1")
+	segKey := defaultScope.SegmentKey("seg-1")
 	err = store.Delete(ctx, segKey)
 	require.NoError(t, err)
 
-	loaded, err = loader.Sync(ctx, "main")
+	loaded, err = loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 0, loaded)
 }
@@ -344,13 +346,12 @@ func TestLoader_GenerationAdvancesOnlyOnCleanPass(t *testing.T) {
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-1", []float32{1.0}, nil),
 	})
-	segBadKey := segment.Key("seg-bad")
+	segBadKey := defaultScope.SegmentKey("seg-bad")
 	var buf bytes.Buffer
 	w := segment.NewWriter(&buf)
 	require.NoError(t, w.Write(&storagepb.DocumentMutation{
@@ -365,7 +366,7 @@ func TestLoader_GenerationAdvancesOnlyOnCleanPass(t *testing.T) {
 
 	_ = updateManifest(t, store, "main", []string{"seg-1", "seg-bad"}, "")
 
-	loaded, err := loader.Sync(ctx, "main")
+	loaded, err := loader.Sync(ctx)
 	require.Error(t, err)
 	require.Equal(t, 1, loaded)
 
@@ -375,7 +376,7 @@ func TestLoader_GenerationAdvancesOnlyOnCleanPass(t *testing.T) {
 		putMutation(t, "main", "doc-bad", []float32{2.0}, nil),
 	})
 
-	loaded, err = loader.Sync(ctx, "main")
+	loaded, err = loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
@@ -392,8 +393,7 @@ func TestLoader_ReplayOrder(t *testing.T) {
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-1", []float32{1.0}, map[string]*cloudyneighpb.AttributeValue{"val": stringAttr("first")}),
@@ -405,7 +405,7 @@ func TestLoader_ReplayOrder(t *testing.T) {
 	})
 	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, "")
 
-	loaded, err := loader.Sync(ctx, "main")
+	loaded, err := loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, loaded)
 
@@ -426,8 +426,7 @@ func TestLoader_ConcurrentSync(t *testing.T) {
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "main")
 
 	var segIDs []string
 	for i := 1; i <= 6; i++ {
@@ -443,7 +442,7 @@ func TestLoader_ConcurrentSync(t *testing.T) {
 	errCh := make(chan error, goroutines)
 	for g := 0; g < goroutines; g++ {
 		go func() {
-			_, err := loader.Sync(ctx, "main")
+			_, err := loader.Sync(ctx)
 			errCh <- err
 		}()
 	}
@@ -467,8 +466,7 @@ func TestLoader_SnapshotIsolationAcrossSync(t *testing.T) {
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-1", []float32{1.0, 2.0}, map[string]*cloudyneighpb.AttributeValue{"v": stringAttr("initial")}),
@@ -476,7 +474,7 @@ func TestLoader_SnapshotIsolationAcrossSync(t *testing.T) {
 	})
 	gen := updateManifest(t, store, "main", []string{"seg-1"}, "")
 
-	loaded, err := loader.Sync(ctx, "main")
+	loaded, err := loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, loaded)
 
@@ -519,7 +517,7 @@ func TestLoader_SnapshotIsolationAcrossSync(t *testing.T) {
 	}
 
 	go func() {
-		_, err := loader.Sync(ctx, "main")
+		_, err := loader.Sync(ctx)
 		errCh <- err
 	}()
 
@@ -575,7 +573,7 @@ func appendWALRecord(t *testing.T, ctx context.Context, log *logstream.Log, bran
 	require.NoError(t, err)
 }
 
-func flushBranch(t *testing.T, ctx context.Context, store objectstore.Store, branch string, expectedSegCount int) {
+func flushBranch(t *testing.T, ctx context.Context, store objectstore.Store, manifestKey string, expectedSegCount int) {
 	t.Helper()
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
 		PollInterval: 10 * time.Millisecond,
@@ -590,16 +588,17 @@ func flushBranch(t *testing.T, ctx context.Context, store objectstore.Store, bra
 	}()
 
 	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
 	timeout := time.After(5 * time.Second)
 
 	for {
 		select {
 		case <-ctx.Done():
-			t.Fatalf("context canceled waiting for branch %s: %v", branch, ctx.Err())
+			t.Fatalf("context canceled waiting for manifest %s: %v", manifestKey, ctx.Err())
 		case <-timeout:
-			t.Fatalf("timed out waiting for branch %s manifest", branch)
+			t.Fatalf("timed out waiting for manifest %s", manifestKey)
 		case <-ticker.C:
-			m, _, err := manifest.Read(ctx, store, branch)
+			m, _, err := manifest.Read(ctx, store, manifestKey)
 			if err == nil && len(m.Segments) >= expectedSegCount {
 				cancel()
 				require.NoError(t, <-errCh)
@@ -615,28 +614,27 @@ func TestLoader_ForkBranch_Inheritance(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	mainBranch := namespace.BranchRef(namespace.DefaultNamespace, "main")
-	stagingBranch := namespace.BranchRef(namespace.DefaultNamespace, "staging")
+	mainKey := defaultScope.ManifestKey("main")
+	stagingKey := defaultScope.ManifestKey("staging")
 
 	log, err := logstream.New(store, namespace.Scope{Namespace: namespace.DefaultNamespace}.WALPrefix())
 	require.NoError(t, err)
 
-	appendWALRecord(t, ctx, log, mainBranch, "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
-	appendWALRecord(t, ctx, log, mainBranch, "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
+	appendWALRecord(t, ctx, log, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
+	appendWALRecord(t, ctx, log, "main", "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
 
-	flushBranch(t, ctx, store, mainBranch, 2)
+	flushBranch(t, ctx, store, mainKey, 2)
 
-	parentM, _, err := manifest.Read(ctx, store, mainBranch)
+	parentM, _, err := manifest.Read(ctx, store, mainKey)
 	require.NoError(t, err)
-	_, err = manifest.Write(ctx, store, stagingBranch, parentM, "")
+	_, err = manifest.Write(ctx, store, stagingKey, parentM, "")
 	require.NoError(t, err)
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "staging")
 
-	loaded, err := loader.Sync(ctx, stagingBranch)
+	loaded, err := loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, loaded)
 
@@ -664,26 +662,25 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 	log, err := logstream.New(store, namespace.Scope{Namespace: namespace.DefaultNamespace}.WALPrefix())
 	require.NoError(t, err)
 
-	mainBranch := namespace.BranchRef(namespace.DefaultNamespace, "main")
-	stagingBranch := namespace.BranchRef(namespace.DefaultNamespace, "staging")
+	mainKey := defaultScope.ManifestKey("main")
+	stagingKey := defaultScope.ManifestKey("staging")
 
-	appendWALRecord(t, ctx, log, mainBranch, "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
-	flushBranch(t, ctx, store, mainBranch, 1)
+	appendWALRecord(t, ctx, log, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")})
+	flushBranch(t, ctx, store, mainKey, 1)
 
-	parentM, _, err := manifest.Read(ctx, store, mainBranch)
+	parentM, _, err := manifest.Read(ctx, store, mainKey)
 	require.NoError(t, err)
-	_, err = manifest.Write(ctx, store, stagingBranch, parentM, "")
+	_, err = manifest.Write(ctx, store, stagingKey, parentM, "")
 	require.NoError(t, err)
 
-	appendWALRecord(t, ctx, log, stagingBranch, "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
-	flushBranch(t, ctx, store, stagingBranch, 2)
+	appendWALRecord(t, ctx, log, "staging", "doc-2", []float32{0.0, 1.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc2")})
+	flushBranch(t, ctx, store, stagingKey, 2)
 
 	var stagingTable atomic.Pointer[query.Table]
 	stagingTable.Store(query.NewTable())
-	stagingLoader, err := query.NewLoader(store, &stagingTable)
-	require.NoError(t, err)
+	stagingLoader := newLoader(t, store, &stagingTable, "staging")
 
-	loaded, err := stagingLoader.Sync(ctx, stagingBranch)
+	loaded, err := stagingLoader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, loaded)
 
@@ -695,10 +692,9 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 
 	var mainTable atomic.Pointer[query.Table]
 	mainTable.Store(query.NewTable())
-	mainLoader, err := query.NewLoader(store, &mainTable)
-	require.NoError(t, err)
+	mainLoader := newLoader(t, store, &mainTable, "main")
 
-	loadedMain, err := mainLoader.Sync(ctx, mainBranch)
+	loadedMain, err := mainLoader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, loadedMain)
 
@@ -709,35 +705,20 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 	require.False(t, okMain2)
 }
 
-func TestLoader_ManifestMissingKeyError(t *testing.T) {
+func TestLoader_MissingSegmentObject(t *testing.T) {
 	ctx := context.Background()
 	store, err := objectstore.Open(ctx, "mem://")
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	writeSegment(t, store, "main", "seg-legacy", []*storagepb.DocumentMutation{
-		putMutation(t, "main", "doc-legacy", []float32{1.0, 2.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("legacy")}),
-	})
-
-	m := &storagepb.BranchManifest{
-		SchemaVersion: 1,
-		Segments: []*storagepb.SegmentRef{
-			{
-				SegmentId: "seg-legacy",
-				Key:       "",
-			},
-		},
-	}
-	_, err = manifest.Write(ctx, store, "main", m, "")
-	require.NoError(t, err)
+	updateManifest(t, store, "main", []string{"seg-missing"}, "")
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "main")
 
-	_, err = loader.Sync(ctx, "main")
-	require.Error(t, err)
+	_, err = loader.Sync(ctx)
+	require.ErrorIs(t, err, objectstore.ErrNotFound)
 }
 
 func TestLoader_BatchSegmentLoading(t *testing.T) {
@@ -748,8 +729,7 @@ func TestLoader_BatchSegmentLoading(t *testing.T) {
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable())
-	loader, err := query.NewLoader(store, &table)
-	require.NoError(t, err)
+	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
 		putMutation(t, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("doc1")}),
@@ -766,7 +746,7 @@ func TestLoader_BatchSegmentLoading(t *testing.T) {
 
 	updateManifest(t, store, "main", []string{"seg-1", "seg-2", "seg-3"}, "")
 
-	loaded, err := loader.Sync(ctx, "main")
+	loaded, err := loader.Sync(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 3, loaded)
 

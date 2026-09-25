@@ -50,7 +50,7 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 		return nil, status.Errorf(codes.NotFound, "grpcapi: unknown tenant %q", tenant)
 	}
 
-	targetBranch, err := resolveBranch(req.Namespace, req.Branch)
+	branch, err := resolveBranch(req.Branch)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,8 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 	valDur := time.Since(valStart)
 	searchStart := time.Now()
 	hits, stats, err := eng.Query(ctx, query.Request{
-		Namespace:    targetBranch,
+		Namespace:    req.Namespace,
+		Branch:       branch,
 		VectorColumn: req.VectorColumn,
 		Vector:       req.Vector,
 		TopK:         int(req.TopK),
@@ -85,6 +86,7 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 	totalDur := time.Since(valStart)
 	slog.Debug("query",
 		"namespace", req.Namespace,
+		"branch", branch,
 		"validate_dur", valDur,
 		"search_dur", searchDur,
 		"scan_dur", stats.ScanDuration,

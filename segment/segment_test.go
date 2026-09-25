@@ -290,11 +290,3 @@ func TestNilMutation(t *testing.T) {
 		t.Fatalf("expected ErrNilMutation, got %v", err)
 	}
 }
-
-func TestKey(t *testing.T) {
-	got := segment.Key("seg-1")
-	want := "segments/seg-1.recordio"
-	if got != want {
-		t.Fatalf("segment.Key() = %q, want %q", got, want)
-	}
-}

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/ingest"
+	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -34,16 +35,17 @@ func TestIngester_Upsert(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	branch := testBranch("main")
+	ns := namespace.DefaultNamespace
+	branch := "main"
 	records := []*cloudyneighpb.Record{
 		{Id: "doc-1"},
 		{Id: "doc-2"},
 		{Id: "doc-3"},
 	}
 
-	require.NoError(t, ing.Upsert(ctx, branch, records))
+	require.NoError(t, ing.Upsert(ctx, ns, branch, records))
 
-	log, err := ing.Log(branch)
+	log, err := logstream.New(store, namespace.Scope{Namespace: ns}.WALPrefix())
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -64,7 +66,7 @@ func TestIngester_Upsert(t *testing.T) {
 		assert.Equal(t, records[i].Id, mut.DocId)
 	}
 
-	require.NoError(t, ing.Upsert(ctx, branch, nil))
+	require.NoError(t, ing.Upsert(ctx, ns, branch, nil))
 }
 
 func TestIngester_Delete(t *testing.T) {
@@ -76,11 +78,12 @@ func TestIngester_Delete(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	branch := testBranch("main")
+	ns := namespace.DefaultNamespace
+	branch := "main"
 	ids := []string{"doc-1", "doc-2"}
-	require.NoError(t, ing.Delete(ctx, branch, ids))
+	require.NoError(t, ing.Delete(ctx, ns, branch, ids))
 
-	log, err := ing.Log(branch)
+	log, err := logstream.New(store, namespace.Scope{Namespace: ns}.WALPrefix())
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -101,7 +104,7 @@ func TestIngester_Delete(t *testing.T) {
 		assert.Equal(t, ids[i], mut.DocId)
 	}
 
-	require.NoError(t, ing.Delete(ctx, branch, nil))
+	require.NoError(t, ing.Delete(ctx, ns, branch, nil))
 }
 
 func TestIngester_Fork(t *testing.T) {
@@ -113,16 +116,17 @@ func TestIngester_Fork(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	parent := testBranch("parent")
-	child := testBranch("child")
-	assert.Error(t, ing.Fork(ctx, parent, child))
+	ns := namespace.DefaultNamespace
+	parent := "parent"
+	child := "child"
+	assert.Error(t, ing.Fork(ctx, ns, parent, child))
 
-	_, err = manifest.Write(ctx, store, parent, &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, store, defaultKey(parent), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
-	require.NoError(t, ing.Fork(ctx, parent, child))
-	assert.Error(t, ing.Fork(ctx, parent, child))
+	require.NoError(t, ing.Fork(ctx, ns, parent, child))
+	assert.Error(t, ing.Fork(ctx, ns, parent, child))
 
-	log, err := ing.Log(child)
+	log, err := logstream.New(store, namespace.Scope{Namespace: ns}.WALPrefix())
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -151,22 +155,14 @@ func TestIngester_MultiNamespaceRouting(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	branchA := namespace.BranchRef("ns-1", "main")
-	branchB := namespace.BranchRef("ns-2", "main")
+	require.NoError(t, ing.Upsert(ctx, "ns-1", "main", []*cloudyneighpb.Record{{Id: "a-1"}}))
+	require.NoError(t, ing.Upsert(ctx, "ns-2", "main", []*cloudyneighpb.Record{{Id: "b-1"}, {Id: "b-2"}}))
 
-	scopeA := namespace.Scope{Namespace: "ns-1"}
-	scopeB := namespace.Scope{Namespace: "ns-2"}
-
-	require.NoError(t, ing.Upsert(ctx, branchA, []*cloudyneighpb.Record{{Id: "a-1"}}))
-	require.NoError(t, ing.Upsert(ctx, branchB, []*cloudyneighpb.Record{{Id: "b-1"}, {Id: "b-2"}}))
-
-	logA, err := ing.Log(branchA)
+	logA, err := logstream.New(store, namespace.Scope{Namespace: "ns-1"}.WALPrefix())
 	require.NoError(t, err)
-	assert.Equal(t, "ns/ns-1/wal", scopeA.WALPrefix())
 
-	logB, err := ing.Log(branchB)
+	logB, err := logstream.New(store, namespace.Scope{Namespace: "ns-2"}.WALPrefix())
 	require.NoError(t, err)
-	assert.Equal(t, "ns/ns-2/wal", scopeB.WALPrefix())
 
 	recsA, err := logA.Read(ctx, 1)
 	require.NoError(t, err)
@@ -194,25 +190,22 @@ func TestIngester_ConcurrentMultiNamespace(t *testing.T) {
 	wg.Add(numNamespaces)
 	for i := 0; i < numNamespaces; i++ {
 		ns := fmt.Sprintf("ns-%d", i)
-		branch := namespace.BranchRef(ns, "main")
-		go func(br string) {
+		go func() {
 			defer wg.Done()
 			for j := 0; j < writesPerNamespace; j++ {
-				err := ing.Upsert(ctx, br, []*cloudyneighpb.Record{
+				err := ing.Upsert(ctx, ns, "main", []*cloudyneighpb.Record{
 					{Id: fmt.Sprintf("doc-%d", j)},
 				})
 				if err != nil {
-					t.Errorf("upsert failed for branch %s: %v", br, err)
+					t.Errorf("upsert failed for namespace %s: %v", ns, err)
 				}
 			}
-		}(branch)
+		}()
 	}
 	wg.Wait()
 
 	for i := 0; i < numNamespaces; i++ {
-		ns := fmt.Sprintf("ns-%d", i)
-		branch := namespace.BranchRef(ns, "main")
-		log, err := ing.Log(branch)
+		log, err := logstream.New(store, namespace.Scope{Namespace: fmt.Sprintf("ns-%d", i)}.WALPrefix())
 		require.NoError(t, err)
 
 		tail, err := log.Tail(ctx)
@@ -247,15 +240,16 @@ func TestIngester_Fork_AppendFailureRollback(t *testing.T) {
 	ing, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
-	parent := testBranch("parent")
-	child := testBranch("child")
+	ns := namespace.DefaultNamespace
+	parent := "parent"
+	child := "child"
 
-	_, err = manifest.Write(ctx, store, parent, &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, store, defaultKey(parent), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
-	err = ing.Fork(ctx, parent, child)
+	err = ing.Fork(ctx, ns, parent, child)
 	require.Error(t, err)
 
-	_, _, err = manifest.Read(ctx, store, child)
+	_, _, err = manifest.Read(ctx, store, defaultKey(child))
 	require.ErrorIs(t, err, objectstore.ErrNotFound)
 }

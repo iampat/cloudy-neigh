@@ -11,8 +11,8 @@ const (
 	DefaultNamespace = "default"
 	DefaultBranch    = "main"
 	CatalogFile      = "ns.json"
-	NamespaceDir     = "ns"
-	RefHead          = "refs/head"
+	namespaceDir     = "ns"
+	refHeads         = "refs/heads"
 )
 
 var ErrInvalidName = errors.New("namespace: invalid name")
@@ -40,14 +40,6 @@ func ValidateName(name string) error {
 	return nil
 }
 
-func BranchRef(ns, branch string) string {
-	return path.Join(NamespaceDir, ns, RefHead, branch)
-}
-
-func SegmentKey(ns, segID string) string {
-	return path.Join(NamespaceDir, ns, "segments", segID+".recordio")
-}
-
 type Scope struct {
 	Namespace string
 }
@@ -57,7 +49,7 @@ func (s Scope) Validate() error {
 }
 
 func (s Scope) Prefix() string {
-	return path.Join(NamespaceDir, s.Namespace)
+	return path.Join(namespaceDir, s.Namespace)
 }
 
 func (s Scope) Path(subpath string) string {
@@ -68,8 +60,8 @@ func (s Scope) WALPrefix() string {
 	return s.Path("wal")
 }
 
-func (s Scope) BranchRef(branch string) string {
-	return s.Path(path.Join(RefHead, branch))
+func (s Scope) ManifestKey(branch string) string {
+	return s.Path(path.Join(refHeads, branch+".json"))
 }
 
 func (s Scope) SegmentsPrefix() string {
@@ -80,10 +72,6 @@ func (s Scope) SegmentKey(segID string) string {
 	return s.Path(path.Join("segments", segID+".recordio"))
 }
 
-func (s Scope) BranchesPath() string {
+func (s Scope) branchesKey() string {
 	return s.Path("branches.json")
-}
-
-func BranchesPath(ns string) string {
-	return path.Join(NamespaceDir, ns, "branches.json")
 }

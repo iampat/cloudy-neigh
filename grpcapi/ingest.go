@@ -17,9 +17,9 @@ import (
 var ErrNilIngester = errors.New("grpcapi: nil ingesters")
 
 type Ingester interface {
-	Upsert(ctx context.Context, branch string, records []*cloudyneighpb.Record) error
-	Delete(ctx context.Context, branch string, ids []string) error
-	Fork(ctx context.Context, source, target string) error
+	Upsert(ctx context.Context, ns, branch string, records []*cloudyneighpb.Record) error
+	Delete(ctx context.Context, ns, branch string, ids []string) error
+	Fork(ctx context.Context, ns, source, target string) error
 }
 
 type IngestServer struct {
@@ -45,7 +45,7 @@ func resolveNamespace(raw string) (string, error) {
 	return ns, nil
 }
 
-func resolveBranch(ns, rawBranch string) (string, error) {
+func resolveBranch(rawBranch string) (string, error) {
 	branch := namespace.DefaultBranch
 	if rawBranch != "" {
 		branch = rawBranch
@@ -53,7 +53,7 @@ func resolveBranch(ns, rawBranch string) (string, error) {
 	if err := namespace.ValidateName(branch); err != nil {
 		return "", status.Errorf(codes.InvalidArgument, "grpcapi: invalid branch: %v", err)
 	}
-	return namespace.BranchRef(ns, branch), nil
+	return branch, nil
 }
 
 func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequest) (*cloudyneighpb.UpsertResponse, error) {
@@ -72,7 +72,7 @@ func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequ
 	if err != nil {
 		return nil, err
 	}
-	targetBranch, err := resolveBranch(ns, req.Branch)
+	branch, err := resolveBranch(req.Branch)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequ
 		}
 	}
 
-	if err := ing.Upsert(ctx, targetBranch, req.Records); err != nil {
+	if err := ing.Upsert(ctx, ns, branch, req.Records); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, status.Error(codes.Canceled, err.Error())
 		}
@@ -102,7 +102,7 @@ func (s *IngestServer) Upsert(ctx context.Context, req *cloudyneighpb.UpsertRequ
 
 	slog.Debug("upsert",
 		"namespace", ns,
-		"branch", req.Branch,
+		"branch", branch,
 		"records", len(req.Records),
 		"total_dur", time.Since(start),
 	)
@@ -127,7 +127,7 @@ func (s *IngestServer) Delete(ctx context.Context, req *cloudyneighpb.DeleteRequ
 	if err != nil {
 		return nil, err
 	}
-	targetBranch, err := resolveBranch(ns, req.Branch)
+	branch, err := resolveBranch(req.Branch)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func (s *IngestServer) Delete(ctx context.Context, req *cloudyneighpb.DeleteRequ
 		}
 	}
 
-	if err := ing.Delete(ctx, targetBranch, req.Ids); err != nil {
+	if err := ing.Delete(ctx, ns, branch, req.Ids); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, status.Error(codes.Canceled, err.Error())
 		}
@@ -175,27 +175,18 @@ func (s *IngestServer) Fork(ctx context.Context, req *cloudyneighpb.ForkRequest)
 	if req.TargetBranch == "" {
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: target branch cannot be empty")
 	}
-	srcBranch := namespace.DefaultBranch
-	if req.SourceBranch != "" {
-		srcBranch = req.SourceBranch
-	}
 	if err := namespace.ValidateName(req.TargetBranch); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "grpcapi: invalid target branch: %v", err)
+	}
+	srcBranch, err := resolveBranch(req.SourceBranch)
+	if err != nil {
+		return nil, err
 	}
 	if srcBranch == req.TargetBranch {
 		return nil, status.Error(codes.InvalidArgument, "grpcapi: source and target branch cannot be identical")
 	}
 
-	src, err := resolveBranch(ns, srcBranch)
-	if err != nil {
-		return nil, err
-	}
-	target, err := resolveBranch(ns, req.TargetBranch)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := ing.Fork(ctx, src, target); err != nil {
+	if err := ing.Fork(ctx, ns, srcBranch, req.TargetBranch); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, status.Error(codes.Canceled, err.Error())
 		}

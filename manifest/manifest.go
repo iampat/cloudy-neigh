@@ -9,12 +9,14 @@ import (
 
 	"github.com/iampat/cloudy-neigh/objectstore"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
-	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 var (
 	ErrBranchAlreadyExists = errors.New("manifest: branch already exists")
 	ErrNilManifest         = errors.New("manifest: nil manifest")
+
+	marshalOpts = protojson.MarshalOptions{UseProtoNames: true}
 )
 
 func Read(ctx context.Context, store objectstore.Store, key string) (*storagepb.BranchManifest, string, error) {
@@ -30,7 +32,7 @@ func Read(ctx context.Context, store objectstore.Store, key string) (*storagepb.
 	}
 
 	var m storagepb.BranchManifest
-	if err := proto.Unmarshal(data, &m); err != nil {
+	if err := protojson.Unmarshal(data, &m); err != nil {
 		return nil, "", fmt.Errorf("manifest: corrupt manifest %s: %w", key, err)
 	}
 	return &m, obj.Generation, nil
@@ -41,7 +43,7 @@ func Write(ctx context.Context, store objectstore.Store, key string, m *storagep
 		return "", ErrNilManifest
 	}
 
-	data, err := proto.Marshal(m)
+	data, err := marshalOpts.Marshal(m)
 	if err != nil {
 		return "", fmt.Errorf("manifest: marshal manifest %s: %w", key, err)
 	}

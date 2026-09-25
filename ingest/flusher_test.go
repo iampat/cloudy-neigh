@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -20,11 +20,12 @@ import (
 	"github.com/iampat/cloudy-neigh/segment"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
-func testBranch(name string) string {
-	return namespace.BranchRef(namespace.DefaultNamespace, name)
+func defaultKey(branch string) string {
+	return namespace.Scope{Namespace: namespace.DefaultNamespace}.ManifestKey(branch)
 }
 
 const defaultWAL = "ns/default/wal"
@@ -105,7 +106,7 @@ func TestBatchFlush(t *testing.T) {
 	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
-	br := testBranch("main")
+	br := "main"
 	var records []logstream.Record
 	for i := 1; i <= 3; i++ {
 		walRec := &storagepb.WalRecord{
@@ -136,15 +137,13 @@ func TestBatchFlush(t *testing.T) {
 		flusherErrCh <- flusher.Run(ctx)
 	}()
 
-	manifest := waitForManifest(t, ctx, store, br, func(m *storagepb.BranchManifest) bool {
+	manifest := waitForManifest(t, ctx, store, defaultKey(br), func(m *storagepb.BranchManifest) bool {
 		return len(m.Segments) == 1 && m.CheckpointSeq == 1
 	})
 	require.NotNil(t, manifest)
 	assert.Equal(t, uint64(1), manifest.CheckpointSeq)
 	require.Len(t, manifest.Segments, 1)
 	assert.Equal(t, uint64(3), manifest.Segments[0].DocCount)
-	scope := namespace.Scope{Namespace: namespace.DefaultNamespace}
-	assert.Equal(t, scope.SegmentKey(manifest.Segments[0].SegmentId), manifest.Segments[0].Key)
 
 	mutations := readSegmentMutations(t, ctx, store, br, manifest.Segments[0].SegmentId)
 	require.Len(t, mutations, 3)
@@ -158,7 +157,7 @@ func TestBatchFlush(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestMultiBranchBatchFlush(t *testing.T) {
+func TestMultiBranchFlush(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -169,28 +168,9 @@ func TestMultiBranchBatchFlush(t *testing.T) {
 	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
-	mainBr := testBranch("main")
-	devBr := testBranch("dev")
-	var records []logstream.Record
-	branches := []string{mainBr, devBr, mainBr}
-	for i, br := range branches {
-		walRec := &storagepb.WalRecord{
-			Record: &storagepb.WalRecord_Mutation{
-				Mutation: &storagepb.DocumentMutation{
-					Branch:  br,
-					DocId:   fmt.Sprintf("%s-doc-%d", br, i),
-					Op:      storagepb.MutationOp_PUT,
-					Payload: []byte(fmt.Sprintf("val-%d", i)),
-				},
-			},
-		}
-		data, err := proto.Marshal(walRec)
-		require.NoError(t, err)
-		records = append(records, data)
-	}
-	seq, err := log.Append(ctx, records)
-	require.NoError(t, err)
-	require.Equal(t, uint64(1), seq)
+	appendDoc(t, ctx, log, "main", "doc-1", []byte("val-1"))
+	appendDoc(t, ctx, log, "dev", "doc-2", []byte("val-2"))
+	appendDoc(t, ctx, log, "main", "doc-3", []byte("val-3"))
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
 		PollInterval: 10 * time.Millisecond,
@@ -202,21 +182,65 @@ func TestMultiBranchBatchFlush(t *testing.T) {
 		flusherErrCh <- flusher.Run(ctx)
 	}()
 
-	mainManifest := waitForManifest(t, ctx, store, mainBr, func(m *storagepb.BranchManifest) bool {
-		return len(m.Segments) == 1 && m.CheckpointSeq == 1
+	mainManifest := waitForManifest(t, ctx, store, defaultKey("main"), func(m *storagepb.BranchManifest) bool {
+		return len(m.Segments) == 2 && m.CheckpointSeq == 3
 	})
-	require.NotNil(t, mainManifest)
-	assert.Equal(t, uint64(2), mainManifest.Segments[0].DocCount)
+	assert.Equal(t, "00000000000000000001", mainManifest.Segments[0].SegmentId)
+	assert.Equal(t, "00000000000000000003", mainManifest.Segments[1].SegmentId)
+	exists, err := store.Exists(ctx, namespace.Scope{Namespace: namespace.DefaultNamespace}.SegmentKey(mainManifest.Segments[1].SegmentId))
+	require.NoError(t, err)
+	assert.True(t, exists)
 
-	devManifest := waitForManifest(t, ctx, store, devBr, func(m *storagepb.BranchManifest) bool {
-		return len(m.Segments) == 1 && m.CheckpointSeq == 1
+	devManifest := waitForManifest(t, ctx, store, defaultKey("dev"), func(m *storagepb.BranchManifest) bool {
+		return len(m.Segments) == 1 && m.CheckpointSeq == 2
 	})
-	require.NotNil(t, devManifest)
-	assert.Equal(t, uint64(1), devManifest.Segments[0].DocCount)
+	assert.Equal(t, "00000000000000000002", devManifest.Segments[0].SegmentId)
 
 	cancel()
 	err = <-flusherErrCh
 	require.NoError(t, err)
+}
+
+func TestFlusher_RejectsEntryWithTwoBranches(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	log, err := logstream.New(store, defaultWAL)
+	require.NoError(t, err)
+
+	var records []logstream.Record
+	for _, branch := range []string{"main", "dev"} {
+		data, err := proto.Marshal(&storagepb.WalRecord{
+			Record: &storagepb.WalRecord_Mutation{
+				Mutation: &storagepb.DocumentMutation{Branch: branch, DocId: "doc-" + branch, Op: storagepb.MutationOp_PUT},
+			},
+		})
+		require.NoError(t, err)
+		records = append(records, data)
+	}
+	_, err = log.Append(ctx, records)
+	require.NoError(t, err)
+
+	flusher, err := ingest.NewFlusher(store, ingest.Config{PollInterval: 10 * time.Millisecond})
+	require.NoError(t, err)
+
+	flusherErrCh := make(chan error, 1)
+	go func() {
+		flusherErrCh <- flusher.Run(ctx)
+	}()
+	cancel()
+
+	err = <-flusherErrCh
+	require.ErrorContains(t, err, `wal entry 1 holds mutations for branches "main" and "dev"`)
+	for _, branch := range []string{"main", "dev"} {
+		exists, err := store.Exists(context.Background(), defaultKey(branch))
+		require.NoError(t, err)
+		assert.False(t, exists, branch)
+	}
 }
 
 func TestRestartResume(t *testing.T) {
@@ -229,7 +253,7 @@ func TestRestartResume(t *testing.T) {
 	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
-	mainBr := testBranch("main")
+	mainBr := "main"
 	for i := 1; i <= 2; i++ {
 		appendDoc(t, ctx, log, mainBr, fmt.Sprintf("doc-%d", i), []byte(fmt.Sprintf("val-%d", i)))
 	}
@@ -245,7 +269,7 @@ func TestRestartResume(t *testing.T) {
 		flusher1ErrCh <- flusher1.Run(flusher1Ctx)
 	}()
 
-	manifest1 := waitForManifest(t, ctx, store, mainBr, func(m *storagepb.BranchManifest) bool {
+	manifest1 := waitForManifest(t, ctx, store, defaultKey(mainBr), func(m *storagepb.BranchManifest) bool {
 		return len(m.Segments) == 2 && m.CheckpointSeq == 2
 	})
 	require.NotNil(t, manifest1)
@@ -266,7 +290,7 @@ func TestRestartResume(t *testing.T) {
 		flusher2ErrCh <- flusher2.Run(flusher2Ctx)
 	}()
 
-	manifest2 := waitForManifest(t, ctx, store, mainBr, func(m *storagepb.BranchManifest) bool {
+	manifest2 := waitForManifest(t, ctx, store, defaultKey(mainBr), func(m *storagepb.BranchManifest) bool {
 		return len(m.Segments) == 3 && m.CheckpointSeq == 3
 	})
 	require.NotNil(t, manifest2)
@@ -300,7 +324,7 @@ func (s *casConflictStore) Put(ctx context.Context, key string, r io.Reader, con
 				},
 			},
 		}
-		data, err := proto.Marshal(concurrentManifest)
+		data, err := protojson.Marshal(concurrentManifest)
 		if err != nil {
 			return "", err
 		}
@@ -321,10 +345,10 @@ func TestCASRetryPreconditionFailed(t *testing.T) {
 	require.NoError(t, err)
 	defer memStore.Close()
 
-	br := testBranch("main")
+	br := "main"
 	store := &casConflictStore{
 		Store:      memStore,
-		conflictOn: br,
+		conflictOn: defaultKey(br),
 	}
 
 	log, err := logstream.New(store, defaultWAL)
@@ -342,7 +366,7 @@ func TestCASRetryPreconditionFailed(t *testing.T) {
 		flusherErrCh <- flusher.Run(ctx)
 	}()
 
-	manifest := waitForManifest(t, ctx, store, br, func(m *storagepb.BranchManifest) bool {
+	manifest := waitForManifest(t, ctx, store, defaultKey(br), func(m *storagepb.BranchManifest) bool {
 		return len(m.Segments) == 2 && m.CheckpointSeq == 1
 	})
 	require.NotNil(t, manifest)
@@ -366,7 +390,7 @@ func TestGracefulShutdownFlush(t *testing.T) {
 	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
-	br := testBranch("main")
+	br := "main"
 	appendDoc(t, ctx, log, br, "doc-1", []byte("val-1"))
 	appendDoc(t, ctx, log, br, "doc-2", []byte("val-2"))
 
@@ -386,7 +410,7 @@ func TestGracefulShutdownFlush(t *testing.T) {
 	require.NoError(t, err)
 
 	drainCtx := context.Background()
-	m, _, err := manifest.Read(drainCtx, store, br)
+	m, _, err := manifest.Read(drainCtx, store, defaultKey(br))
 	require.NoError(t, err)
 	assert.Equal(t, uint64(2), m.CheckpointSeq)
 	require.Len(t, m.Segments, 2)
@@ -403,15 +427,16 @@ func TestForkEvent(t *testing.T) {
 	b, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
-	parentBr := testBranch("parent")
-	childBr := testBranch("child")
+	parentBr := "parent"
+	childBr := "child"
 
-	_, err = manifest.Write(ctx, store, parentBr, &storagepb.BranchManifest{CheckpointSeq: 0}, "")
+	_, err = manifest.Write(ctx, store, defaultKey(parentBr), &storagepb.BranchManifest{CheckpointSeq: 0}, "")
 	require.NoError(t, err)
 
-	require.NoError(t, b.Upsert(ctx, parentBr, []*cloudyneighpb.Record{{Id: "p-doc-1"}}))
-	require.NoError(t, b.Fork(ctx, parentBr, childBr))
-	require.NoError(t, b.Upsert(ctx, childBr, []*cloudyneighpb.Record{{Id: "c-doc-1"}}))
+	ns := namespace.DefaultNamespace
+	require.NoError(t, b.Upsert(ctx, ns, parentBr, []*cloudyneighpb.Record{{Id: "p-doc-1"}}))
+	require.NoError(t, b.Fork(ctx, ns, parentBr, childBr))
+	require.NoError(t, b.Upsert(ctx, ns, childBr, []*cloudyneighpb.Record{{Id: "c-doc-1"}}))
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
 		PollInterval: 10 * time.Millisecond,
@@ -423,7 +448,7 @@ func TestForkEvent(t *testing.T) {
 		flusherErrCh <- flusher.Run(ctx)
 	}()
 
-	childManifest := waitForManifest(t, ctx, store, childBr, func(m *storagepb.BranchManifest) bool {
+	childManifest := waitForManifest(t, ctx, store, defaultKey(childBr), func(m *storagepb.BranchManifest) bool {
 		return len(m.Segments) >= 1
 	})
 	require.NotNil(t, childManifest)
@@ -437,6 +462,7 @@ type cancelOnBranchStore struct {
 	objectstore.Store
 	mu        sync.Mutex
 	cancel    context.CancelFunc
+	keys      []string
 	armed     bool
 	doneFirst bool
 }
@@ -449,7 +475,7 @@ func (s *cancelOnBranchStore) Arm() {
 
 func (s *cancelOnBranchStore) Put(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) (string, error) {
 	s.mu.Lock()
-	if s.armed && (strings.Contains(key, "/"+namespace.RefHead+"/") || strings.HasPrefix(key, namespace.RefHead+"/")) {
+	if s.armed && slices.Contains(s.keys, key) {
 		if !s.doneFirst {
 			s.doneFirst = true
 			s.mu.Unlock()
@@ -462,7 +488,7 @@ func (s *cancelOnBranchStore) Put(ctx context.Context, key string, r io.Reader, 
 	return s.Store.Put(ctx, key, r, cond)
 }
 
-func TestPartialSequenceShutdownFlush(t *testing.T) {
+func TestShutdownFlushDrainsLog(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -470,47 +496,24 @@ func TestPartialSequenceShutdownFlush(t *testing.T) {
 	require.NoError(t, err)
 	defer memStore.Close()
 
+	b1 := "branch-1"
+	b2 := "branch-2"
 	store := &cancelOnBranchStore{
 		Store:  memStore,
 		cancel: cancel,
+		keys:   []string{defaultKey(b1), defaultKey(b2)},
 	}
 
 	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
-	b1 := testBranch("branch-1")
-	b2 := testBranch("branch-2")
-
-	_, err = manifest.Write(ctx, store, b1, &storagepb.BranchManifest{CheckpointSeq: 0}, "")
+	_, err = manifest.Write(ctx, store, defaultKey(b1), &storagepb.BranchManifest{CheckpointSeq: 0}, "")
 	require.NoError(t, err)
-	_, err = manifest.Write(ctx, store, b2, &storagepb.BranchManifest{CheckpointSeq: 0}, "")
+	_, err = manifest.Write(ctx, store, defaultKey(b2), &storagepb.BranchManifest{CheckpointSeq: 0}, "")
 	require.NoError(t, err)
 
-	walRec1 := &storagepb.WalRecord{
-		Record: &storagepb.WalRecord_Mutation{
-			Mutation: &storagepb.DocumentMutation{
-				Branch: b1,
-				DocId:  "doc-1",
-				Op:     storagepb.MutationOp_PUT,
-			},
-		},
-	}
-	walRec2 := &storagepb.WalRecord{
-		Record: &storagepb.WalRecord_Mutation{
-			Mutation: &storagepb.DocumentMutation{
-				Branch: b2,
-				DocId:  "doc-2",
-				Op:     storagepb.MutationOp_PUT,
-			},
-		},
-	}
-	b1Data, err := proto.Marshal(walRec1)
-	require.NoError(t, err)
-	b2Data, err := proto.Marshal(walRec2)
-	require.NoError(t, err)
-
-	_, err = log.Append(ctx, []logstream.Record{b1Data, b2Data})
-	require.NoError(t, err)
+	appendDoc(t, ctx, log, b1, "doc-1", nil)
+	appendDoc(t, ctx, log, b2, "doc-2", nil)
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
 		PollInterval: 10 * time.Millisecond,
@@ -522,14 +525,14 @@ func TestPartialSequenceShutdownFlush(t *testing.T) {
 	require.NoError(t, err)
 
 	drainCtx := context.Background()
-	m1, _, err := manifest.Read(drainCtx, store, b1)
+	m1, _, err := manifest.Read(drainCtx, store, defaultKey(b1))
 	require.NoError(t, err)
-	m2, _, err := manifest.Read(drainCtx, store, b2)
+	m2, _, err := manifest.Read(drainCtx, store, defaultKey(b2))
 	require.NoError(t, err)
 
 	assert.Equal(t, uint64(1), m1.CheckpointSeq)
 	assert.Len(t, m1.Segments, 1)
-	assert.Equal(t, uint64(1), m2.CheckpointSeq)
+	assert.Equal(t, uint64(2), m2.CheckpointSeq)
 	assert.Len(t, m2.Segments, 1)
 }
 
@@ -544,11 +547,11 @@ func TestFlusher_MultiNamespaceDiscoveryAndFlush(t *testing.T) {
 	in, err := ingest.NewIngester(store)
 	require.NoError(t, err)
 
-	brA := namespace.BranchRef("ns-a", "main")
-	brB := namespace.BranchRef("ns-b", "main")
+	brA := namespace.Scope{Namespace: "ns-a"}.ManifestKey("main")
+	brB := namespace.Scope{Namespace: "ns-b"}.ManifestKey("main")
 
-	require.NoError(t, in.Upsert(ctx, brA, []*cloudyneighpb.Record{{Id: "doc-a1"}, {Id: "doc-a2"}}))
-	require.NoError(t, in.Upsert(ctx, brB, []*cloudyneighpb.Record{{Id: "doc-b1"}}))
+	require.NoError(t, in.Upsert(ctx, "ns-a", "main", []*cloudyneighpb.Record{{Id: "doc-a1"}, {Id: "doc-a2"}}))
+	require.NoError(t, in.Upsert(ctx, "ns-b", "main", []*cloudyneighpb.Record{{Id: "doc-b1"}}))
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
 		PollInterval: 10 * time.Millisecond,
@@ -572,7 +575,7 @@ func TestFlusher_MultiNamespaceDiscoveryAndFlush(t *testing.T) {
 	require.NotNil(t, manifestB)
 	assert.Equal(t, uint64(1), manifestB.Segments[0].DocCount)
 
-	require.NoError(t, in.Upsert(ctx, brB, []*cloudyneighpb.Record{{Id: "doc-b2"}}))
+	require.NoError(t, in.Upsert(ctx, "ns-b", "main", []*cloudyneighpb.Record{{Id: "doc-b2"}}))
 	manifestB2 := waitForManifest(t, ctx, store, brB, func(m *storagepb.BranchManifest) bool {
 		return len(m.Segments) == 2 && m.CheckpointSeq == 2
 	})

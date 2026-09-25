@@ -16,6 +16,7 @@ import (
 
 type Request struct {
 	Namespace    string
+	Branch       string
 	VectorColumn string
 	Vector       []float32
 	TopK         int
@@ -26,7 +27,12 @@ type Engine struct {
 	store        objectstore.Store
 	syncInterval time.Duration
 	mu           sync.Mutex
-	loaders      map[string]*Loader
+	loaders      map[branchKey]*Loader
+}
+
+type branchKey struct {
+	namespace string
+	branch    string
 }
 
 func NewEngine(store objectstore.Store, syncInterval time.Duration) (*Engine, error) {
@@ -39,7 +45,7 @@ func NewEngine(store objectstore.Store, syncInterval time.Duration) (*Engine, er
 	return &Engine{
 		store:        store,
 		syncInterval: syncInterval,
-		loaders:      make(map[string]*Loader),
+		loaders:      make(map[branchKey]*Loader),
 	}, nil
 }
 
@@ -58,23 +64,24 @@ func (e *Engine) SyncOnce(ctx context.Context) error {
 			return fmt.Errorf("list branches for %s: %w", scope.Prefix(), err)
 		}
 		for _, branch := range branches {
+			key := branchKey{namespace: ns, branch: branch}
 			e.mu.Lock()
-			loader, ok := e.loaders[branch]
+			loader, ok := e.loaders[key]
 			if !ok {
 				var table atomic.Pointer[Table]
 				table.Store(NewTable())
 				var err error
-				loader, err = NewLoader(e.store, &table)
+				loader, err = NewLoader(e.store, &table, scope, branch)
 				if err == nil {
-					e.loaders[branch] = loader
+					e.loaders[key] = loader
 				}
 			}
 			e.mu.Unlock()
 			if loader == nil {
 				continue
 			}
-			if _, err := loader.Sync(ctx, branch); err != nil {
-				slog.Error("sync branch failed", "branch", branch, "err", err)
+			if _, err := loader.Sync(ctx); err != nil {
+				slog.Error("sync branch failed", "namespace", ns, "branch", branch, "err", err)
 			}
 		}
 	}
@@ -116,7 +123,7 @@ func (e *Engine) Query(ctx context.Context, req Request) ([]*cloudyneighpb.Score
 	}
 
 	e.mu.Lock()
-	loader, ok := e.loaders[req.Namespace]
+	loader, ok := e.loaders[branchKey{namespace: req.Namespace, branch: req.Branch}]
 	e.mu.Unlock()
 	if !ok {
 		return nil, SearchStats{}, nil
