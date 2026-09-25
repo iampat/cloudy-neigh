@@ -8,17 +8,20 @@
 - [X] Eliminate server-side batch buffering in Ingester. Replaced BatchIngester actor goroutine and channels with direct synchronous WAL Append. [#140]
 - [X] Add Fork RPC to IngestService with namespace scoping and WAL event sequencing. [#138]
 - [ ] Support capturing unflushed parent mutations before Fork manifest creation. Sequence the fork event in the flusher, flush active parent mutations to a segment, and create the child manifest at that exact sequence boundary.
+- [ ] Plan a per-branch schema. Define the vector representation and the typed fields of each branch, and how the schema changes when fields are added.
+- [ ] Design document storage for point lookup. Today every document sits in one flat array.
 - [ ] Background compaction worker to merge flat immutable segments across branches and purge tombstoned rows.
 - [X] Move multi-tenant log stream routing into the `ingest` library. `cmd/cloudy` acts strictly as an assembly root using dependency injection, without hardcoded stream names or paths. [#144]
 - [ ] Implement tenant management mechanism and control-plane API to register, list, and delete tenants in root tenants.json with CAS updates. Design note in `docs/design/tenant-isolation.md`. [#155]
 - [X] Implement cross-tenant isolation across ingestion, query execution, local cache tiers, and storage keys. [#156]
 - [ ] Consolidate existing design docs into a smaller set of docs, and fix any conflict between docs and code.
+  - [ ] Update `docs/implementation-walkthrough.md` for content-hash segments. Remove the `loaded` map step, replace the random segment ID format with SHA-256, and show the `CheckpointSeq >= seq` skip. [#165]
 - [ ] Use `https://github.com/google/subcommands` for cloudy CLI subcommand dispatch.
 - [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
 - [ ] Expose branch deletion RPC in IngestService to remove branch pointers and update `branches.json`.
 - [ ] Fix storage durability and error handling bugs.
   - [ ] Make flusher segment upload idempotent during replay. Ignore `ErrPreconditionFailed` when the segment key exists in storage (`ingest/flusher.go:375`).
-  - [ ] Add `Sync()` and parent directory fsync to local store mutations (`objectstore/local.go:305, 317, 353`). Prevent data loss across power loss and crashes.
+  - [ ] Add `Sync()` and parent directory fsync to local store mutations (`objectstore/local.go:305, 317, 353`). Prevent data loss across power loss and crashes. A replay treats an existing segment key as stored, so a truncated local segment now passes silently. [#165]
   - [ ] Return lock errors from `objectstore.diskLock.lock` (`objectstore/local.go:39-54`). Do not fall back to process mutex when directory access or flock fails.
   - [ ] Prevent GCS `Put` committing truncated objects on copy failure (`objectstore/gcs.go:125-132`). Cancel writer context before closing.
   - [ ] Guard against integer overflow in memory store range reads (`objectstore/mem.go:85-89`). Clamp end offset to object size.
