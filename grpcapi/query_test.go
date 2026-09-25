@@ -19,6 +19,7 @@ import (
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
 	"github.com/iampat/cloudy-neigh/query"
 	"github.com/iampat/cloudy-neigh/segment"
+	"github.com/iampat/cloudy-neigh/vector"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -63,9 +64,16 @@ func updateManifest(t *testing.T, ctx context.Context, store objectstore.Store, 
 	return gen
 }
 
+func pureKernels(t *testing.T) vector.Kernels {
+	t.Helper()
+	k, err := vector.Pure.Kernels()
+	require.NoError(t, err)
+	return k
+}
+
 func setupQueryTestEnv(t *testing.T, store objectstore.Store) (cloudyneighpb.QueryServiceClient, *query.Engine) {
 	t.Helper()
-	eng, err := query.NewEngine(store, 20*time.Millisecond)
+	eng, err := query.NewEngine(store, 20*time.Millisecond, pureKernels(t))
 	require.NoError(t, err)
 
 	srv, err := grpcapi.NewQueryServer(map[string]grpcapi.QueryEngine{
@@ -110,7 +118,7 @@ func TestQuery_NilRequest(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	eng, err := query.NewEngine(store, 20*time.Millisecond)
+	eng, err := query.NewEngine(store, 20*time.Millisecond, pureKernels(t))
 	require.NoError(t, err)
 	srv, err := grpcapi.NewQueryServer(map[string]grpcapi.QueryEngine{
 		namespace.DefaultTenant: eng,
@@ -440,7 +448,7 @@ func TestQuery_UnknownTenant(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	eng, err := query.NewEngine(store, 20*time.Millisecond)
+	eng, err := query.NewEngine(store, 20*time.Millisecond, pureKernels(t))
 	require.NoError(t, err)
 
 	srv, err := grpcapi.NewQueryServer(map[string]grpcapi.QueryEngine{
@@ -493,12 +501,12 @@ func TestQuery_CrossTenantIsolation(t *testing.T) {
 
 	ingAcme, err := ingest.NewIngester(storeAcme)
 	require.NoError(t, err)
-	engAcme, err := query.NewEngine(storeAcme, 20*time.Millisecond)
+	engAcme, err := query.NewEngine(storeAcme, 20*time.Millisecond, pureKernels(t))
 	require.NoError(t, err)
 
 	ingKrusty, err := ingest.NewIngester(storeKrusty)
 	require.NoError(t, err)
-	engKrusty, err := query.NewEngine(storeKrusty, 20*time.Millisecond)
+	engKrusty, err := query.NewEngine(storeKrusty, 20*time.Millisecond, pureKernels(t))
 	require.NoError(t, err)
 
 	ingestSrv, err := grpcapi.NewIngestServer(map[string]grpcapi.Ingester{

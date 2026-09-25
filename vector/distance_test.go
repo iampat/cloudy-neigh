@@ -518,9 +518,6 @@ func TestVariant(t *testing.T) {
 		require.Error(t, err, name)
 	}
 	require.Equal(t, "variant(99)", vector.Variant(99).String())
-	require.False(t, vector.Pure.Is16())
-	require.False(t, vector.SIMD.Is16())
-	require.True(t, vector.FP16.Is16())
 
 	_, err := vector.Variant(99).Kernels()
 	require.Error(t, err)
@@ -636,7 +633,7 @@ func BenchmarkDistance(b *testing.B) {
 		})
 	}
 	for _, v := range vector.Variants() {
-		if !v.Is16() {
+		if v != vector.FP16 {
 			continue
 		}
 		k, err := v.Kernels()
@@ -705,7 +702,7 @@ func BenchmarkScanKernel(b *testing.B) {
 				for i := range pool {
 					pool[i] = randomVector(dim, uint64(i+2))
 				}
-				if !v.Is16() {
+				if v != vector.FP16 {
 					data := make([]float32, size.rows*dim)
 					for r := range size.rows {
 						copy(data[r*dim:], pool[r%len(pool)])
