@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "distance.go",
         "distance_amd64.go",
-        "distance_fallback.go",
         "distance_fp16_amd64.go",
         "distance_fp16_amd64.s",
         "distance_pure.go",
@@ -23,6 +22,7 @@ go_test(
     srcs = [
         "distance_test.go",
         "export_test.go",
+        "fp16_internal_test.go",
     ],
     embed = [":vector"],
     deps = ["@com_github_stretchr_testify//require"],

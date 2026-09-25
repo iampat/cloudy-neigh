@@ -334,7 +334,6 @@ func FuzzL2Squared(f *testing.F) {
 		if len(a) == 0 {
 			require.Equal(t, float32(0), vector.L2SquaredPure(a, b))
 			require.Equal(t, float32(0), vector.L2SquaredPortable(a, b))
-			require.Equal(t, float32(0), vector.L2SquaredAccelerated(a, b))
 			got, err := vector.L2Squared(a, b)
 			require.NoError(t, err)
 			require.Equal(t, float32(0), got)
@@ -356,7 +355,6 @@ func FuzzL2Squared(f *testing.F) {
 			tol = 1e-5 * mag
 		}
 		require.InDelta(t, l2Pure, l2Port, tol)
-		require.InDelta(t, l2Pure, vector.L2SquaredAccelerated(a, b), tol)
 
 		got, err := vector.L2Squared(a, b)
 		require.NoError(t, err)
@@ -376,7 +374,6 @@ func FuzzDotProduct(f *testing.F) {
 		if len(a) == 0 {
 			require.Equal(t, float32(0), vector.DotProductPure(a, b))
 			require.Equal(t, float32(0), vector.DotProductPortable(a, b))
-			require.Equal(t, float32(0), vector.DotProductAccelerated(a, b))
 			got, err := vector.DotProduct(a, b)
 			require.NoError(t, err)
 			require.Equal(t, float32(0), got)
@@ -398,7 +395,6 @@ func FuzzDotProduct(f *testing.F) {
 			tol = 1e-5 * mag
 		}
 		require.InDelta(t, dotPure, dotPort, tol)
-		require.InDelta(t, dotPure, vector.DotProductAccelerated(a, b), tol)
 
 		got, err := vector.DotProduct(a, b)
 		require.NoError(t, err)
@@ -418,10 +414,8 @@ func FuzzCosine(f *testing.F) {
 		if len(a) == 0 {
 			_, errPure := vector.CosinePure(a, b)
 			_, errPort := vector.CosinePortable(a, b)
-			_, errAcc := vector.CosineAccelerated(a, b)
 			require.ErrorIs(t, errPure, vector.ErrZeroVector)
 			require.ErrorIs(t, errPort, vector.ErrZeroVector)
-			require.ErrorIs(t, errAcc, vector.ErrZeroVector)
 			_, err := vector.Cosine(a, b)
 			require.ErrorIs(t, err, vector.ErrZeroVector)
 			return
@@ -432,25 +426,21 @@ func FuzzCosine(f *testing.F) {
 
 		cosPure, errPure := vector.CosinePure(a, b)
 		cosPort, errPort := vector.CosinePortable(a, b)
-		cosAcc, errAcc := vector.CosineAccelerated(a, b)
 
 		if errPure != nil {
 			require.ErrorIs(t, errPure, vector.ErrZeroVector)
 			require.ErrorIs(t, errPort, vector.ErrZeroVector)
-			require.ErrorIs(t, errAcc, vector.ErrZeroVector)
 			_, err := vector.Cosine(a, b)
 			require.ErrorIs(t, err, vector.ErrZeroVector)
 			return
 		}
 		require.NoError(t, errPort)
-		require.NoError(t, errAcc)
 
 		if math.IsNaN(float64(cosPure)) || math.IsInf(float64(cosPure), 0) {
 			return
 		}
 
 		require.InDelta(t, cosPure, cosPort, 1e-5)
-		require.InDelta(t, cosPure, cosAcc, 1e-5)
 
 		got, err := vector.Cosine(a, b)
 		require.NoError(t, err)
@@ -465,10 +455,8 @@ func FuzzNormalizeInPlace(f *testing.F) {
 		if len(v) == 0 {
 			errPure := vector.NormalizeInPlacePure(v)
 			errPort := vector.NormalizeInPlacePortable(v)
-			errAcc := vector.NormalizeInPlaceAccelerated(v)
 			require.ErrorIs(t, errPure, vector.ErrZeroVector)
 			require.ErrorIs(t, errPort, vector.ErrZeroVector)
-			require.ErrorIs(t, errAcc, vector.ErrZeroVector)
 			err := vector.NormalizeInPlace(v)
 			require.ErrorIs(t, err, vector.ErrZeroVector)
 			return
@@ -479,98 +467,47 @@ func FuzzNormalizeInPlace(f *testing.F) {
 
 		normPure := slices.Clone(v)
 		normPort := slices.Clone(v)
-		normAcc := slices.Clone(v)
 
 		errPure := vector.NormalizeInPlacePure(normPure)
 		errPort := vector.NormalizeInPlacePortable(normPort)
-		errAcc := vector.NormalizeInPlaceAccelerated(normAcc)
+
+		norm := slices.Clone(v)
+		err := vector.NormalizeInPlace(norm)
 
 		if errPure != nil {
 			require.ErrorIs(t, errPure, vector.ErrZeroVector)
 			require.ErrorIs(t, errPort, vector.ErrZeroVector)
-			require.ErrorIs(t, errAcc, vector.ErrZeroVector)
-			err := vector.NormalizeInPlace(slices.Clone(v))
 			require.ErrorIs(t, err, vector.ErrZeroVector)
 			return
 		}
 		require.NoError(t, errPort)
-		require.NoError(t, errAcc)
+		require.NoError(t, err)
 
 		for i := range normPure {
 			require.InDelta(t, normPure[i], normPort[i], 1e-5)
-			require.InDelta(t, normPure[i], normAcc[i], 1e-5)
+			require.InDelta(t, normPure[i], norm[i], 1e-5)
 		}
 	})
 }
 
-func TestFloat16RoundTrip(t *testing.T) {
-	decode := func(enc []uint16) []float32 {
-		out := make([]float32, len(enc))
-		for i, h := range enc {
-			out[i] = vector.FP16ToFloat32(h)
-		}
-		return out
-	}
-	t.Run("exact", func(t *testing.T) {
-		exact := []float32{0, 1, -1, 0.5, 65504, -65504}
-		enc := make([]uint16, len(exact))
-		require.NoError(t, vector.Float16.Encode(enc, exact))
-		require.Equal(t, exact, decode(enc))
-	})
-	t.Run("random", func(t *testing.T) {
-		src := append(randomVector(1000, 7), 1e-5, -1e-5, 0.1, 0.3)
-		enc := make([]uint16, len(src))
-		require.NoError(t, vector.Float16.Encode(enc, src))
-		got := decode(enc)
-		for i, x := range src {
-			tol := math.Abs(float64(x))/(1<<11) + 1.0/(1<<25)
-			require.InDelta(t, x, got[i], tol, "value %v", x)
-		}
-	})
+func TestEncodeFP16(t *testing.T) {
 	t.Run("overflow", func(t *testing.T) {
-		err := vector.Float16.Encode(make([]uint16, 1), []float32{70000})
+		err := vector.EncodeFP16(make([]uint16, 1), []float32{70000})
 		require.ErrorIs(t, err, vector.ErrFloat16Overflow)
 	})
+	t.Run("non-finite", func(t *testing.T) {
+		for _, x := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
+			err := vector.EncodeFP16(make([]uint16, 1), []float32{x})
+			require.Error(t, err)
+		}
+	})
+	t.Run("short dst", func(t *testing.T) {
+		err := vector.EncodeFP16(make([]uint16, 2), []float32{1, 2, 3})
+		require.ErrorIs(t, err, vector.ErrDimensionMismatch)
+	})
 }
 
-func TestKernels16(t *testing.T) {
-	if err := vector.FP16.Check(); err != nil {
-		t.Skip(err)
-	}
-	k := vector.FP16.Kernels()
-	for _, dim := range []int{1, 2, 12, 15, 16, 17, 31, 32, 64, 100, 128, 129, 200, 256, 1024, 1031} {
-		t.Run(strconv.Itoa(dim), func(t *testing.T) {
-			q := randomVector(dim, uint64(dim)*3+1)
-			row := make([]uint16, dim)
-			require.NoError(t, vector.Float16.Encode(row, randomVector(dim, uint64(dim)*3+2)))
-
-			dot := vector.DotFP16Pure(q, row)
-			require.InDelta(t, dot, k.Dot16(q, row), 1e-4*(1+math.Abs(float64(dot))))
-			l2 := vector.L2FP16Pure(q, row)
-			require.InDelta(t, l2, k.L216(q, row), 1e-4*(1+math.Abs(float64(l2))))
-		})
-	}
-}
-
-func TestDecode16(t *testing.T) {
-	if err := vector.FP16.Check(); err != nil {
-		t.Skip(err)
-	}
-	decode := vector.FP16.Kernels().Decode16
-	for _, dim := range []int{1, 15, 16, 17, 100, 1024, 1031} {
-		t.Run(strconv.Itoa(dim), func(t *testing.T) {
-			enc := make([]uint16, dim)
-			require.NoError(t, vector.Float16.Encode(enc, randomVector(dim, uint64(dim)*5+1)))
-			got := make([]float32, dim)
-			decode(got, enc)
-			for i, h := range enc {
-				require.Equal(t, vector.FP16ToFloat32(h), got[i], "index %d", i)
-			}
-		})
-	}
-}
-
-func TestVariantParse(t *testing.T) {
+func TestVariant(t *testing.T) {
 	for _, v := range vector.Variants() {
 		got, err := vector.ParseVariant(v.String())
 		require.NoError(t, err)
@@ -580,7 +517,31 @@ func TestVariantParse(t *testing.T) {
 		_, err := vector.ParseVariant(name)
 		require.Error(t, err, name)
 	}
-	require.NoError(t, vector.Pure.Check())
+	require.Equal(t, "variant(99)", vector.Variant(99).String())
+	require.False(t, vector.Pure.Is16())
+	require.False(t, vector.SIMD.Is16())
+	require.True(t, vector.FP16.Is16())
+
+	_, err := vector.Variant(99).Kernels()
+	require.Error(t, err)
+
+	pureK, err := vector.Pure.Kernels()
+	require.NoError(t, err)
+	require.Equal(t, "pure", pureK.Name)
+
+	simdK, err := vector.SIMD.Kernels()
+	require.NoError(t, err)
+	require.NotEmpty(t, simdK.Name)
+
+	fp16K, err := vector.FP16.Kernels()
+	if err != nil {
+		require.Error(t, err)
+	} else {
+		require.Equal(t, "avx512", fp16K.Name)
+		require.NotNil(t, fp16K.Dot16)
+		require.NotNil(t, fp16K.L216)
+		require.NotNil(t, fp16K.Decode16)
+	}
 }
 
 var benchDims = []int{32, 64, 128, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096}
@@ -593,26 +554,22 @@ func BenchmarkDistance(b *testing.B) {
 		accelerated func(a, b []float32) (float32, error)
 	}{
 		{
-			name:     "L2Squared",
-			pure:     func(a, b []float32) (float32, error) { return vector.L2SquaredPure(a, b), nil },
-			portable: func(a, b []float32) (float32, error) { return vector.L2SquaredPortable(a, b), nil },
-			accelerated: func(a, b []float32) (float32, error) {
-				return vector.L2SquaredAccelerated(a, b), nil
-			},
+			name:        "L2Squared",
+			pure:        func(a, b []float32) (float32, error) { return vector.L2SquaredPure(a, b), nil },
+			portable:    func(a, b []float32) (float32, error) { return vector.L2SquaredPortable(a, b), nil },
+			accelerated: vector.L2Squared,
 		},
 		{
-			name:     "DotProduct",
-			pure:     func(a, b []float32) (float32, error) { return vector.DotProductPure(a, b), nil },
-			portable: func(a, b []float32) (float32, error) { return vector.DotProductPortable(a, b), nil },
-			accelerated: func(a, b []float32) (float32, error) {
-				return vector.DotProductAccelerated(a, b), nil
-			},
+			name:        "DotProduct",
+			pure:        func(a, b []float32) (float32, error) { return vector.DotProductPure(a, b), nil },
+			portable:    func(a, b []float32) (float32, error) { return vector.DotProductPortable(a, b), nil },
+			accelerated: vector.DotProduct,
 		},
 		{
 			name:        "Cosine",
 			pure:        vector.CosinePure,
 			portable:    vector.CosinePortable,
-			accelerated: vector.CosineAccelerated,
+			accelerated: vector.Cosine,
 		},
 	}
 	for _, f := range funcs {
@@ -672,17 +629,20 @@ func BenchmarkDistance(b *testing.B) {
 			buf := slices.Clone(v)
 			for b.Loop() {
 				copy(buf, v)
-				if err := vector.NormalizeInPlaceAccelerated(buf); err != nil {
+				if err := vector.NormalizeInPlace(buf); err != nil {
 					b.Fatal(err)
 				}
 			}
 		})
 	}
 	for _, v := range vector.Variants() {
-		if v.Format() == vector.Float32 {
+		if !v.Is16() {
 			continue
 		}
-		k := v.Kernels()
+		k, err := v.Kernels()
+		if err != nil {
+			continue
+		}
 		kernels := []struct {
 			name string
 			fn   func(q []float32, row []uint16) float32
@@ -693,12 +653,9 @@ func BenchmarkDistance(b *testing.B) {
 		for _, kern := range kernels {
 			for _, dim := range benchDims {
 				b.Run(kern.name+"/"+v.String()+"/"+strconv.Itoa(dim), func(b *testing.B) {
-					if err := v.Check(); err != nil {
-						b.Skip(err)
-					}
 					q := randomVector(dim, 1)
 					row := make([]uint16, dim)
-					if err := v.Format().Encode(row, randomVector(dim, 2)); err != nil {
+					if err := vector.EncodeFP16(row, randomVector(dim, 2)); err != nil {
 						b.Fatal(err)
 					}
 					for b.Loop() {
@@ -711,12 +668,13 @@ func BenchmarkDistance(b *testing.B) {
 }
 
 func BenchmarkDecode16(b *testing.B) {
-	if err := vector.FP16.Check(); err != nil {
+	k, err := vector.FP16.Kernels()
+	if err != nil {
 		b.Skip(err)
 	}
-	decode := vector.FP16.Kernels().Decode16
+	decode := k.Decode16
 	enc := make([]uint16, 1024)
-	require.NoError(b, vector.Float16.Encode(enc, randomVector(1024, 1)))
+	require.NoError(b, vector.EncodeFP16(enc, randomVector(1024, 1)))
 	dst := make([]float32, 1024)
 	for b.Loop() {
 		decode(dst, enc)
@@ -735,19 +693,19 @@ func BenchmarkScanKernel(b *testing.B) {
 	for _, v := range vector.Variants() {
 		for _, size := range sizes {
 			b.Run(v.String()+"/"+size.name, func(b *testing.B) {
-				if err := v.Check(); err != nil {
+				k, err := v.Kernels()
+				if err != nil {
 					b.Skip(err)
 				}
 				if testing.Short() && size.rows > 256 {
 					b.Skip("needs 4 GB of rows")
 				}
-				k := v.Kernels()
 				q := randomVector(dim, 1)
 				pool := make([][]float32, 64)
 				for i := range pool {
 					pool[i] = randomVector(dim, uint64(i+2))
 				}
-				if v.Format() == vector.Float32 {
+				if !v.Is16() {
 					data := make([]float32, size.rows*dim)
 					for r := range size.rows {
 						copy(data[r*dim:], pool[r%len(pool)])
@@ -760,7 +718,7 @@ func BenchmarkScanKernel(b *testing.B) {
 				} else {
 					data := make([]uint16, size.rows*dim)
 					for r := range size.rows {
-						if err := v.Format().Encode(data[r*dim:(r+1)*dim], pool[r%len(pool)]); err != nil {
+						if err := vector.EncodeFP16(data[r*dim:(r+1)*dim], pool[r%len(pool)]); err != nil {
 							b.Fatal(err)
 						}
 					}

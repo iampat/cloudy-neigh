@@ -139,5 +139,3 @@ func normalizeInPlacePortable(v []float32) error {
 	}
 	return nil
 }
-
-const simdBuild = true

@@ -1,15 +1,7 @@
 package vector
 
 import (
-	"errors"
 	"fmt"
-)
-
-type Format int
-
-const (
-	Float32 Format = iota
-	Float16
 )
 
 type Variant int
@@ -50,35 +42,8 @@ func ParseVariant(s string) (Variant, error) {
 	return 0, fmt.Errorf("vector: unknown variant %q", s)
 }
 
-func (v Variant) Format() Format {
-	if v == FP16 {
-		return Float16
-	}
-	return Float32
-}
-
-var (
-	errNoSIMDBuild = errors.New("vector: this build lacks goexperiment.simd")
-	errNoAVX512    = errors.New("vector: this CPU lacks AVX-512")
-)
-
-func (v Variant) Check() error {
-	switch v {
-	case Pure:
-		return nil
-	case SIMD:
-		if !simdBuild {
-			return fmt.Errorf("%w: variant %s", errNoSIMDBuild, v)
-		}
-		return nil
-	case FP16:
-		if !hasAVX512 {
-			return fmt.Errorf("%w: variant %s", errNoAVX512, v)
-		}
-		return nil
-	default:
-		return fmt.Errorf("vector: unknown variant %s", v)
-	}
+func (v Variant) Is16() bool {
+	return v == FP16
 }
 
 type Kernels struct {
@@ -90,15 +55,18 @@ type Kernels struct {
 	Decode16 func(dst []float32, src []uint16)
 }
 
-func (v Variant) Kernels() Kernels {
+func (v Variant) Kernels() (Kernels, error) {
 	switch v {
 	case Pure:
-		return Kernels{Name: "pure", Dot: dotProductPure, L2: l2SquaredPure}
+		return Kernels{Name: "pure", Dot: dotProductPure, L2: l2SquaredPure}, nil
 	case SIMD:
-		return simdKernels()
+		return simdKernels(), nil
 	case FP16:
-		return fp16Kernels()
+		if !hasAVX512 {
+			return Kernels{}, fmt.Errorf("vector: variant %s requires AVX-512", v)
+		}
+		return fp16Kernels(), nil
 	default:
-		return Kernels{}
+		return Kernels{}, fmt.Errorf("vector: unknown variant %s", v)
 	}
 }

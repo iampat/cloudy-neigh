@@ -39,6 +39,11 @@ func l2FP16AVX512(q []float32, row []uint16) float32 {
 func cvtFP16Blocks(dst *float32, src *uint16, blocks int)
 
 func decodeFP16AVX512(dst []float32, src []uint16) {
+	if len(src) == 0 {
+		return
+	}
+	_ = dst[len(src)-1]
+	dst = dst[:len(src)]
 	blocks := len(src) / 16
 	if blocks > 0 {
 		cvtFP16Blocks(&dst[0], &src[0], blocks)

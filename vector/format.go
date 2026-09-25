@@ -7,11 +7,14 @@ import (
 
 var ErrFloat16Overflow = errors.New("vector: value overflows float16")
 
-func (f Format) Encode(dst []uint16, src []float32) error {
-	if f != Float16 {
-		return errors.New("vector: format has no 16-bit encoding")
+func EncodeFP16(dst []uint16, src []float32) error {
+	if len(dst) < len(src) {
+		return ErrDimensionMismatch
 	}
 	for i, x := range src {
+		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+			return errors.New("vector: non-finite float32 value")
+		}
 		h, ok := fp16FromFloat32(x)
 		if !ok {
 			return ErrFloat16Overflow
