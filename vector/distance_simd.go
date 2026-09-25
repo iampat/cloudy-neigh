@@ -1,6 +1,6 @@
 //go:build goexperiment.simd
 
-package distance
+package vector
 
 import (
 	"math"
@@ -12,26 +12,6 @@ import (
 )
 
 var _ bridge.ZeroSized
-
-func Implementation() string {
-	return "simd"
-}
-
-func l2Squared(a, b []float32) float32 {
-	return l2SquaredPortable(a, b)
-}
-
-func dotProduct(a, b []float32) float32 {
-	return dotProductPortable(a, b)
-}
-
-func cosine(a, b []float32) (float32, error) {
-	return cosinePortable(a, b)
-}
-
-func normalizeInPlace(v []float32) error {
-	return normalizeInPlacePortable(v)
-}
 
 func l2SquaredPortable(a, b []float32) float32 {
 	n := len(a)

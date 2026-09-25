@@ -10,7 +10,7 @@ import (
 	"time"
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
-	"github.com/iampat/cloudy-neigh/query/distance"
+	"github.com/iampat/cloudy-neigh/vector"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -275,12 +275,12 @@ func (t *Table) Search(
 	isDesc := false
 	switch metric {
 	case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE:
-		normSq, err := distance.DotProduct(query, query)
+		normSq, err := vector.DotProduct(query, query)
 		if err != nil {
 			return nil, SearchStats{}, err
 		}
 		if normSq == 0 {
-			return nil, SearchStats{}, distance.ErrZeroVector
+			return nil, SearchStats{}, vector.ErrZeroVector
 		}
 		cmpFunc = cmpAsc
 	case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED:
@@ -331,22 +331,22 @@ func (t *Table) Search(
 		switch metric {
 		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE:
 			var err error
-			score, err = distance.Cosine(query, storedVec)
+			score, err = vector.Cosine(query, storedVec)
 			if err != nil {
-				if errors.Is(err, distance.ErrZeroVector) {
+				if errors.Is(err, vector.ErrZeroVector) {
 					continue
 				}
 				return nil, SearchStats{}, err
 			}
 		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED:
 			var err error
-			score, err = distance.L2Squared(query, storedVec)
+			score, err = vector.L2Squared(query, storedVec)
 			if err != nil {
 				return nil, SearchStats{}, err
 			}
 		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT:
 			var err error
-			score, err = distance.DotProduct(query, storedVec)
+			score, err = vector.DotProduct(query, storedVec)
 			if err != nil {
 				return nil, SearchStats{}, err
 			}

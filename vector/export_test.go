@@ -1,4 +1,4 @@
-package distance
+package vector
 
 var (
 	L2SquaredPure        = l2SquaredPure

@@ -1,4 +1,4 @@
-package distance
+package vector
 
 import (
 	"errors"
