@@ -18,7 +18,6 @@ import (
 	"github.com/iampat/cloudy-neigh/namespace"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query"
-	"github.com/iampat/cloudy-neigh/query/distance"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
@@ -361,7 +360,7 @@ func runQuery(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("query server listening", "addr", srv.Addr().String(), "tenants_file", cfg.tenantsFile, "kernel", distance.Implementation())
+	slog.Info("query server listening", "addr", srv.Addr().String(), "tenants_file", cfg.tenantsFile)
 
 	return srv.Serve(ctx)
 }

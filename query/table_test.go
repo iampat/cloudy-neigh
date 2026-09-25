@@ -10,7 +10,7 @@ import (
 
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query"
-	"github.com/iampat/cloudy-neigh/query/distance"
+	"github.com/iampat/cloudy-neigh/vector"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
@@ -733,7 +733,7 @@ func TestTable_Search_Errors(t *testing.T) {
 			col:       "v",
 			query:     []float32{0.0, 0.0, 0.0},
 			metric:    cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE,
-			wantErrIs: distance.ErrZeroVector,
+			wantErrIs: vector.ErrZeroVector,
 		},
 		{
 			name:      "zero query vector under l2 squared is allowed",

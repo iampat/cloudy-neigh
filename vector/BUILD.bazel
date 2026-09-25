@@ -1,23 +1,29 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "distance",
+    name = "vector",
     srcs = [
         "distance.go",
+        "distance_amd64.go",
         "distance_fallback.go",
+        "distance_fp16_amd64.go",
+        "distance_fp16_amd64.s",
         "distance_pure.go",
         "distance_simd.go",
+        "distance_simd_other.go",
+        "format.go",
+        "variant.go",
     ],
-    importpath = "github.com/iampat/cloudy-neigh/query/distance",
+    importpath = "github.com/iampat/cloudy-neigh/vector",
     visibility = ["//visibility:public"],
 )
 
 go_test(
-    name = "distance_test",
+    name = "vector_test",
     srcs = [
         "distance_test.go",
         "export_test.go",
     ],
-    embed = [":distance"],
+    embed = [":vector"],
     deps = ["@com_github_stretchr_testify//require"],
 )

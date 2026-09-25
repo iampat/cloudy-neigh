@@ -10,7 +10,7 @@ import (
 	"github.com/iampat/cloudy-neigh/namespace"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query"
-	"github.com/iampat/cloudy-neigh/query/distance"
+	"github.com/iampat/cloudy-neigh/vector"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -76,7 +76,7 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 		if errors.Is(err, query.ErrDimensionMismatch) {
 			return nil, status.Errorf(codes.InvalidArgument, "grpcapi: %v", err)
 		}
-		if errors.Is(err, distance.ErrZeroVector) {
+		if errors.Is(err, vector.ErrZeroVector) {
 			return nil, status.Errorf(codes.InvalidArgument, "grpcapi: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "grpcapi: search: %v", err)

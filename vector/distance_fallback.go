@@ -1,10 +1,6 @@
 //go:build !goexperiment.simd
 
-package distance
-
-func Implementation() string {
-	return "pure"
-}
+package vector
 
 func l2Squared(a, b []float32) float32 {
 	return l2SquaredPure(a, b)
@@ -36,4 +32,17 @@ func cosinePortable(a, b []float32) (float32, error) {
 
 func normalizeInPlacePortable(v []float32) error {
 	return normalizeInPlacePure(v)
+}
+
+const (
+	simdBuild = false
+	hasAVX512 = false
+)
+
+func simdKernels() Kernels {
+	return Kernels{}
+}
+
+func fp16Kernels() Kernels {
+	return Kernels{}
 }

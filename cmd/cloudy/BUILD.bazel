@@ -11,7 +11,6 @@ go_library(
         "//namespace",
         "//proto/cloudyneigh/v1:cloudyneigh",
         "//query",
-        "//query/distance",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_x_sync//errgroup",
     ],
