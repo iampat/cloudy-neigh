@@ -10,11 +10,35 @@ Three reviewers with different models read the same change. A finding that two
 of them raise independently is likely real. A finding that one raises alone
 needs a check in the code.
 
+## Arguments
+
+```text
+/super-review <target> [--context "<text>"] [--prompt "<text>"] [--dry-run]
+```
+
+- `<target>`: the branch or the PR to review.
+- `--context "<text>"`: extra context from the user. Append it to the message
+  after one blank line, verbatim.
+- `--prompt "<text>"`: a review prompt from the user. It replaces
+  `/code-review <target> vs main`, verbatim. `--context` still appends to it.
+- `--dry-run`: print the exact message and the exact three commands, then
+  stop. Create no worktree, start no subagent, and write no file.
+
+## The message
+
+All three reviewers get the same message:
+
+```text
+<--prompt text, or: /code-review <target> vs main>
+
+<--context text, when given>
+```
+
+Add nothing that the user did not give. Your own context steers the review,
+and the point is three independent opinions.
+
 ## Rules
 
-- Send each reviewer the same message, verbatim: `/code-review <target> vs main`.
-  `<target>` is the branch or the PR the user named. Add no context. Context
-  steers the review, and the point is three independent opinions.
 - Review against `origin/main`. Run `git fetch origin` first. A stale local
   `main` makes the diff repeat merged PRs.
 - Never run a reviewer in the user's working tree. agy runs with
@@ -34,8 +58,12 @@ needs a check in the code.
    ```sh
    git fetch origin
    git worktree add --detach /private/tmp/claude-501/wt-review <target branch>
-   printf '%s' '/code-review <target> vs main' > /private/tmp/claude-501/review/prompt.txt
+   # write the message from "The message" with the Write tool:
+   #   /private/tmp/claude-501/review/prompt.txt
    ```
+
+   With `--dry-run`, skip this step. Print the message, then the three
+   commands of step 2 with the real paths and the target filled in, and stop.
 
 2. Start three background subagents in one message.
 
