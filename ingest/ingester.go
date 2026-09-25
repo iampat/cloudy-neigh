@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -38,14 +37,6 @@ func NewIngester(store objectstore.Store) (*Ingester, error) {
 	}, nil
 }
 
-func scopeFromBranchRef(branchRef string) namespace.Scope {
-	if prefix, _, ok := strings.Cut(branchRef, "/"+namespace.RefHead+"/"); ok {
-		ns := strings.TrimPrefix(prefix, namespace.NamespaceDir+"/")
-		return namespace.Scope{Namespace: ns}
-	}
-	return namespace.Scope{Namespace: namespace.DefaultNamespace}
-}
-
 func (ing *Ingester) getOrCreateLog(ctx context.Context, scope namespace.Scope) (*logstream.Log, error) {
 	walPrefix := scope.WALPrefix()
 	ing.mu.Lock()
@@ -54,16 +45,12 @@ func (ing *Ingester) getOrCreateLog(ctx context.Context, scope namespace.Scope) 
 		return l, nil
 	}
 
-	ns := scope.Namespace
-	if ns == "" {
-		ns = namespace.DefaultNamespace
-	}
 	cachePath := scope.Prefix()
 	registered := ing.registered[cachePath]
 	ing.mu.Unlock()
 
 	if !registered {
-		_, _, _ = namespace.CreateNamespace(ctx, ing.store, ns, time.Now())
+		_, _, _ = namespace.CreateNamespace(ctx, ing.store, scope.Namespace, time.Now())
 		ing.mu.Lock()
 		ing.registered[cachePath] = true
 		ing.mu.Unlock()
@@ -84,17 +71,11 @@ func (ing *Ingester) getOrCreateLog(ctx context.Context, scope namespace.Scope) 
 	return l, nil
 }
 
-func (ing *Ingester) Log(branchRef string) (*logstream.Log, error) {
-	scope := scopeFromBranchRef(branchRef)
-	return ing.getOrCreateLog(context.Background(), scope)
-}
-
-func (ing *Ingester) Upsert(ctx context.Context, branch string, records []*cloudyneighpb.Record) error {
+func (ing *Ingester) Upsert(ctx context.Context, ns, branch string, records []*cloudyneighpb.Record) error {
 	if len(records) == 0 {
 		return nil
 	}
-	scope := scopeFromBranchRef(branch)
-	log, err := ing.getOrCreateLog(ctx, scope)
+	log, err := ing.getOrCreateLog(ctx, namespace.Scope{Namespace: ns})
 	if err != nil {
 		return err
 	}
@@ -125,12 +106,11 @@ func (ing *Ingester) Upsert(ctx context.Context, branch string, records []*cloud
 	return err
 }
 
-func (ing *Ingester) Delete(ctx context.Context, branch string, ids []string) error {
+func (ing *Ingester) Delete(ctx context.Context, ns, branch string, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	scope := scopeFromBranchRef(branch)
-	log, err := ing.getOrCreateLog(ctx, scope)
+	log, err := ing.getOrCreateLog(ctx, namespace.Scope{Namespace: ns})
 	if err != nil {
 		return err
 	}
@@ -156,25 +136,26 @@ func (ing *Ingester) Delete(ctx context.Context, branch string, ids []string) er
 	return err
 }
 
-func (ing *Ingester) Fork(ctx context.Context, source, target string) error {
-	targetScope := scopeFromBranchRef(target)
+func (ing *Ingester) Fork(ctx context.Context, ns, source, target string) error {
+	scope := namespace.Scope{Namespace: ns}
+	targetKey := scope.ManifestKey(target)
 
-	parentManifest, _, err := manifest.Read(ctx, ing.store, source)
+	parentManifest, _, err := manifest.Read(ctx, ing.store, scope.ManifestKey(source))
 	if err != nil {
 		return err
 	}
-	if _, _, err := manifest.Read(ctx, ing.store, target); err == nil {
+	if _, _, err := manifest.Read(ctx, ing.store, targetKey); err == nil {
 		return manifest.ErrBranchAlreadyExists
 	} else if !errors.Is(err, objectstore.ErrNotFound) {
 		return err
 	}
-	if _, err := manifest.Write(ctx, ing.store, target, parentManifest, ""); err != nil {
+	if _, err := manifest.Write(ctx, ing.store, targetKey, parentManifest, ""); err != nil {
 		if errors.Is(err, objectstore.ErrPreconditionFailed) {
 			return manifest.ErrBranchAlreadyExists
 		}
 		return err
 	}
-	_ = targetScope.AddBranch(ctx, ing.store, target)
+	_ = scope.AddBranch(ctx, ing.store, target)
 
 	eventRec := &storagepb.WalRecord{
 		Record: &storagepb.WalRecord_BranchEvent{
@@ -188,7 +169,7 @@ func (ing *Ingester) Fork(ctx context.Context, source, target string) error {
 	recBytes, err := proto.Marshal(eventRec)
 	if err == nil {
 		var log *logstream.Log
-		log, err = ing.getOrCreateLog(ctx, targetScope)
+		log, err = ing.getOrCreateLog(ctx, scope)
 		if err == nil {
 			_, err = log.Append(ctx, []logstream.Record{recBytes})
 		}
@@ -196,8 +177,8 @@ func (ing *Ingester) Fork(ctx context.Context, source, target string) error {
 	if err != nil {
 		delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer delCancel()
-		_ = ing.store.Delete(delCtx, target)
-		_ = targetScope.RemoveBranch(delCtx, ing.store, target)
+		_ = ing.store.Delete(delCtx, targetKey)
+		_ = scope.RemoveBranch(delCtx, ing.store, target)
 		return err
 	}
 	return nil

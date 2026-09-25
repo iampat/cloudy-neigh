@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path"
 	"sync"
 	"time"
 
@@ -185,7 +184,7 @@ func (s *streamFlusher) initCheckpoints(ctx context.Context) (uint64, error) {
 	var minCheckpoint uint64
 	hasBranch := false
 	for _, branch := range branches {
-		m, _, err := manifest.Read(ctx, s.store, branch)
+		m, _, err := manifest.Read(ctx, s.store, s.scope.ManifestKey(branch))
 		if err != nil {
 			if errors.Is(err, objectstore.ErrNotFound) {
 				continue
@@ -273,7 +272,8 @@ func (s *streamFlusher) shutdownFlush(startSeq uint64) error {
 }
 
 func (s *streamFlusher) processRecords(ctx context.Context, seq uint64, records []logstream.Record) error {
-	branchMutations := make(map[string][]*storagepb.DocumentMutation)
+	var branch string
+	var mutations []*storagepb.DocumentMutation
 
 	for _, rec := range records {
 		var walRec storagepb.WalRecord
@@ -283,12 +283,6 @@ func (s *streamFlusher) processRecords(ctx context.Context, seq uint64, records 
 
 		if evt := walRec.GetBranchEvent(); evt != nil {
 			if evt.Type == storagepb.BranchLifecycleEvent_FORK {
-				if muts := branchMutations[evt.ParentBranch]; len(muts) > 0 {
-					if err := s.flushBranch(ctx, evt.ParentBranch, muts, seq); err != nil {
-						return err
-					}
-					delete(branchMutations, evt.ParentBranch)
-				}
 				if lastSeq, ok := s.branchCheckpoints[evt.Branch]; !ok || seq > lastSeq {
 					s.branchCheckpoints[evt.Branch] = seq
 				}
@@ -300,22 +294,18 @@ func (s *streamFlusher) processRecords(ctx context.Context, seq uint64, records 
 		if mut == nil || mut.Branch == "" {
 			continue
 		}
+		if branch != "" && mut.Branch != branch {
+			return fmt.Errorf("wal entry %d holds mutations for branches %q and %q", seq, branch, mut.Branch)
+		}
+		branch = mut.Branch
 
 		if lastSeq, ok := s.branchCheckpoints[mut.Branch]; ok && seq <= lastSeq {
 			continue
 		}
-
-		branchMutations[mut.Branch] = append(branchMutations[mut.Branch], mut)
+		mutations = append(mutations, mut)
 	}
 
-	for branch, muts := range branchMutations {
-		if len(muts) > 0 {
-			if err := s.flushBranch(ctx, branch, muts, seq); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return s.flushBranch(ctx, branch, mutations, seq)
 }
 
 func (s *streamFlusher) flushBranch(ctx context.Context, branch string, mutations []*storagepb.DocumentMutation, seq uint64) error {
@@ -336,8 +326,8 @@ func (s *streamFlusher) flushBranch(ctx context.Context, branch string, mutation
 	}
 	data := buf.Bytes()
 
-	branchName := path.Base(branch)
-	segID := fmt.Sprintf("%020d-%s", seq, branchName)
+	// A WAL entry holds the mutations of one branch, so its sequence number names the segment.
+	segID := fmt.Sprintf("%020d", seq)
 	segKey := s.scope.SegmentKey(segID)
 	if _, err := s.store.Put(ctx, segKey, bytes.NewReader(data), objectstore.Condition{Absent: true}); err != nil {
 		return fmt.Errorf("upload segment %s: %w", segKey, err)
@@ -348,12 +338,12 @@ func (s *streamFlusher) flushBranch(ctx context.Context, branch string, mutation
 		SegmentId: segID,
 		DocCount:  uint64(len(mutations)),
 		DocsSize:  int64(len(data)),
-		Key:       segKey,
 	}
 
+	manifestKey := s.scope.ManifestKey(branch)
 	casStart := time.Now()
 	for {
-		m, gen, err := manifest.Read(ctx, s.store, branch)
+		m, gen, err := manifest.Read(ctx, s.store, manifestKey)
 		if err != nil {
 			if errors.Is(err, objectstore.ErrNotFound) {
 				m = &storagepb.BranchManifest{
@@ -380,7 +370,7 @@ func (s *streamFlusher) flushBranch(ctx context.Context, branch string, mutation
 			m.CheckpointSeq = seq
 		}
 
-		_, err = manifest.Write(ctx, s.store, branch, m, gen)
+		_, err = manifest.Write(ctx, s.store, manifestKey, m, gen)
 		if err == nil {
 			_ = s.scope.AddBranch(ctx, s.store, branch)
 			s.branchCheckpoints[branch] = seq

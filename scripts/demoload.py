@@ -20,7 +20,7 @@ flags.DEFINE_string(
 flags.DEFINE_integer("batch_size", 200, "Batch size for writes")
 flags.DEFINE_integer("max_docs", None, "Maximum documents to stream")
 flags.DEFINE_string("target", "localhost:50051", "Target ingest address")
-flags.DEFINE_string("namespace", "main", "Target namespace")
+flags.DEFINE_string("namespace", "default", "Target namespace")
 flags.DEFINE_string("tenant", "cloudy", "Target tenant")
 
 logging.basicConfig(
@@ -53,7 +53,7 @@ def load_dataset(
     batch_size: int = 1000,
     max_docs: int | None = None,
     target: str = "localhost:50051",
-    namespace: str = "main",
+    namespace: str = "default",
     tenant: str = "cloudy",
 ) -> None:
     """Read Parquet files from data_dir and stream batches to the target service."""

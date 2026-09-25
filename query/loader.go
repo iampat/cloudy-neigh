@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/iampat/cloudy-neigh/manifest"
+	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	storagepb "github.com/iampat/cloudy-neigh/proto/storage/v1"
@@ -21,12 +22,14 @@ import (
 type Loader struct {
 	store   objectstore.Store
 	table   *atomic.Pointer[Table]
+	scope   namespace.Scope
+	branch  string
 	mu      sync.Mutex
 	loaded  map[string]bool
 	lastGen string
 }
 
-func NewLoader(store objectstore.Store, table *atomic.Pointer[Table]) (*Loader, error) {
+func NewLoader(store objectstore.Store, table *atomic.Pointer[Table], scope namespace.Scope, branch string) (*Loader, error) {
 	if store == nil {
 		return nil, errors.New("query: nil store")
 	}
@@ -36,18 +39,21 @@ func NewLoader(store objectstore.Store, table *atomic.Pointer[Table]) (*Loader, 
 	return &Loader{
 		store:  store,
 		table:  table,
+		scope:  scope,
+		branch: branch,
 		loaded: make(map[string]bool),
 	}, nil
 }
 
-func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
+func (l *Loader) Sync(ctx context.Context) (int, error) {
 	syncStart := time.Now()
-	manifest, gen, err := manifest.Read(ctx, l.store, branch)
+	manifestKey := l.scope.ManifestKey(l.branch)
+	manifest, gen, err := manifest.Read(ctx, l.store, manifestKey)
 	if err != nil {
 		if errors.Is(err, objectstore.ErrNotFound) {
 			return 0, nil
 		}
-		return 0, fmt.Errorf("sync branch %s: %w", branch, err)
+		return 0, fmt.Errorf("sync manifest %s: %w", manifestKey, err)
 	}
 
 	l.mu.Lock()
@@ -66,13 +72,7 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 		if t == nil {
 			t = l.table.Load().Clone()
 		}
-		segKey := seg.GetKey()
-		if segKey == "" {
-			if loadedCount > 0 {
-				l.table.Store(t)
-			}
-			return loadedCount, fmt.Errorf("query: segment ref missing key: %s", seg.GetSegmentId())
-		}
+		segKey := l.scope.SegmentKey(seg.GetSegmentId())
 
 		loadStart := time.Now()
 		rc, _, err := l.store.Get(ctx, segKey)
@@ -134,7 +134,7 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 		}
 
 		slog.Debug("loaded segment",
-			"branch", branch,
+			"manifest", manifestKey,
 			"segment_id", seg.SegmentId,
 			"records", count,
 			"load_dur", time.Since(loadStart),
@@ -150,7 +150,7 @@ func (l *Loader) Sync(ctx context.Context, branch string) (int, error) {
 
 	if loadedCount > 0 {
 		slog.Info("sync pass",
-			"branch", branch,
+			"manifest", manifestKey,
 			"segments", loadedCount,
 			"total_dur", time.Since(syncStart),
 		)

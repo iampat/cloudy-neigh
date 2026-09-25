@@ -25,7 +25,7 @@ func writeEngineSegment(t *testing.T, ctx context.Context, store objectstore.Sto
 		require.NoError(t, w.Write(m))
 	}
 	require.NoError(t, w.Close())
-	segKey := namespace.SegmentKey(namespace.DefaultNamespace, segID)
+	segKey := namespace.Scope{Namespace: namespace.DefaultNamespace}.SegmentKey(segID)
 	_, err := store.Put(ctx, segKey, bytes.NewReader(buf.Bytes()), objectstore.Condition{Absent: true})
 	require.NoError(t, err)
 }
@@ -36,17 +36,16 @@ func updateEngineManifest(t *testing.T, ctx context.Context, store objectstore.S
 	for _, id := range segIDs {
 		segs = append(segs, &storagepb.SegmentRef{
 			SegmentId: id,
-			Key:       namespace.SegmentKey(namespace.DefaultNamespace, id),
 		})
 	}
 	m := &storagepb.BranchManifest{
 		SchemaVersion: 1,
 		Segments:      segs,
 	}
-	gen, err := manifest.Write(ctx, store, branch, m, expectedGen)
-	require.NoError(t, err)
 	scope := namespace.Scope{Namespace: namespace.DefaultNamespace}
-	_ = scope.AddBranch(ctx, store, branch)
+	gen, err := manifest.Write(ctx, store, scope.ManifestKey(branch), m, expectedGen)
+	require.NoError(t, err)
+	require.NoError(t, scope.AddBranch(ctx, store, branch))
 	return gen
 }
 
@@ -118,7 +117,7 @@ func TestEngine_Query_SuccessAndDefaultColumn(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	branch := namespace.BranchRef(namespace.DefaultNamespace, "main")
+	branch := "main"
 	writeEngineSegment(t, ctx, store, branch, "seg-1", []*storagepb.DocumentMutation{
 		{
 			Branch:  branch,
@@ -135,7 +134,8 @@ func TestEngine_Query_SuccessAndDefaultColumn(t *testing.T) {
 	require.NoError(t, eng.SyncOnce(ctx))
 
 	hits, _, err := eng.Query(ctx, query.Request{
-		Namespace: branch,
+		Namespace: namespace.DefaultNamespace,
+		Branch:    branch,
 		Vector:    []float32{1.0, 0.0},
 		TopK:      10,
 	})

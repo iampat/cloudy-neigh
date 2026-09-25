@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//objectstore",
         "//proto/storage/v1:storage",
-        "@org_golang_google_protobuf//proto",
+        "@org_golang_google_protobuf//encoding/protojson",
     ],
 )
 

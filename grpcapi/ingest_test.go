@@ -9,6 +9,7 @@ import (
 
 	"github.com/iampat/cloudy-neigh/grpcapi"
 	"github.com/iampat/cloudy-neigh/ingest"
+	"github.com/iampat/cloudy-neigh/logstream"
 	"github.com/iampat/cloudy-neigh/manifest"
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
@@ -85,7 +86,7 @@ func stringAttr(s string) *cloudyneighpb.AttributeValue {
 }
 
 func TestUpsert_Success(t *testing.T) {
-	client, ing, _ := setupTestEnv(t)
+	client, _, store := setupTestEnv(t)
 	ctx := context.Background()
 
 	rec1 := &cloudyneighpb.Record{
@@ -116,7 +117,7 @@ func TestUpsert_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.UpsertedCount)
 
-	log, err := ing.Log(namespace.BranchRef("default", namespace.DefaultBranch))
+	log, err := logstream.New(store, namespace.Scope{Namespace: "default"}.WALPrefix())
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -129,7 +130,7 @@ func TestUpsert_Success(t *testing.T) {
 
 	var walRec1 storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[0], &walRec1))
-	assert.Equal(t, namespace.BranchRef("default", namespace.DefaultBranch), walRec1.GetMutation().Branch)
+	assert.Equal(t, namespace.DefaultBranch, walRec1.GetMutation().Branch)
 	assert.Equal(t, "doc-1", walRec1.GetMutation().DocId)
 	assert.Equal(t, storagepb.MutationOp_PUT, walRec1.GetMutation().Op)
 
@@ -141,7 +142,7 @@ func TestUpsert_Success(t *testing.T) {
 
 	var walRec2 storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[1], &walRec2))
-	assert.Equal(t, namespace.BranchRef("default", namespace.DefaultBranch), walRec2.GetMutation().Branch)
+	assert.Equal(t, namespace.DefaultBranch, walRec2.GetMutation().Branch)
 	assert.Equal(t, "doc-2", walRec2.GetMutation().DocId)
 
 	var payload2 cloudyneighpb.Record
@@ -150,7 +151,7 @@ func TestUpsert_Success(t *testing.T) {
 }
 
 func TestUpsert_EmptyRecords(t *testing.T) {
-	client, ing, _ := setupTestEnv(t)
+	client, _, store := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
@@ -160,7 +161,7 @@ func TestUpsert_EmptyRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), resp.UpsertedCount)
 
-	log, err := ing.Log(namespace.BranchRef("default", namespace.DefaultBranch))
+	log, err := logstream.New(store, namespace.Scope{Namespace: "default"}.WALPrefix())
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -220,7 +221,7 @@ func TestUpsert_Validation(t *testing.T) {
 }
 
 func TestUpsert_DefaultNamespace(t *testing.T) {
-	client, ing, _ := setupTestEnv(t)
+	client, _, store := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Upsert(ctx, &cloudyneighpb.UpsertRequest{
@@ -230,7 +231,7 @@ func TestUpsert_DefaultNamespace(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), resp.UpsertedCount)
 
-	log, err := ing.Log(namespace.BranchRef(namespace.DefaultNamespace, namespace.DefaultBranch))
+	log, err := logstream.New(store, namespace.Scope{Namespace: namespace.DefaultNamespace}.WALPrefix())
 	require.NoError(t, err)
 
 	records, err := log.Read(ctx, 1)
@@ -239,12 +240,12 @@ func TestUpsert_DefaultNamespace(t *testing.T) {
 
 	var walRec storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[0], &walRec))
-	assert.Equal(t, namespace.BranchRef(namespace.DefaultNamespace, namespace.DefaultBranch), walRec.GetMutation().Branch)
+	assert.Equal(t, namespace.DefaultBranch, walRec.GetMutation().Branch)
 	assert.Equal(t, "doc-default", walRec.GetMutation().DocId)
 }
 
 func TestDelete_Success(t *testing.T) {
-	client, ing, _ := setupTestEnv(t)
+	client, _, store := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -254,7 +255,7 @@ func TestDelete_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(2), resp.DeletedCount)
 
-	log, err := ing.Log(namespace.BranchRef("default", namespace.DefaultBranch))
+	log, err := logstream.New(store, namespace.Scope{Namespace: "default"}.WALPrefix())
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -272,7 +273,7 @@ func TestDelete_Success(t *testing.T) {
 
 		mutation := rec.GetMutation()
 		require.NotNil(t, mutation)
-		assert.Equal(t, namespace.BranchRef("default", namespace.DefaultBranch), mutation.Branch)
+		assert.Equal(t, namespace.DefaultBranch, mutation.Branch)
 		assert.Equal(t, wantIds[i], mutation.DocId)
 		assert.Equal(t, storagepb.MutationOp_DELETE, mutation.Op)
 		assert.Empty(t, mutation.Payload)
@@ -280,7 +281,7 @@ func TestDelete_Success(t *testing.T) {
 }
 
 func TestDelete_Empty(t *testing.T) {
-	client, ing, _ := setupTestEnv(t)
+	client, _, store := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -290,7 +291,7 @@ func TestDelete_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(0), resp.DeletedCount)
 
-	log, err := ing.Log(namespace.BranchRef("default", namespace.DefaultBranch))
+	log, err := logstream.New(store, namespace.Scope{Namespace: "default"}.WALPrefix())
 	require.NoError(t, err)
 
 	tail, err := log.Tail(ctx)
@@ -334,7 +335,7 @@ func TestDelete_Validation(t *testing.T) {
 }
 
 func TestDelete_DefaultNamespace(t *testing.T) {
-	client, ing, _ := setupTestEnv(t)
+	client, _, store := setupTestEnv(t)
 	ctx := context.Background()
 
 	resp, err := client.Delete(ctx, &cloudyneighpb.DeleteRequest{
@@ -344,7 +345,7 @@ func TestDelete_DefaultNamespace(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), resp.DeletedCount)
 
-	log, err := ing.Log(namespace.BranchRef(namespace.DefaultNamespace, namespace.DefaultBranch))
+	log, err := logstream.New(store, namespace.Scope{Namespace: namespace.DefaultNamespace}.WALPrefix())
 	require.NoError(t, err)
 
 	records, err := log.Read(ctx, 1)
@@ -353,13 +354,13 @@ func TestDelete_DefaultNamespace(t *testing.T) {
 
 	var walRec storagepb.WalRecord
 	require.NoError(t, proto.Unmarshal(records[0], &walRec))
-	assert.Equal(t, namespace.BranchRef(namespace.DefaultNamespace, namespace.DefaultBranch), walRec.GetMutation().Branch)
+	assert.Equal(t, namespace.DefaultBranch, walRec.GetMutation().Branch)
 	assert.Equal(t, "doc-default", walRec.GetMutation().DocId)
 	assert.Equal(t, storagepb.MutationOp_DELETE, walRec.GetMutation().Op)
 }
 
 func TestFork(t *testing.T) {
-	client, ing, store := setupTestEnv(t)
+	client, _, store := setupTestEnv(t)
 	ctx := context.Background()
 
 	_, err := client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -372,7 +373,7 @@ func TestFork(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.NotFound, st.Code())
 
-	_, err = manifest.Write(ctx, store, namespace.BranchRef("wiki", "parent"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, store, namespace.Scope{Namespace: "wiki"}.ManifestKey("parent"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -412,7 +413,7 @@ func TestFork(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.AlreadyExists, st.Code())
 
-	log, err := ing.Log(namespace.BranchRef("wiki", "child"))
+	log, err := logstream.New(store, namespace.Scope{Namespace: "wiki"}.WALPrefix())
 	require.NoError(t, err)
 
 	records, err := log.Read(ctx, 1)
@@ -424,10 +425,10 @@ func TestFork(t *testing.T) {
 	evt := walRec.GetBranchEvent()
 	require.NotNil(t, evt)
 	assert.Equal(t, storagepb.BranchLifecycleEvent_FORK, evt.Type)
-	assert.Equal(t, namespace.BranchRef("wiki", "child"), evt.Branch)
-	assert.Equal(t, namespace.BranchRef("wiki", "parent"), evt.ParentBranch)
+	assert.Equal(t, "child", evt.Branch)
+	assert.Equal(t, "parent", evt.ParentBranch)
 
-	_, err = manifest.Write(ctx, store, namespace.BranchRef(namespace.DefaultNamespace, "main"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	_, err = manifest.Write(ctx, store, namespace.Scope{Namespace: namespace.DefaultNamespace}.ManifestKey("main"), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
 	require.NoError(t, err)
 
 	_, err = client.Fork(ctx, &cloudyneighpb.ForkRequest{
@@ -539,7 +540,7 @@ func TestLocalFSBackend(t *testing.T) {
 	require.NoError(t, proto.Unmarshal(scanner1.Record(), &rec1))
 	m1 := rec1.GetMutation()
 	require.NotNil(t, m1)
-	assert.Equal(t, namespace.BranchRef("wiki", namespace.DefaultBranch), m1.Branch)
+	assert.Equal(t, namespace.DefaultBranch, m1.Branch)
 	assert.Equal(t, "wiki-101", m1.DocId)
 	assert.Equal(t, storagepb.MutationOp_PUT, m1.Op)
 
@@ -560,7 +561,7 @@ func TestLocalFSBackend(t *testing.T) {
 	require.NoError(t, proto.Unmarshal(scanner2.Record(), &rec2))
 	m2 := rec2.GetMutation()
 	require.NotNil(t, m2)
-	assert.Equal(t, namespace.BranchRef("wiki", namespace.DefaultBranch), m2.Branch)
+	assert.Equal(t, namespace.DefaultBranch, m2.Branch)
 	assert.Equal(t, "wiki-102", m2.DocId)
 	assert.Equal(t, storagepb.MutationOp_DELETE, m2.Op)
 	assert.Empty(t, m2.Payload)

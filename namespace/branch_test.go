@@ -2,6 +2,7 @@ package namespace_test
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"github.com/iampat/cloudy-neigh/namespace"
@@ -18,56 +19,32 @@ func newTestStore(t *testing.T) objectstore.Store {
 	return s
 }
 
-func TestListBranchesDefault(t *testing.T) {
-	ctx := context.Background()
-	s := newTestStore(t)
-
-	branches, err := namespace.ListBranches(ctx, s, "")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"ns/default/refs/head/main"}, branches)
-}
-
 func TestBranchRegistration(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	scope := namespace.Scope{Namespace: "prod"}
 
-	// Initially empty -> returns default branch ref
 	branches, err := scope.ListBranches(ctx, s)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"ns/prod/refs/head/main"}, branches)
+	assert.Equal(t, []string{"main"}, branches)
 
-	// Add branches
-	err = scope.AddBranch(ctx, s, scope.BranchRef("main"))
-	require.NoError(t, err)
-	err = scope.AddBranch(ctx, s, scope.BranchRef("feature-1"))
-	require.NoError(t, err)
-	err = scope.AddBranch(ctx, s, scope.BranchRef("feature-2"))
-	require.NoError(t, err)
-
+	for _, b := range []string{"main", "feature-1", "feature-2", "feature-1"} {
+		require.NoError(t, scope.AddBranch(ctx, s, b))
+	}
 	branches, err = scope.ListBranches(ctx, s)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{
-		"ns/prod/refs/head/main",
-		"ns/prod/refs/head/feature-1",
-		"ns/prod/refs/head/feature-2",
-	}, branches)
+	assert.Equal(t, []string{"feature-1", "feature-2", "main"}, branches)
 
-	// Idempotent add
-	err = scope.AddBranch(ctx, s, scope.BranchRef("feature-1"))
-	require.NoError(t, err)
+	require.NoError(t, scope.RemoveBranch(ctx, s, "feature-1"))
+	require.NoError(t, scope.RemoveBranch(ctx, s, "missing"))
 	branches, err = scope.ListBranches(ctx, s)
 	require.NoError(t, err)
-	assert.Len(t, branches, 3)
+	assert.Equal(t, []string{"feature-2", "main"}, branches)
 
-	// Remove branch
-	err = scope.RemoveBranch(ctx, s, scope.BranchRef("feature-1"))
+	rc, _, err := s.Get(ctx, "ns/prod/branches.json")
 	require.NoError(t, err)
-
-	branches, err = scope.ListBranches(ctx, s)
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{
-		"ns/prod/refs/head/main",
-		"ns/prod/refs/head/feature-2",
-	}, branches)
+	assert.JSONEq(t, `{"branches":{"main":{},"feature-2":{}}}`, string(data))
 }

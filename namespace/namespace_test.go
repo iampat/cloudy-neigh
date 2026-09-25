@@ -66,19 +66,18 @@ func TestScope_StorageHierarchy(t *testing.T) {
 
 	assert.Equal(t, "ns/catalog", s.Prefix())
 	assert.Equal(t, "ns/catalog/wal", s.WALPrefix())
-	assert.Equal(t, "ns/catalog/refs/head/main", s.BranchRef("main"))
-	assert.Equal(t, "ns/catalog/refs/head/experiment", s.BranchRef("experiment"))
+	assert.Equal(t, "ns/catalog/refs/heads/main.json", s.ManifestKey("main"))
+	assert.Equal(t, "ns/catalog/refs/heads/experiment.json", s.ManifestKey("experiment"))
 	assert.Equal(t, "ns/catalog/segments", s.SegmentsPrefix())
 	assert.Equal(t, "ns/catalog/custom", s.Path("custom"))
 }
 
-func TestBranchRef(t *testing.T) {
-	assert.Equal(t, "ns/default/refs/head/main", namespace.BranchRef("default", "main"))
-	assert.Equal(t, "ns/prod/refs/head/main", namespace.BranchRef("prod", "main"))
-	assert.Equal(t, "ns/prod/segments/00000000000000000001.recordio", namespace.SegmentKey("prod", "00000000000000000001"))
+func TestKeys(t *testing.T) {
+	assert.Equal(t, "ns/default/refs/heads/main.json", namespace.Scope{Namespace: "default"}.ManifestKey("main"))
+	assert.Equal(t, "ns/prod/refs/heads/main.json", namespace.Scope{Namespace: "prod"}.ManifestKey("main"))
+	assert.Equal(t, "ns/prod/segments/00000000000000000001.recordio", namespace.Scope{Namespace: "prod"}.SegmentKey("00000000000000000001"))
 	scope := namespace.Scope{Namespace: "prod"}
 	assert.Equal(t, "ns/prod/segments/00000000000000000001.recordio", scope.SegmentKey("00000000000000000001"))
-	assert.Equal(t, "ns/prod/branches.json", namespace.BranchesPath("prod"))
 }
 
 func TestScope_ValidationErrors(t *testing.T) {

@@ -51,16 +51,15 @@ func updateManifest(t *testing.T, ctx context.Context, store objectstore.Store, 
 	for _, id := range segIDs {
 		segs = append(segs, &storagepb.SegmentRef{
 			SegmentId: id,
-			Key:       scope.SegmentKey(id),
 		})
 	}
 	m := &storagepb.BranchManifest{
 		SchemaVersion: 1,
 		Segments:      segs,
 	}
-	gen, err := manifest.Write(ctx, store, branch, m, expectedGen)
+	gen, err := manifest.Write(ctx, store, scope.ManifestKey(branch), m, expectedGen)
 	require.NoError(t, err)
-	_ = scope.AddBranch(ctx, store, branch)
+	require.NoError(t, scope.AddBranch(ctx, store, branch))
 	return gen
 }
 
@@ -155,7 +154,7 @@ func TestQuery_Validation(t *testing.T) {
 
 	client, eng := setupQueryTestEnv(t, store)
 
-	mainBranch := namespace.BranchRef("default", "main")
+	mainBranch := "main"
 	writeSegment(t, ctx, store, mainBranch, "seg-1", []*storagepb.DocumentMutation{
 		{
 			Branch: mainBranch,
@@ -260,7 +259,7 @@ func TestQuery_EndToEnd(t *testing.T) {
 	flusher, err := ingest.NewFlusher(store, ingest.Config{})
 	require.NoError(t, err)
 
-	err = ingester.Upsert(ctx, namespace.BranchRef(namespace.DefaultNamespace, "main"), []*cloudyneighpb.Record{
+	err = ingester.Upsert(ctx, namespace.DefaultNamespace, "main", []*cloudyneighpb.Record{
 		{
 			Id: "doc-1",
 			Vectors: map[string]*cloudyneighpb.Vector{
@@ -323,7 +322,7 @@ func TestQuery_EndToEnd(t *testing.T) {
 	require.Len(t, resp.Hits, 1)
 	require.Equal(t, "doc-3", resp.Hits[0].Record.Id)
 
-	err = ingester.Delete(ctx, namespace.BranchRef(namespace.DefaultNamespace, "main"), []string{"doc-1"})
+	err = ingester.Delete(ctx, namespace.DefaultNamespace, "main", []string{"doc-1"})
 	require.NoError(t, err)
 
 	flusherCtx2, cancelFlusher2 := context.WithCancel(ctx)
@@ -401,7 +400,7 @@ func TestQuery_ConcurrentSyncAndQuery(t *testing.T) {
 		payload, err := proto.Marshal(rec)
 		require.NoError(t, err)
 
-		mainBranch := namespace.BranchRef("default", "main")
+		mainBranch := "main"
 		mut := &storagepb.DocumentMutation{
 			Branch:  mainBranch,
 			DocId:   rec.Id,

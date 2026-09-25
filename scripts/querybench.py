@@ -20,7 +20,7 @@ flags.DEFINE_string(
 )
 flags.DEFINE_string("parquet", "en/0000.parquet", "Parquet file for query vectors")
 flags.DEFINE_string("target", "localhost:50052", "Target query address")
-flags.DEFINE_string("namespace", "main", "Target namespace")
+flags.DEFINE_string("namespace", "default", "Target namespace")
 flags.DEFINE_string("tenant", "cloudy", "Target tenant")
 flags.DEFINE_integer("queries", 100, "Number of timed queries")
 flags.DEFINE_integer("warmup", 10, "Number of warmup queries")

@@ -39,7 +39,6 @@ message SegmentRef {
   string segment_id = 1;
   uint64 doc_count = 4;
   int64 docs_size = 8;
-  string key = 9;
 }
 
 message BranchManifest {
