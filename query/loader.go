@@ -19,6 +19,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+var ErrManifestTruncated = errors.New("query: manifest truncated")
+
 type Loader struct {
 	store   objectstore.Store
 	table   *atomic.Pointer[Table]
@@ -60,6 +62,10 @@ func (l *Loader) Sync(ctx context.Context) (int, error) {
 
 	if gen != "" && gen == l.lastGen {
 		return 0, nil
+	}
+
+	if l.applied > len(manifest.Segments) {
+		return 0, fmt.Errorf("sync manifest %s: %w (%d < %d)", manifestKey, ErrManifestTruncated, len(manifest.Segments), l.applied)
 	}
 
 	var t *Table

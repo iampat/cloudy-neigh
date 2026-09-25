@@ -360,6 +360,9 @@ func (s *streamFlusher) flushBranch(ctx context.Context, branch string, mutation
 		}
 
 		if m.CheckpointSeq >= seq {
+			if err := s.scope.AddBranch(ctx, s.store, branch); err != nil {
+				return fmt.Errorf("add branch %s: %w", branch, err)
+			}
 			s.branchCheckpoints[branch] = m.CheckpointSeq
 			return nil
 		}
@@ -369,7 +372,9 @@ func (s *streamFlusher) flushBranch(ctx context.Context, branch string, mutation
 
 		_, err = manifest.Write(ctx, s.store, manifestKey, m, gen)
 		if err == nil {
-			_ = s.scope.AddBranch(ctx, s.store, branch)
+			if err := s.scope.AddBranch(ctx, s.store, branch); err != nil {
+				return fmt.Errorf("add branch %s: %w", branch, err)
+			}
 			s.branchCheckpoints[branch] = seq
 			casDur := time.Since(casStart)
 

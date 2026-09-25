@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -784,8 +785,20 @@ func TestLoader_DuplicateContentSurvivesInManifestAndQueryTable(t *testing.T) {
 	log, err := logstream.New(store, namespace.Scope{Namespace: namespace.DefaultNamespace}.WALPrefix())
 	require.NoError(t, err)
 
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable(pureKernels(t)))
+	loader := newLoader(t, store, &table, "main")
+
 	appendWALRecord(t, ctx, log, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("initial")})
 	flushBranch(t, ctx, store, mainKey, 1)
+
+	loaded, err := loader.Sync(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	rec, ok := table.Load().Get("doc-1")
+	require.True(t, ok)
+	require.True(t, proto.Equal(stringAttr("initial"), rec.Attributes["title"]))
 
 	var recDel storagepb.WalRecord
 	recDel.Record = &storagepb.WalRecord_Mutation{
@@ -801,25 +814,135 @@ func TestLoader_DuplicateContentSurvivesInManifestAndQueryTable(t *testing.T) {
 	require.NoError(t, err)
 	flushBranch(t, ctx, store, mainKey, 2)
 
+	loaded, err = loader.Sync(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	_, ok = table.Load().Get("doc-1")
+	require.False(t, ok)
+
 	appendWALRecord(t, ctx, log, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("initial")})
 	flushBranch(t, ctx, store, mainKey, 3)
+
+	loaded, err = loader.Sync(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, loaded)
+
+	rec, ok = table.Load().Get("doc-1")
+	require.True(t, ok)
+	require.True(t, proto.Equal(stringAttr("initial"), rec.Attributes["title"]))
 
 	m, _, err := manifest.Read(ctx, store, mainKey)
 	require.NoError(t, err)
 	require.Len(t, m.Segments, 3)
 	require.Equal(t, m.Segments[0].SegmentId, m.Segments[2].SegmentId)
 	require.NotEqual(t, m.Segments[0].SegmentId, m.Segments[1].SegmentId)
+}
+
+func TestLoader_Sync_ShorterManifestReturnsError(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
 	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0, 0.0}, nil),
+	})
+	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-2", []float32{0.0, 1.0}, nil),
+	})
+
+	gen := updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, "")
 	loaded, err := loader.Sync(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 3, loaded)
+	require.Equal(t, 2, loaded)
 
-	rec, ok := table.Load().Get("doc-1")
-	require.True(t, ok)
-	require.Equal(t, "doc-1", rec.Id)
-	require.True(t, proto.Equal(stringAttr("initial"), rec.Attributes["title"]))
+	updateManifest(t, store, "main", []string{"seg-1"}, gen)
+
+	loaded, err = loader.Sync(ctx)
+	require.Error(t, err)
+	require.ErrorIs(t, err, query.ErrManifestTruncated)
+	require.Equal(t, 0, loaded)
+}
+
+type interceptGetStore struct {
+	objectstore.Store
+	onGetManifest func()
+}
+
+func (s *interceptGetStore) Get(ctx context.Context, key string) (io.ReadCloser, objectstore.Object, error) {
+	rc, obj, err := s.Store.Get(ctx, key)
+	if err == nil && s.onGetManifest != nil && key == defaultScope.ManifestKey("main") {
+		s.onGetManifest()
+	}
+	return rc, obj, err
+}
+
+func TestLoader_Sync_ConcurrentSyncStaleSnapshotReturnsError(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-1", []float32{1.0, 0.0}, nil),
+	})
+	writeSegment(t, store, "main", "seg-2", []*storagepb.DocumentMutation{
+		putMutation(t, "main", "doc-2", []float32{0.0, 1.0}, nil),
+	})
+
+	gen1 := updateManifest(t, store, "main", []string{"seg-1"}, "")
+
+	var triggered atomic.Bool
+	readStarted := make(chan struct{})
+	syncDone := make(chan struct{})
+
+	intercept := &interceptGetStore{
+		Store: store,
+		onGetManifest: func() {
+			if triggered.CompareAndSwap(false, true) {
+				close(readStarted)
+				select {
+				case <-syncDone:
+				case <-ctx.Done():
+				}
+			}
+		},
+	}
+
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable(pureKernels(t)))
+	loader := newLoader(t, intercept, &table, "main")
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := loader.Sync(ctx)
+		errCh <- err
+	}()
+
+	select {
+	case <-readStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for loader to read initial manifest")
+	}
+
+	updateManifest(t, store, "main", []string{"seg-1", "seg-2"}, gen1)
+
+	loaded, err := loader.Sync(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, loaded)
+
+	close(syncDone)
+
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		require.ErrorIs(t, err, query.ErrManifestTruncated)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for concurrent Sync to complete")
+	}
 }

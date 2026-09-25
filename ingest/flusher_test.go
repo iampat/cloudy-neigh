@@ -592,23 +592,22 @@ var errCrash = errors.New("crash before manifest write")
 
 type crashOnPutStore struct {
 	objectstore.Store
-	mu      sync.Mutex
 	crashOn string
 	crashed chan struct{}
+	once    sync.Once
 }
 
 func (s *crashOnPutStore) Put(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) (string, error) {
-	s.mu.Lock()
 	if key == s.crashOn {
-		select {
-		case <-s.crashed:
-		default:
+		var crashed bool
+		s.once.Do(func() {
 			close(s.crashed)
-			s.mu.Unlock()
+			crashed = true
+		})
+		if crashed {
 			return "", errCrash
 		}
 	}
-	s.mu.Unlock()
 	return s.Store.Put(ctx, key, r, cond)
 }
 
@@ -660,23 +659,77 @@ func TestFlusher_RecoversAfterCrashBetweenUploadAndManifest(t *testing.T) {
 	require.NoError(t, <-errCh2)
 }
 
-func appendDelete(t *testing.T, ctx context.Context, log *logstream.Log, branch, docID string) uint64 {
-	t.Helper()
-	walRec := &storagepb.WalRecord{
-		Record: &storagepb.WalRecord_Mutation{
-			Mutation: &storagepb.DocumentMutation{
-				Branch: branch,
-				DocId:  docID,
-				Op:     storagepb.MutationOp_DELETE,
-			},
-		},
-	}
-	recBytes, err := proto.Marshal(walRec)
-	require.NoError(t, err)
+func TestFlusher_RecoversAfterCatalogWriteFailure(t *testing.T) {
+	ctx := context.Background()
 
-	seq, err := log.Append(ctx, []logstream.Record{recBytes})
+	store, err := objectstore.Open(ctx, "mem://")
 	require.NoError(t, err)
-	return seq
+	defer store.Close()
+
+	log, err := logstream.New(store, defaultWAL)
+	require.NoError(t, err)
+	seq1 := appendDoc(t, ctx, log, "feature", "doc-1", []byte("val-1"))
+
+	scope := namespace.Scope{Namespace: namespace.DefaultNamespace}
+	branchesKey := scope.Path("branches.json")
+
+	crashing := &crashOnPutStore{
+		Store:   store,
+		crashOn: branchesKey,
+		crashed: make(chan struct{}),
+	}
+	flusher1, err := ingest.NewFlusher(crashing, ingest.Config{PollInterval: 10 * time.Millisecond})
+	require.NoError(t, err)
+	ctx1, cancel1 := context.WithCancel(ctx)
+	errCh1 := make(chan error, 1)
+	go func() {
+		errCh1 <- flusher1.Run(ctx1)
+	}()
+	select {
+	case <-crashing.crashed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("flusher never reached the branch catalog write")
+	}
+	cancel1()
+	<-errCh1
+
+	m, _, err := manifest.Read(ctx, store, scope.ManifestKey("feature"))
+	require.NoError(t, err)
+	require.Equal(t, seq1, m.CheckpointSeq)
+
+	branches, err := scope.ListBranches(ctx, store)
+	require.NoError(t, err)
+	require.NotContains(t, branches, "feature")
+
+	flusher2, err := ingest.NewFlusher(store, ingest.Config{PollInterval: 10 * time.Millisecond})
+	require.NoError(t, err)
+	ctx2, cancel2 := context.WithCancel(ctx)
+	errCh2 := make(chan error, 1)
+	go func() {
+		errCh2 <- flusher2.Run(ctx2)
+	}()
+
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.After(5 * time.Second)
+	for {
+		branches, err := scope.ListBranches(ctx, store)
+		if err == nil && slices.Contains(branches, "feature") {
+			break
+		}
+		select {
+		case <-timeout:
+			t.Fatal("timed out waiting for feature branch to appear in ListBranches")
+		case <-ticker.C:
+		}
+	}
+
+	cancel2()
+	require.NoError(t, <-errCh2)
+
+	branches, err = scope.ListBranches(ctx, store)
+	require.NoError(t, err)
+	require.Contains(t, branches, "feature")
 }
 
 func TestFlusher_DuplicateContentGeneratesIdenticalSegmentID(t *testing.T) {
@@ -690,10 +743,23 @@ func TestFlusher_DuplicateContentGeneratesIdenticalSegmentID(t *testing.T) {
 	log, err := logstream.New(store, defaultWAL)
 	require.NoError(t, err)
 
-	br := "main"
-	_ = appendDoc(t, ctx, log, br, "doc-1", []byte("val-1"))
-	_ = appendDelete(t, ctx, log, br, "doc-1")
-	seq3 := appendDoc(t, ctx, log, br, "doc-1", []byte("val-1"))
+	_ = appendDoc(t, ctx, log, "main", "doc-1", []byte("val-1"))
+
+	delRec := &storagepb.WalRecord{
+		Record: &storagepb.WalRecord_Mutation{
+			Mutation: &storagepb.DocumentMutation{
+				Branch: "main",
+				DocId:  "doc-1",
+				Op:     storagepb.MutationOp_DELETE,
+			},
+		},
+	}
+	delBytes, err := proto.Marshal(delRec)
+	require.NoError(t, err)
+	_, err = log.Append(ctx, []logstream.Record{delBytes})
+	require.NoError(t, err)
+
+	seq3 := appendDoc(t, ctx, log, "main", "doc-1", []byte("val-1"))
 
 	flusher, err := ingest.NewFlusher(store, ingest.Config{
 		PollInterval: 10 * time.Millisecond,
@@ -705,12 +771,9 @@ func TestFlusher_DuplicateContentGeneratesIdenticalSegmentID(t *testing.T) {
 		flusherErrCh <- flusher.Run(ctx)
 	}()
 
-	m := waitForManifest(t, ctx, store, defaultKey(br), func(m *storagepb.BranchManifest) bool {
+	m := waitForManifest(t, ctx, store, defaultKey("main"), func(m *storagepb.BranchManifest) bool {
 		return len(m.Segments) == 3 && m.CheckpointSeq == seq3
 	})
-	require.NotNil(t, m)
-	assert.Equal(t, seq3, m.CheckpointSeq)
-	require.Len(t, m.Segments, 3)
 
 	assert.Equal(t, m.Segments[0].SegmentId, m.Segments[2].SegmentId)
 	assert.NotEqual(t, m.Segments[0].SegmentId, m.Segments[1].SegmentId)
