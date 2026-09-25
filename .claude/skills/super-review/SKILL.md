@@ -48,22 +48,28 @@ and the point is three independent opinions.
 - Do not address a finding. Report the table, and wait for the user.
 - Drop a finding that contradicts a decision the user made. Name it and the
   decision in a separate table, so the user sees what was dropped.
-- Keep the transcripts in `docs/reviews/<date>-<topic>-review-<tool>.md`. They
-  stay local. Never commit them.
+- Keep the transcripts in `docs/reviews/<date>-<topic>-<run id>-<tool>.md`. The
+  run id is the random suffix of `$RUN`. They stay local. Never commit them.
 
 ## Procedure
 
-1. Prepare the worktree and the prompt file:
+1. Create a run directory with a random name, so parallel or leftover runs
+   never collide. Shell state does not persist between tool calls, so record
+   the printed path and write it literally into every later command. The
+   steps below call it `$RUN`.
 
    ```sh
    git fetch origin
-   git worktree add --detach /private/tmp/claude-501/wt-review <target branch>
-   # write the message from "The message" with the Write tool:
-   #   /private/tmp/claude-501/review/prompt.txt
+   mktemp -d /private/tmp/claude-501/super-review.XXXXXX
+   git worktree add --detach $RUN/wt <target branch>
    ```
 
+   Write the message from "The message" to `$RUN/prompt.txt` with the Write
+   tool.
+
    With `--dry-run`, skip this step. Print the message, then the three
-   commands of step 2 with the real paths and the target filled in, and stop.
+   commands of step 2 with the target filled in and `$RUN` left as is, and
+   stop.
 
 2. Start three background subagents in one message.
 
@@ -73,17 +79,17 @@ and the point is three independent opinions.
      status lines, so it skips non-JSON lines before it parses.
 
      ```sh
-     env -C /private/tmp/claude-501/wt-review agy -p "$(cat /private/tmp/claude-501/review/prompt.txt)" \
+     env -C $RUN/wt agy -p "$(cat $RUN/prompt.txt)" \
        --output-format json --dangerously-skip-permissions --print-timeout 20m \
-       > /private/tmp/claude-501/review/agy.json 2>&1
+       > $RUN/agy.json 2>&1
      ```
 
    - pi: a wrapper subagent runs the command below and returns the response
      verbatim.
 
      ```sh
-     env -C /private/tmp/claude-501/wt-review pi --model openai/gpt-6-astra --no-session \
-       -p "$(cat /private/tmp/claude-501/review/prompt.txt)" > /private/tmp/claude-501/review/pi.md 2>&1
+     env -C $RUN/wt pi --model openai/gpt-6-astra --no-session \
+       -p "$(cat $RUN/prompt.txt)" > $RUN/pi.md 2>&1
      ```
 
    - Claude: an Agent subagent with `isolation: "worktree"`. Its whole prompt is
@@ -108,7 +114,8 @@ and the point is three independent opinions.
    Put the note where two reviewers disagree, and give your own view. Add the
    table of dropped findings and the decision each one contradicts.
 
-6. Remove the worktree: `git worktree remove /private/tmp/claude-501/wt-review`.
+6. Remove the worktree with `git worktree remove $RUN/wt`, then the run
+   directory with `rm -r $RUN`.
    Check that the Claude reviewer's worktree is gone too, with
    `git worktree list`.
 
