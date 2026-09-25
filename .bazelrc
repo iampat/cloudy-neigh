@@ -14,3 +14,4 @@ test:fuzz --test_arg=-test.fuzz=.
 test:fuzz --test_arg=-test.fuzztime=600s
 test:fuzz --test_arg=-test.fuzzcachedir=/tmp/fuzzcache
 test:fuzz --nocache_test_results
+test:ci --test_arg=-test.short
