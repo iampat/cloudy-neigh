@@ -3,6 +3,7 @@ package ingest_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -185,8 +186,9 @@ func TestMultiBranchFlush(t *testing.T) {
 	mainManifest := waitForManifest(t, ctx, store, defaultKey("main"), func(m *storagepb.BranchManifest) bool {
 		return len(m.Segments) == 2 && m.CheckpointSeq == 3
 	})
-	assert.Equal(t, "00000000000000000001", mainManifest.Segments[0].SegmentId)
-	assert.Equal(t, "00000000000000000003", mainManifest.Segments[1].SegmentId)
+	assert.Len(t, mainManifest.Segments[0].SegmentId, 64)
+	assert.Len(t, mainManifest.Segments[1].SegmentId, 64)
+	assert.NotEqual(t, mainManifest.Segments[0].SegmentId, mainManifest.Segments[1].SegmentId)
 	exists, err := store.Exists(ctx, namespace.Scope{Namespace: namespace.DefaultNamespace}.SegmentKey(mainManifest.Segments[1].SegmentId))
 	require.NoError(t, err)
 	assert.True(t, exists)
@@ -194,7 +196,7 @@ func TestMultiBranchFlush(t *testing.T) {
 	devManifest := waitForManifest(t, ctx, store, defaultKey("dev"), func(m *storagepb.BranchManifest) bool {
 		return len(m.Segments) == 1 && m.CheckpointSeq == 2
 	})
-	assert.Equal(t, "00000000000000000002", devManifest.Segments[0].SegmentId)
+	assert.Len(t, devManifest.Segments[0].SegmentId, 64)
 
 	cancel()
 	err = <-flusherErrCh
@@ -580,6 +582,201 @@ func TestFlusher_MultiNamespaceDiscoveryAndFlush(t *testing.T) {
 		return len(m.Segments) == 2 && m.CheckpointSeq == 2
 	})
 	require.NotNil(t, manifestB2)
+
+	cancel()
+	err = <-flusherErrCh
+	require.NoError(t, err)
+}
+
+var errCrash = errors.New("crash before manifest write")
+
+type crashOnPutStore struct {
+	objectstore.Store
+	crashOn string
+	crashed chan struct{}
+	once    sync.Once
+}
+
+func (s *crashOnPutStore) Put(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) (string, error) {
+	if key == s.crashOn {
+		var crashed bool
+		s.once.Do(func() {
+			close(s.crashed)
+			crashed = true
+		})
+		if crashed {
+			return "", errCrash
+		}
+	}
+	return s.Store.Put(ctx, key, r, cond)
+}
+
+func TestFlusher_RecoversAfterCrashBetweenUploadAndManifest(t *testing.T) {
+	ctx := context.Background()
+
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	log, err := logstream.New(store, defaultWAL)
+	require.NoError(t, err)
+	seq1 := appendDoc(t, ctx, log, "main", "doc-1", []byte("val-1"))
+
+	crashing := &crashOnPutStore{Store: store, crashOn: defaultKey("main"), crashed: make(chan struct{})}
+	flusher1, err := ingest.NewFlusher(crashing, ingest.Config{PollInterval: 10 * time.Millisecond})
+	require.NoError(t, err)
+	ctx1, cancel1 := context.WithCancel(ctx)
+	errCh1 := make(chan error, 1)
+	go func() {
+		errCh1 <- flusher1.Run(ctx1)
+	}()
+	select {
+	case <-crashing.crashed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("flusher never reached the manifest write")
+	}
+	cancel1()
+	<-errCh1
+
+	flusher2, err := ingest.NewFlusher(store, ingest.Config{PollInterval: 10 * time.Millisecond})
+	require.NoError(t, err)
+	ctx2, cancel2 := context.WithCancel(ctx)
+	errCh2 := make(chan error, 1)
+	go func() {
+		errCh2 <- flusher2.Run(ctx2)
+	}()
+
+	waitForManifest(t, ctx, store, defaultKey("main"), func(m *storagepb.BranchManifest) bool {
+		return m.CheckpointSeq == seq1 && len(m.Segments) == 1
+	})
+
+	seq2 := appendDoc(t, ctx, log, "main", "doc-2", []byte("val-2"))
+	waitForManifest(t, ctx, store, defaultKey("main"), func(m *storagepb.BranchManifest) bool {
+		return m.CheckpointSeq == seq2 && len(m.Segments) == 2
+	})
+
+	cancel2()
+	require.NoError(t, <-errCh2)
+}
+
+func TestFlusher_RecoversAfterCatalogWriteFailure(t *testing.T) {
+	ctx := context.Background()
+
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	log, err := logstream.New(store, defaultWAL)
+	require.NoError(t, err)
+	seq1 := appendDoc(t, ctx, log, "feature", "doc-1", []byte("val-1"))
+
+	scope := namespace.Scope{Namespace: namespace.DefaultNamespace}
+	branchesKey := scope.Path("branches.json")
+
+	crashing := &crashOnPutStore{
+		Store:   store,
+		crashOn: branchesKey,
+		crashed: make(chan struct{}),
+	}
+	flusher1, err := ingest.NewFlusher(crashing, ingest.Config{PollInterval: 10 * time.Millisecond})
+	require.NoError(t, err)
+	ctx1, cancel1 := context.WithCancel(ctx)
+	errCh1 := make(chan error, 1)
+	go func() {
+		errCh1 <- flusher1.Run(ctx1)
+	}()
+	select {
+	case <-crashing.crashed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("flusher never reached the branch catalog write")
+	}
+	cancel1()
+	<-errCh1
+
+	m, _, err := manifest.Read(ctx, store, scope.ManifestKey("feature"))
+	require.NoError(t, err)
+	require.Equal(t, seq1, m.CheckpointSeq)
+
+	branches, err := scope.ListBranches(ctx, store)
+	require.NoError(t, err)
+	require.NotContains(t, branches, "feature")
+
+	flusher2, err := ingest.NewFlusher(store, ingest.Config{PollInterval: 10 * time.Millisecond})
+	require.NoError(t, err)
+	ctx2, cancel2 := context.WithCancel(ctx)
+	errCh2 := make(chan error, 1)
+	go func() {
+		errCh2 <- flusher2.Run(ctx2)
+	}()
+
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.After(5 * time.Second)
+	for {
+		branches, err := scope.ListBranches(ctx, store)
+		if err == nil && slices.Contains(branches, "feature") {
+			break
+		}
+		select {
+		case <-timeout:
+			t.Fatal("timed out waiting for feature branch to appear in ListBranches")
+		case <-ticker.C:
+		}
+	}
+
+	cancel2()
+	require.NoError(t, <-errCh2)
+
+	branches, err = scope.ListBranches(ctx, store)
+	require.NoError(t, err)
+	require.Contains(t, branches, "feature")
+}
+
+func TestFlusher_DuplicateContentGeneratesIdenticalSegmentID(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	log, err := logstream.New(store, defaultWAL)
+	require.NoError(t, err)
+
+	_ = appendDoc(t, ctx, log, "main", "doc-1", []byte("val-1"))
+
+	delRec := &storagepb.WalRecord{
+		Record: &storagepb.WalRecord_Mutation{
+			Mutation: &storagepb.DocumentMutation{
+				Branch: "main",
+				DocId:  "doc-1",
+				Op:     storagepb.MutationOp_DELETE,
+			},
+		},
+	}
+	delBytes, err := proto.Marshal(delRec)
+	require.NoError(t, err)
+	_, err = log.Append(ctx, []logstream.Record{delBytes})
+	require.NoError(t, err)
+
+	seq3 := appendDoc(t, ctx, log, "main", "doc-1", []byte("val-1"))
+
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
+		PollInterval: 10 * time.Millisecond,
+	})
+	require.NoError(t, err)
+
+	flusherErrCh := make(chan error, 1)
+	go func() {
+		flusherErrCh <- flusher.Run(ctx)
+	}()
+
+	m := waitForManifest(t, ctx, store, defaultKey("main"), func(m *storagepb.BranchManifest) bool {
+		return len(m.Segments) == 3 && m.CheckpointSeq == seq3
+	})
+
+	assert.Equal(t, m.Segments[0].SegmentId, m.Segments[2].SegmentId)
+	assert.NotEqual(t, m.Segments[0].SegmentId, m.Segments[1].SegmentId)
 
 	cancel()
 	err = <-flusherErrCh

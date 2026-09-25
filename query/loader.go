@@ -19,13 +19,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+var ErrManifestTruncated = errors.New("query: manifest truncated")
+
 type Loader struct {
 	store   objectstore.Store
 	table   *atomic.Pointer[Table]
 	scope   namespace.Scope
 	branch  string
 	mu      sync.Mutex
-	loaded  map[string]bool
+	applied int
 	lastGen string
 }
 
@@ -41,7 +43,6 @@ func NewLoader(store objectstore.Store, table *atomic.Pointer[Table], scope name
 		table:  table,
 		scope:  scope,
 		branch: branch,
-		loaded: make(map[string]bool),
 	}, nil
 }
 
@@ -63,12 +64,13 @@ func (l *Loader) Sync(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
+	if l.applied > len(manifest.Segments) {
+		return 0, fmt.Errorf("sync manifest %s: %w (%d < %d)", manifestKey, ErrManifestTruncated, len(manifest.Segments), l.applied)
+	}
+
 	var t *Table
 	loadedCount := 0
-	for _, seg := range manifest.Segments {
-		if l.loaded[seg.SegmentId] {
-			continue
-		}
+	for _, seg := range manifest.Segments[l.applied:] {
 		if t == nil {
 			t = l.table.Load().Clone()
 		}
@@ -140,7 +142,7 @@ func (l *Loader) Sync(ctx context.Context) (int, error) {
 			"load_dur", time.Since(loadStart),
 		)
 
-		l.loaded[seg.SegmentId] = true
+		l.applied++
 		loadedCount++
 	}
 	if t != nil {

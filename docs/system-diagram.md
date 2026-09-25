@@ -220,11 +220,15 @@ dependency injection, delegating multi-tenant log stream routing to the
    vector and document data. The segment ID is the SHA-256 hash of the
    serialized segment bytes (`<sha256>.recordio`). Segments live directly
    under `segments/` without branch subdirectories and are shared across
-   forked branches.
-3. **Branch heads advance monotonically**: Manifest commits update
+   forked branches. A replay that finds the segment already stored counts as
+   a success, so a crash between the upload and the manifest commit recovers.
+3. **A manifest is an ordered list**: The same segment ID can appear more than
+   once. The flusher appends an entry when `CheckpointSeq < seq`, and the query
+   loader applies entries by position, so the latest write wins.
+4. **Branch heads advance monotonically**: Manifest commits update
    `<tenant>/ns/<namespace>/refs/head/<branch>` with `manifest.Write` using
    conditional creates (`Absent: true`) or generation-matched CAS updates.
-4. **Branch catalog**: Active branches are cataloged in `branches.json` with
+5. **Branch catalog**: Active branches are cataloged in `branches.json` with
    CAS updates.
 
 ---

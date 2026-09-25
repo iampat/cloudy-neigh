@@ -31,7 +31,7 @@ No external database or consensus coordinator exists.
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ Layer 2: Ingestion & Columnar Segments (segment/, ingest/, kvfs/)           │
-│ • Immutable RecordIO segment files: segments/<branch>/<segID>.recordio      │
+│ • Immutable RecordIO segment files: segments/<sha256>.recordio              │
 │ • Mutable branch heads: refs/heads/<branch> storing BranchManifest          │
 │ • Zero-copy branch forks with Compare-And-Swap manifest updates             │
 └──────────────────────────────────────┬──────────────────────────────────────┘
@@ -226,9 +226,9 @@ Flusher                           Object Store
    │       to memory buffer            │
    │                                   │
    ├─── 2. Generate segment ID:        │
-   │       YYYYMMDDHHMMSS-micros-rand  │
+   │       sha256(segment bytes)       │
    │                                   │
-   ├─── 3. Put segment blob ──────────▶│ segments/<branch>/<id>.recordio
+   ├─── 3. Put segment blob ──────────▶│ segments/<sha256>.recordio
    │       (Condition: Absent=true)    │
    │                                   │
    │    ┌─── CAS Commit Loop ──────────┤
@@ -299,8 +299,8 @@ Background Ticker (2s)                   Query Worker
 1. Resolves `refs/heads/<branch>` to obtain the latest manifest and object generation.
 2. If `gen == lastGen`, the branch has not changed. The loader exits immediately.
 3. For each `SegmentRef` in `manifest.Segments`:
-   - Checks `loaded[seg.SegmentId]`. Skips previously loaded segments.
-   - Downloads `segments/<branch>/<segID>.recordio`.
+   - Applies `manifest.Segments[applied:]` in order, then advances `applied`.
+   - Downloads `segments/<sha256>.recordio`.
    - Scans records with `segment.Reader`.
    - PUT operations call `Builder.UpsertRecord`.
    - DELETE operations call `Builder.Delete`.
