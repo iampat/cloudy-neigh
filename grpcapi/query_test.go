@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -132,14 +133,18 @@ func TestQuery_UnknownNamespace(t *testing.T) {
 
 	client, _ := setupQueryTestEnv(t, store)
 
+	var trailer metadata.MD
 	resp, err := client.Query(ctx, &cloudyneighpb.QueryRequest{
 		Namespace: "nonexistent",
 		Vector:    []float32{1.0, 2.0},
 		TopK:      10,
-	})
+	}, grpc.Trailer(&trailer))
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Empty(t, resp.Hits)
+	require.Len(t, trailer.Get("server-time-us"), 1)
+	_, err = strconv.ParseInt(trailer.Get("server-time-us")[0], 10, 64)
+	require.NoError(t, err)
 }
 
 func TestQuery_Validation(t *testing.T) {

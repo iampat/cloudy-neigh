@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/iampat/cloudy-neigh/namespace"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
 	"github.com/iampat/cloudy-neigh/query"
 	"github.com/iampat/cloudy-neigh/query/distance"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -79,6 +82,7 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 		return nil, status.Errorf(codes.Internal, "grpcapi: search: %v", err)
 	}
 
+	totalDur := time.Since(valStart)
 	slog.Debug("query",
 		"namespace", req.Namespace,
 		"validate_dur", valDur,
@@ -86,8 +90,11 @@ func (s *QueryServer) Query(ctx context.Context, req *cloudyneighpb.QueryRequest
 		"scan_dur", stats.ScanDuration,
 		"materialize_dur", stats.MaterializeDuration,
 		"hits", len(hits),
-		"total_dur", time.Since(valStart),
+		"total_dur", totalDur,
 	)
+	if err := grpc.SetTrailer(ctx, metadata.Pairs("server-time-us", strconv.FormatInt(totalDur.Microseconds(), 10))); err != nil {
+		return nil, status.Errorf(codes.Internal, "grpcapi: set trailer: %v", err)
+	}
 
 	return &cloudyneighpb.QueryResponse{Hits: hits}, nil
 }

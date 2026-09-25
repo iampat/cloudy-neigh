@@ -2,6 +2,7 @@
 
 ### Added
 
+- `grpcapi`: `server-time-us` trailer on Query. `querybench` splits server and client-server latency and writes JSONL. [#161]
 - Static tenant registry, gRPC metadata interceptor, and storage isolation across ingest, flush, and query. [#156]
 - Multi-tenant log stream routing and root `tenants.json` catalog management. [#144]
 - `manifest`: lightweight branch manifest storage with generation-matched CAS updates. [#142]
