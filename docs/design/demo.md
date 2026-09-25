@@ -31,7 +31,8 @@ Client ──gRPC Query────▶ Query Engine ◀──loads────�
                             [Process 3]
 ```
 
-A namespace maps to the `branch` field of `WalRecord`. Storage sits in the middle.
+Each namespace has its own WAL. The `branch` field of `DocumentMutation` names
+the branch. Storage sits in the middle.
 
 ### Process Boundaries
 
@@ -56,7 +57,7 @@ For the demo binary, Process 1 and Process 2 are packaged under the `cloudy inge
 | `examples/search.py` | Python client example on the REST API |
 
 Existing code stays as is: `objectstore`, `recordio`, `logstream`,
-`kvfs/branch.go`, `proto/storage/v1`.
+`proto/storage/v1`. Package `manifest` has since replaced `kvfs/branch.go`.
 
 ## Corpus
 
@@ -98,7 +99,7 @@ All honest, all replaced later behind a stable boundary.
 - [ ] `ingest/`: consumer that tails the WAL from `checkpoint_seq`,
       routes by namespace into memtables.
 - [ ] Flush on threshold: upload segment, CAS the manifest with
-      `kvfs.UpdateBranch`, advance `checkpoint_seq`.
+      `manifest.Write`, advance `checkpoint_seq`.
 - [ ] `grpcapi/`: `Upsert` encodes `WalRecord` and appends to logstream.
 - [ ] `cloudy ingest` subcommand.
 - [ ] On a 412 from the manifest CAS, reload the ref and retry.
@@ -124,7 +125,7 @@ All honest, all replaced later behind a stable boundary.
 - [ ] Static web page: query box, `lang` filter, results with title
       and snippet.
 - [ ] `scripts/demoload.py`: read Cohere Wikipedia from local disk cache
-      into `Upsert` calls, 1,000 documents per call. Reader is done;
+      into `Upsert` calls, 1,000 documents per call. Reader is done.
       `send_batch` stub awaits `grpcapi/`.
 - [X] Check whether the Hugging Face CLI covers the local dataset
       cache. Verified and automated via `just download-dataset`.
