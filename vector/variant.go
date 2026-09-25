@@ -42,10 +42,6 @@ func ParseVariant(s string) (Variant, error) {
 	return 0, fmt.Errorf("vector: unknown variant %q", s)
 }
 
-func (v Variant) Is16() bool {
-	return v == FP16
-}
-
 type Kernels struct {
 	Name     string
 	Dot      func(a, b []float32) float32

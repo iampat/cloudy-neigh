@@ -8,6 +8,8 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -222,8 +224,11 @@ func runIngest(ctx context.Context, args []string) error {
 
 type queryConfig struct {
 	addr         string
+	pprofAddr    string
 	tenantsFile  string
 	syncInterval time.Duration
+	variant      vector.Variant
+	kernels      vector.Kernels
 	debug        bool
 }
 
@@ -231,9 +236,12 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 
 	var cfg queryConfig
+	var distanceFlag string
 	fs.StringVar(&cfg.addr, "addr", ":50052", "address:port to listen on")
 	fs.StringVar(&cfg.tenantsFile, "tenants-file", "", "path to static tenants configuration file")
 	fs.DurationVar(&cfg.syncInterval, "sync-interval", 2*time.Second, "background sync interval")
+	fs.StringVar(&distanceFlag, "distance", "simd", "distance variant: pure, simd, fp16 (fp16 needs AVX-512)")
+	fs.StringVar(&cfg.pprofAddr, "pprof-addr", "", "address:port for net/http/pprof, off when empty")
 	fs.BoolVar(&cfg.debug, "debug", false, "enable debug logging")
 
 	if err := fs.Parse(args); err != nil {
@@ -251,6 +259,16 @@ func parseQueryFlags(args []string) (queryConfig, error) {
 	if cfg.syncInterval <= 0 {
 		return queryConfig{}, errors.New("-sync-interval must be positive")
 	}
+	variant, err := vector.ParseVariant(distanceFlag)
+	if err != nil {
+		return queryConfig{}, err
+	}
+	kernels, err := variant.Kernels()
+	if err != nil {
+		return queryConfig{}, err
+	}
+	cfg.variant = variant
+	cfg.kernels = kernels
 	return cfg, nil
 }
 
@@ -277,7 +295,7 @@ func newQueryServer(ctx context.Context, cfg queryConfig) (*queryServer, error) 
 	var runners []*query.Engine
 
 	for tenant, store := range reg.Stores() {
-		engine, err := query.NewEngine(store, cfg.syncInterval)
+		engine, err := query.NewEngine(store, cfg.syncInterval, cfg.kernels)
 		if err != nil {
 			return nil, fmt.Errorf("create query engine for tenant %s: %w", tenant, err)
 		}
@@ -361,11 +379,15 @@ func runQuery(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	kernels, err := vector.SIMD.Kernels()
-	if err != nil {
-		return err
+	slog.Info("query server listening", "addr", srv.Addr().String(), "tenants_file", cfg.tenantsFile, "distance", cfg.variant.String(), "kernel", cfg.kernels.Name)
+
+	if cfg.pprofAddr != "" {
+		go func() {
+			if err := http.ListenAndServe(cfg.pprofAddr, nil); err != nil {
+				slog.Error("pprof server stopped", "err", err)
+			}
+		}()
 	}
-	slog.Info("query server listening", "addr", srv.Addr().String(), "tenants_file", cfg.tenantsFile, "kernel", kernels.Name)
 
 	return srv.Serve(ctx)
 }

@@ -79,7 +79,7 @@ func TestEngine_NewEngine_Validation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := query.NewEngine(tc.store, tc.syncInterval)
+			_, err := query.NewEngine(tc.store, tc.syncInterval, pureKernels(t))
 			require.Error(t, err)
 		})
 	}
@@ -91,7 +91,7 @@ func TestEngine_Query_UnknownBranch(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	eng, err := query.NewEngine(store, time.Second)
+	eng, err := query.NewEngine(store, time.Second, pureKernels(t))
 	require.NoError(t, err)
 
 	hits, _, err := eng.Query(ctx, query.Request{
@@ -128,7 +128,7 @@ func TestEngine_Query_SuccessAndDefaultColumn(t *testing.T) {
 	})
 	updateEngineManifest(t, ctx, store, branch, []string{"seg-1"}, "")
 
-	eng, err := query.NewEngine(store, 20*time.Millisecond)
+	eng, err := query.NewEngine(store, 20*time.Millisecond, pureKernels(t))
 	require.NoError(t, err)
 
 	require.NoError(t, eng.SyncOnce(ctx))
@@ -150,7 +150,7 @@ func TestEngine_Run_Cancellation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	eng, err := query.NewEngine(store, 10*time.Millisecond)
+	eng, err := query.NewEngine(store, 10*time.Millisecond, pureKernels(t))
 	require.NoError(t, err)
 
 	errCh := make(chan error, 1)

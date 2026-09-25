@@ -12,6 +12,7 @@ import (
 	"github.com/iampat/cloudy-neigh/namespace"
 	"github.com/iampat/cloudy-neigh/objectstore"
 	cloudyneighpb "github.com/iampat/cloudy-neigh/proto/cloudyneigh/v1"
+	"github.com/iampat/cloudy-neigh/vector"
 )
 
 type Request struct {
@@ -26,6 +27,7 @@ type Request struct {
 type Engine struct {
 	store        objectstore.Store
 	syncInterval time.Duration
+	kernels      vector.Kernels
 	mu           sync.Mutex
 	loaders      map[branchKey]*Loader
 }
@@ -35,7 +37,7 @@ type branchKey struct {
 	branch    string
 }
 
-func NewEngine(store objectstore.Store, syncInterval time.Duration) (*Engine, error) {
+func NewEngine(store objectstore.Store, syncInterval time.Duration, kernels vector.Kernels) (*Engine, error) {
 	if store == nil {
 		return nil, errors.New("query: nil store")
 	}
@@ -45,6 +47,7 @@ func NewEngine(store objectstore.Store, syncInterval time.Duration) (*Engine, er
 	return &Engine{
 		store:        store,
 		syncInterval: syncInterval,
+		kernels:      kernels,
 		loaders:      make(map[branchKey]*Loader),
 	}, nil
 }
@@ -69,7 +72,7 @@ func (e *Engine) SyncOnce(ctx context.Context) error {
 			loader, ok := e.loaders[key]
 			if !ok {
 				var table atomic.Pointer[Table]
-				table.Store(NewTable())
+				table.Store(NewTable(e.kernels))
 				var err error
 				loader, err = NewLoader(e.store, &table, scope, branch)
 				if err == nil {

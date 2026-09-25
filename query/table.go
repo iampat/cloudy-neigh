@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -17,9 +18,22 @@ import (
 var ErrDimensionMismatch = errors.New("query: vector dimension mismatch")
 
 type flatVectorCol struct {
-	dim    int
-	data   []float32
-	hasVec []bool
+	dim      int
+	data     []float32
+	data16   []uint16
+	hasVec   []bool
+	invNorms []float32
+}
+
+func vectorInvNorm(v []float32) float32 {
+	var normSq float32
+	for _, x := range v {
+		normSq += x * x
+	}
+	if normSq == 0 {
+		return 0
+	}
+	return float32(1 / math.Sqrt(float64(normSq)))
 }
 
 type SearchStats struct {
@@ -34,20 +48,19 @@ type Table struct {
 	tombstones []bool
 	vectors    map[string]*flatVectorCol
 	attrs      map[string][]*cloudyneighpb.AttributeValue
+	kernels    vector.Kernels
 }
 
-func NewTable() *Table {
+func NewTable(kernels vector.Kernels) *Table {
 	return &Table{
 		index:   make(map[string]int),
 		vectors: make(map[string]*flatVectorCol),
 		attrs:   make(map[string][]*cloudyneighpb.AttributeValue),
+		kernels: kernels,
 	}
 }
 
 func (t *Table) Clone() *Table {
-	if t == nil {
-		return NewTable()
-	}
 	c := &Table{
 		numRows:    t.numRows,
 		docIDs:     slices.Clone(t.docIDs),
@@ -55,15 +68,18 @@ func (t *Table) Clone() *Table {
 		tombstones: slices.Clone(t.tombstones),
 		vectors:    make(map[string]*flatVectorCol, len(t.vectors)),
 		attrs:      make(map[string][]*cloudyneighpb.AttributeValue, len(t.attrs)),
+		kernels:    t.kernels,
 	}
 	for k, v := range t.index {
 		c.index[k] = v
 	}
 	for k, v := range t.vectors {
 		c.vectors[k] = &flatVectorCol{
-			dim:    v.dim,
-			data:   slices.Clone(v.data),
-			hasVec: slices.Clone(v.hasVec),
+			dim:      v.dim,
+			data:     slices.Clone(v.data),
+			data16:   slices.Clone(v.data16),
+			hasVec:   slices.Clone(v.hasVec),
+			invNorms: slices.Clone(v.invNorms),
 		}
 	}
 	for k, col := range t.attrs {
@@ -78,6 +94,12 @@ func (t *Table) Clone() *Table {
 	return c
 }
 
+type stagedVector struct {
+	values  []float32
+	data16  []uint16
+	invNorm float32
+}
+
 func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string]*cloudyneighpb.AttributeValue) error {
 	if id == "" {
 		return errors.New("query: empty doc id")
@@ -88,32 +110,42 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 		t.vectors = make(map[string]*flatVectorCol)
 		t.attrs = make(map[string][]*cloudyneighpb.AttributeValue)
 	}
+	is16 := t.kernels.Dot16 != nil
 
+	staged := make(map[string]stagedVector, len(vectors))
 	for col, vec := range vectors {
 		if len(vec) == 0 {
 			continue
 		}
-		if vCol, ok := t.vectors[col]; ok {
-			if len(vec) != vCol.dim {
-				return fmt.Errorf("%w: column %q has dimension %d, got %d", ErrDimensionMismatch, col, vCol.dim, len(vec))
+		if vCol, ok := t.vectors[col]; ok && len(vec) != vCol.dim {
+			return fmt.Errorf("%w: column %q has dimension %d, got %d", ErrDimensionMismatch, col, vCol.dim, len(vec))
+		}
+		sv := stagedVector{values: vec, invNorm: vectorInvNorm(vec)}
+		if is16 {
+			sv.data16 = make([]uint16, len(vec))
+			if err := vector.EncodeFP16(sv.data16, vec); err != nil {
+				return fmt.Errorf("query: encode vector %q: %w", col, err)
 			}
 		}
+		staged[col] = sv
 	}
 
-	for col, vec := range vectors {
-		if len(vec) == 0 {
+	for col, sv := range staged {
+		if _, ok := t.vectors[col]; ok {
 			continue
 		}
-		if _, ok := t.vectors[col]; !ok {
-			dim := len(vec)
-			data := make([]float32, t.numRows*dim)
-			hasVec := make([]bool, t.numRows)
-			t.vectors[col] = &flatVectorCol{
-				dim:    dim,
-				data:   data,
-				hasVec: hasVec,
-			}
+		dim := len(sv.values)
+		vCol := &flatVectorCol{
+			dim:      dim,
+			hasVec:   make([]bool, t.numRows),
+			invNorms: make([]float32, t.numRows),
 		}
+		if is16 {
+			vCol.data16 = make([]uint16, t.numRows*dim)
+		} else {
+			vCol.data = make([]float32, t.numRows*dim)
+		}
+		t.vectors[col] = vCol
 	}
 
 	for k, v := range attrs {
@@ -126,34 +158,31 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 	}
 
 	if row, ok := t.index[id]; ok {
-		wasDeleted := t.tombstones[row]
-		t.tombstones[row] = false
-
-		if wasDeleted {
+		if t.tombstones[row] {
 			for k, aCol := range t.attrs {
 				if _, ok := attrs[k]; !ok {
-					if row < len(aCol) {
-						aCol[row] = nil
-					}
+					aCol[row] = nil
 				}
 			}
 			for col, vCol := range t.vectors {
-				if vec, ok := vectors[col]; !ok || len(vec) == 0 {
-					if row < len(vCol.hasVec) {
-						vCol.hasVec[row] = false
-					}
+				if _, ok := staged[col]; !ok {
+					vCol.hasVec[row] = false
+					vCol.invNorms[row] = 0
 				}
 			}
 		}
+		t.tombstones[row] = false
 
-		for col, vec := range vectors {
-			if len(vec) == 0 {
-				continue
-			}
+		for col, sv := range staged {
 			vCol := t.vectors[col]
 			offset := row * vCol.dim
-			copy(vCol.data[offset:offset+vCol.dim], vec)
+			if is16 {
+				copy(vCol.data16[offset:offset+vCol.dim], sv.data16)
+			} else {
+				copy(vCol.data[offset:offset+vCol.dim], sv.values)
+			}
 			vCol.hasVec[row] = true
+			vCol.invNorms[row] = sv.invNorm
 		}
 
 		for k, v := range attrs {
@@ -171,13 +200,19 @@ func (t *Table) Upsert(id string, vectors map[string][]float32, attrs map[string
 	t.index[id] = row
 
 	for col, vCol := range t.vectors {
-		if vec, ok := vectors[col]; ok && len(vec) > 0 {
-			vCol.data = append(vCol.data, vec...)
-			vCol.hasVec = append(vCol.hasVec, true)
-		} else {
+		sv, ok := staged[col]
+		switch {
+		case !ok && is16:
+			vCol.data16 = append(vCol.data16, make([]uint16, vCol.dim)...)
+		case !ok:
 			vCol.data = append(vCol.data, make([]float32, vCol.dim)...)
-			vCol.hasVec = append(vCol.hasVec, false)
+		case is16:
+			vCol.data16 = append(vCol.data16, sv.data16...)
+		default:
+			vCol.data = append(vCol.data, sv.values...)
 		}
+		vCol.hasVec = append(vCol.hasVec, ok)
+		vCol.invNorms = append(vCol.invNorms, sv.invNorm)
 	}
 
 	for k, aCol := range t.attrs {
@@ -231,9 +266,13 @@ func (t *Table) recordAt(row int, id string) *cloudyneighpb.Record {
 	for col, vCol := range t.vectors {
 		if row < len(vCol.hasVec) && vCol.hasVec[row] {
 			offset := row * vCol.dim
-			rec.Vectors[col] = &cloudyneighpb.Vector{
-				Values: slices.Clone(vCol.data[offset : offset+vCol.dim]),
+			values := make([]float32, vCol.dim)
+			if vCol.data16 != nil {
+				t.kernels.Decode16(values, vCol.data16[offset:offset+vCol.dim])
+			} else {
+				copy(values, vCol.data[offset:offset+vCol.dim])
 			}
+			rec.Vectors[col] = &cloudyneighpb.Vector{Values: values}
 		}
 	}
 	for k, col := range t.attrs {
@@ -270,16 +309,13 @@ func (t *Table) Search(
 	if len(query) != vCol.dim {
 		return nil, SearchStats{}, ErrDimensionMismatch
 	}
-
 	var cmpFunc func(a, b searchHit) int
 	isDesc := false
+	var invQ float32
 	switch metric {
 	case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE:
-		normSq, err := vector.DotProduct(query, query)
-		if err != nil {
-			return nil, SearchStats{}, err
-		}
-		if normSq == 0 {
+		invQ = vectorInvNorm(query)
+		if invQ == 0 {
 			return nil, SearchStats{}, vector.ErrZeroVector
 		}
 		cmpFunc = cmpAsc
@@ -312,6 +348,7 @@ func (t *Table) Search(
 
 	dim := vCol.dim
 	data := vCol.data
+	data16 := vCol.data16
 	scanStart := time.Now()
 
 	for row := 0; row < t.numRows; row++ {
@@ -325,30 +362,38 @@ func (t *Table) Search(
 		}
 
 		offset := row * dim
-		storedVec := data[offset : offset+dim]
 
 		var score float32
 		switch metric {
 		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_COSINE:
-			var err error
-			score, err = vector.Cosine(query, storedVec)
-			if err != nil {
-				if errors.Is(err, vector.ErrZeroVector) {
-					continue
-				}
-				return nil, SearchStats{}, err
+			if vCol.invNorms[row] == 0 {
+				continue
 			}
+			var dot float32
+			if data16 != nil {
+				dot = t.kernels.Dot16(query, data16[offset:offset+dim])
+			} else {
+				dot = t.kernels.Dot(query, data[offset:offset+dim])
+			}
+			sim := dot * invQ * vCol.invNorms[row]
+			switch {
+			case sim > 1:
+				sim = 1
+			case sim < -1:
+				sim = -1
+			}
+			score = 1 - sim
 		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_EUCLIDEAN_SQUARED:
-			var err error
-			score, err = vector.L2Squared(query, storedVec)
-			if err != nil {
-				return nil, SearchStats{}, err
+			if data16 != nil {
+				score = t.kernels.L216(query, data16[offset:offset+dim])
+			} else {
+				score = t.kernels.L2(query, data[offset:offset+dim])
 			}
 		case cloudyneighpb.DistanceMetric_DISTANCE_METRIC_DOT_PRODUCT:
-			var err error
-			score, err = vector.DotProduct(query, storedVec)
-			if err != nil {
-				return nil, SearchStats{}, err
+			if data16 != nil {
+				score = t.kernels.Dot16(query, data16[offset:offset+dim])
+			} else {
+				score = t.kernels.Dot(query, data[offset:offset+dim])
 			}
 		}
 

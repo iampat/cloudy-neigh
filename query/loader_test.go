@@ -98,7 +98,7 @@ func TestLoader_SyncAndDeduplication(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
@@ -156,7 +156,7 @@ func TestLoader_UnknownMutationOp(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-unknown", []*storagepb.DocumentMutation{
@@ -180,7 +180,7 @@ func TestLoader_EmptyBranch(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "nonexistent")
 
 	loaded, err := loader.Sync(ctx)
@@ -195,7 +195,7 @@ func TestLoader_Validation(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 
 	_, err = query.NewLoader(nil, &table, defaultScope, "main")
 	require.Error(t, err)
@@ -214,7 +214,7 @@ func TestLoader_DeleteTombstones(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
@@ -284,7 +284,7 @@ func TestLoader_VectorDimensionMismatch(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
@@ -317,7 +317,7 @@ func TestLoader_GenerationSkip(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
@@ -345,7 +345,7 @@ func TestLoader_GenerationAdvancesOnlyOnCleanPass(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
@@ -392,7 +392,7 @@ func TestLoader_ReplayOrder(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
@@ -425,7 +425,7 @@ func TestLoader_ConcurrentSync(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
 	var segIDs []string
@@ -465,7 +465,7 @@ func TestLoader_SnapshotIsolationAcrossSync(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
@@ -631,7 +631,7 @@ func TestLoader_ForkBranch_Inheritance(t *testing.T) {
 	require.NoError(t, err)
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "staging")
 
 	loaded, err := loader.Sync(ctx)
@@ -677,7 +677,7 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 	flushBranch(t, ctx, store, stagingKey, 2)
 
 	var stagingTable atomic.Pointer[query.Table]
-	stagingTable.Store(query.NewTable())
+	stagingTable.Store(query.NewTable(pureKernels(t)))
 	stagingLoader := newLoader(t, store, &stagingTable, "staging")
 
 	loaded, err := stagingLoader.Sync(ctx)
@@ -691,7 +691,7 @@ func TestLoader_ForkBranch_Divergence(t *testing.T) {
 	require.True(t, ok2)
 
 	var mainTable atomic.Pointer[query.Table]
-	mainTable.Store(query.NewTable())
+	mainTable.Store(query.NewTable(pureKernels(t)))
 	mainLoader := newLoader(t, store, &mainTable, "main")
 
 	loadedMain, err := mainLoader.Sync(ctx)
@@ -714,7 +714,7 @@ func TestLoader_MissingSegmentObject(t *testing.T) {
 	updateManifest(t, store, "main", []string{"seg-missing"}, "")
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
 	_, err = loader.Sync(ctx)
@@ -728,7 +728,7 @@ func TestLoader_BatchSegmentLoading(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	var table atomic.Pointer[query.Table]
-	table.Store(query.NewTable())
+	table.Store(query.NewTable(pureKernels(t)))
 	loader := newLoader(t, store, &table, "main")
 
 	writeSegment(t, store, "main", "seg-1", []*storagepb.DocumentMutation{
