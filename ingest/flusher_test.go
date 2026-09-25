@@ -3,6 +3,7 @@ package ingest_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -584,4 +585,76 @@ func TestFlusher_MultiNamespaceDiscoveryAndFlush(t *testing.T) {
 	cancel()
 	err = <-flusherErrCh
 	require.NoError(t, err)
+}
+
+var errCrash = errors.New("crash before manifest write")
+
+type crashOnPutStore struct {
+	objectstore.Store
+	mu      sync.Mutex
+	crashOn string
+	crashed chan struct{}
+}
+
+func (s *crashOnPutStore) Put(ctx context.Context, key string, r io.Reader, cond objectstore.Condition) (string, error) {
+	s.mu.Lock()
+	if key == s.crashOn {
+		select {
+		case <-s.crashed:
+		default:
+			close(s.crashed)
+			s.mu.Unlock()
+			return "", errCrash
+		}
+	}
+	s.mu.Unlock()
+	return s.Store.Put(ctx, key, r, cond)
+}
+
+func TestFlusher_RecoversAfterCrashBetweenUploadAndManifest(t *testing.T) {
+	ctx := context.Background()
+
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	log, err := logstream.New(store, defaultWAL)
+	require.NoError(t, err)
+	seq1 := appendDoc(t, ctx, log, "main", "doc-1", []byte("val-1"))
+
+	crashing := &crashOnPutStore{Store: store, crashOn: defaultKey("main"), crashed: make(chan struct{})}
+	flusher1, err := ingest.NewFlusher(crashing, ingest.Config{PollInterval: 10 * time.Millisecond})
+	require.NoError(t, err)
+	ctx1, cancel1 := context.WithCancel(ctx)
+	errCh1 := make(chan error, 1)
+	go func() {
+		errCh1 <- flusher1.Run(ctx1)
+	}()
+	select {
+	case <-crashing.crashed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("flusher never reached the manifest write")
+	}
+	cancel1()
+	<-errCh1
+
+	flusher2, err := ingest.NewFlusher(store, ingest.Config{PollInterval: 10 * time.Millisecond})
+	require.NoError(t, err)
+	ctx2, cancel2 := context.WithCancel(ctx)
+	errCh2 := make(chan error, 1)
+	go func() {
+		errCh2 <- flusher2.Run(ctx2)
+	}()
+
+	waitForManifest(t, ctx, store, defaultKey("main"), func(m *storagepb.BranchManifest) bool {
+		return m.CheckpointSeq == seq1 && len(m.Segments) == 1
+	})
+
+	seq2 := appendDoc(t, ctx, log, "main", "doc-2", []byte("val-2"))
+	waitForManifest(t, ctx, store, defaultKey("main"), func(m *storagepb.BranchManifest) bool {
+		return m.CheckpointSeq == seq2 && len(m.Segments) == 2
+	})
+
+	cancel2()
+	require.NoError(t, <-errCh2)
 }
