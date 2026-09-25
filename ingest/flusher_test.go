@@ -186,8 +186,9 @@ func TestMultiBranchFlush(t *testing.T) {
 	mainManifest := waitForManifest(t, ctx, store, defaultKey("main"), func(m *storagepb.BranchManifest) bool {
 		return len(m.Segments) == 2 && m.CheckpointSeq == 3
 	})
-	assert.Equal(t, "00000000000000000001", mainManifest.Segments[0].SegmentId)
-	assert.Equal(t, "00000000000000000003", mainManifest.Segments[1].SegmentId)
+	assert.Len(t, mainManifest.Segments[0].SegmentId, 64)
+	assert.Len(t, mainManifest.Segments[1].SegmentId, 64)
+	assert.NotEqual(t, mainManifest.Segments[0].SegmentId, mainManifest.Segments[1].SegmentId)
 	exists, err := store.Exists(ctx, namespace.Scope{Namespace: namespace.DefaultNamespace}.SegmentKey(mainManifest.Segments[1].SegmentId))
 	require.NoError(t, err)
 	assert.True(t, exists)
@@ -195,7 +196,7 @@ func TestMultiBranchFlush(t *testing.T) {
 	devManifest := waitForManifest(t, ctx, store, defaultKey("dev"), func(m *storagepb.BranchManifest) bool {
 		return len(m.Segments) == 1 && m.CheckpointSeq == 2
 	})
-	assert.Equal(t, "00000000000000000002", devManifest.Segments[0].SegmentId)
+	assert.Len(t, devManifest.Segments[0].SegmentId, 64)
 
 	cancel()
 	err = <-flusherErrCh
@@ -657,4 +658,64 @@ func TestFlusher_RecoversAfterCrashBetweenUploadAndManifest(t *testing.T) {
 
 	cancel2()
 	require.NoError(t, <-errCh2)
+}
+
+func appendDelete(t *testing.T, ctx context.Context, log *logstream.Log, branch, docID string) uint64 {
+	t.Helper()
+	walRec := &storagepb.WalRecord{
+		Record: &storagepb.WalRecord_Mutation{
+			Mutation: &storagepb.DocumentMutation{
+				Branch: branch,
+				DocId:  docID,
+				Op:     storagepb.MutationOp_DELETE,
+			},
+		},
+	}
+	recBytes, err := proto.Marshal(walRec)
+	require.NoError(t, err)
+
+	seq, err := log.Append(ctx, []logstream.Record{recBytes})
+	require.NoError(t, err)
+	return seq
+}
+
+func TestFlusher_DuplicateContentGeneratesIdenticalSegmentID(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	defer store.Close()
+
+	log, err := logstream.New(store, defaultWAL)
+	require.NoError(t, err)
+
+	br := "main"
+	_ = appendDoc(t, ctx, log, br, "doc-1", []byte("val-1"))
+	_ = appendDelete(t, ctx, log, br, "doc-1")
+	seq3 := appendDoc(t, ctx, log, br, "doc-1", []byte("val-1"))
+
+	flusher, err := ingest.NewFlusher(store, ingest.Config{
+		PollInterval: 10 * time.Millisecond,
+	})
+	require.NoError(t, err)
+
+	flusherErrCh := make(chan error, 1)
+	go func() {
+		flusherErrCh <- flusher.Run(ctx)
+	}()
+
+	m := waitForManifest(t, ctx, store, defaultKey(br), func(m *storagepb.BranchManifest) bool {
+		return len(m.Segments) == 3 && m.CheckpointSeq == seq3
+	})
+	require.NotNil(t, m)
+	assert.Equal(t, seq3, m.CheckpointSeq)
+	require.Len(t, m.Segments, 3)
+
+	assert.Equal(t, m.Segments[0].SegmentId, m.Segments[2].SegmentId)
+	assert.NotEqual(t, m.Segments[0].SegmentId, m.Segments[1].SegmentId)
+
+	cancel()
+	err = <-flusherErrCh
+	require.NoError(t, err)
 }

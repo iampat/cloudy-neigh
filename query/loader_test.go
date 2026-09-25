@@ -773,3 +773,53 @@ func TestLoader_BatchSegmentLoading(t *testing.T) {
 	require.Len(t, hits, 3)
 	require.Equal(t, "doc-1", hits[0].Record.Id)
 }
+
+func TestLoader_DuplicateContentSurvivesInManifestAndQueryTable(t *testing.T) {
+	ctx := context.Background()
+	store, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	mainKey := defaultScope.ManifestKey("main")
+	log, err := logstream.New(store, namespace.Scope{Namespace: namespace.DefaultNamespace}.WALPrefix())
+	require.NoError(t, err)
+
+	appendWALRecord(t, ctx, log, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("initial")})
+	flushBranch(t, ctx, store, mainKey, 1)
+
+	var recDel storagepb.WalRecord
+	recDel.Record = &storagepb.WalRecord_Mutation{
+		Mutation: &storagepb.DocumentMutation{
+			Branch: "main",
+			DocId:  "doc-1",
+			Op:     storagepb.MutationOp_DELETE,
+		},
+	}
+	delBytes, err := proto.Marshal(&recDel)
+	require.NoError(t, err)
+	_, err = log.Append(ctx, []logstream.Record{delBytes})
+	require.NoError(t, err)
+	flushBranch(t, ctx, store, mainKey, 2)
+
+	appendWALRecord(t, ctx, log, "main", "doc-1", []float32{1.0, 0.0}, map[string]*cloudyneighpb.AttributeValue{"title": stringAttr("initial")})
+	flushBranch(t, ctx, store, mainKey, 3)
+
+	m, _, err := manifest.Read(ctx, store, mainKey)
+	require.NoError(t, err)
+	require.Len(t, m.Segments, 3)
+	require.Equal(t, m.Segments[0].SegmentId, m.Segments[2].SegmentId)
+	require.NotEqual(t, m.Segments[0].SegmentId, m.Segments[1].SegmentId)
+
+	var table atomic.Pointer[query.Table]
+	table.Store(query.NewTable(pureKernels(t)))
+	loader := newLoader(t, store, &table, "main")
+
+	loaded, err := loader.Sync(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 3, loaded)
+
+	rec, ok := table.Load().Get("doc-1")
+	require.True(t, ok)
+	require.Equal(t, "doc-1", rec.Id)
+	require.True(t, proto.Equal(stringAttr("initial"), rec.Attributes["title"]))
+}

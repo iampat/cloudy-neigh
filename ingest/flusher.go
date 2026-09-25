@@ -3,6 +3,8 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -326,11 +328,13 @@ func (s *streamFlusher) flushBranch(ctx context.Context, branch string, mutation
 	}
 	data := buf.Bytes()
 
-	// A WAL entry holds the mutations of one branch, so its sequence number names the segment.
-	segID := fmt.Sprintf("%020d", seq)
+	sum := sha256.Sum256(data)
+	segID := hex.EncodeToString(sum[:])
 	segKey := s.scope.SegmentKey(segID)
 	if _, err := s.store.Put(ctx, segKey, bytes.NewReader(data), objectstore.Condition{Absent: true}); err != nil {
-		return fmt.Errorf("upload segment %s: %w", segKey, err)
+		if !errors.Is(err, objectstore.ErrPreconditionFailed) {
+			return fmt.Errorf("upload segment %s: %w", segKey, err)
+		}
 	}
 	encodeUploadDur := time.Since(encodeUploadStart)
 
@@ -355,20 +359,13 @@ func (s *streamFlusher) flushBranch(ctx context.Context, branch string, mutation
 			}
 		}
 
-		alreadyPresent := false
-		for _, item := range m.Segments {
-			if item.SegmentId == segRef.SegmentId {
-				alreadyPresent = true
-				break
-			}
-		}
-		if !alreadyPresent {
-			m.Segments = append(m.Segments, segRef)
+		if m.CheckpointSeq >= seq {
+			s.branchCheckpoints[branch] = m.CheckpointSeq
+			return nil
 		}
 
-		if seq > m.CheckpointSeq {
-			m.CheckpointSeq = seq
-		}
+		m.Segments = append(m.Segments, segRef)
+		m.CheckpointSeq = seq
 
 		_, err = manifest.Write(ctx, s.store, manifestKey, m, gen)
 		if err == nil {

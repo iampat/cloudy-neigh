@@ -25,7 +25,7 @@ type Loader struct {
 	scope   namespace.Scope
 	branch  string
 	mu      sync.Mutex
-	loaded  map[string]bool
+	applied int
 	lastGen string
 }
 
@@ -41,7 +41,6 @@ func NewLoader(store objectstore.Store, table *atomic.Pointer[Table], scope name
 		table:  table,
 		scope:  scope,
 		branch: branch,
-		loaded: make(map[string]bool),
 	}, nil
 }
 
@@ -65,10 +64,7 @@ func (l *Loader) Sync(ctx context.Context) (int, error) {
 
 	var t *Table
 	loadedCount := 0
-	for _, seg := range manifest.Segments {
-		if l.loaded[seg.SegmentId] {
-			continue
-		}
+	for _, seg := range manifest.Segments[l.applied:] {
 		if t == nil {
 			t = l.table.Load().Clone()
 		}
@@ -140,7 +136,7 @@ func (l *Loader) Sync(ctx context.Context) (int, error) {
 			"load_dur", time.Since(loadStart),
 		)
 
-		l.loaded[seg.SegmentId] = true
+		l.applied++
 		loadedCount++
 	}
 	if t != nil {
