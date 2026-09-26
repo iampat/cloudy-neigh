@@ -30,7 +30,7 @@
   - [ ] Monitor flusher stream workers with `errgroup.WithContext` (`ingest/flusher.go:54, 190`). Stop all workers and exit `Run` on worker crash.
   - [ ] Remove `shutdownFlush` drain after context cancellation (`ingest/flusher.go:241-306`). WAL is durable, and restarting resumes from checkpoints.
   - [ ] Remove redundant mutex and cancel map from `Flusher` (`ingest/flusher.go:31-36, 195-201`). Stream dispatch runs on a single goroutine.
-  - [ ] Propagate `scope.AddBranch` errors during flusher segment commit and ingester fork (`ingest/flusher.go:418`, `ingest/ingester.go:150`).
+  - [X] Propagate `scope.AddBranch` errors during flusher segment commit and ingester fork (`ingest/flusher.go:418`, `ingest/ingester.go:150`). [#166]
   - [ ] Validate vector dimensions at gRPC ingestion boundary (`grpcapi/ingest.go:102-111`). Reject mismatched dimensions before WAL append.
   - [ ] Validate record size against `DefaultMaxRecordSize` before log append (`logstream/log.go:54`, `recordio/writer.go:71-76`). Reject records over 64 MiB.
 - [ ] Fix query engine and loader integrity bugs.
