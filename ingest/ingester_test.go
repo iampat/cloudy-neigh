@@ -253,3 +253,48 @@ func TestIngester_Fork_AppendFailureRollback(t *testing.T) {
 	_, _, err = manifest.Read(ctx, store, defaultKey(child))
 	require.ErrorIs(t, err, objectstore.ErrNotFound)
 }
+
+func TestIngester_Fork_AddBranchFailureRollback(t *testing.T) {
+	ctx := context.Background()
+	memStore, err := objectstore.Open(ctx, "mem://")
+	require.NoError(t, err)
+	defer memStore.Close()
+
+	scope := namespace.Scope{Namespace: namespace.DefaultNamespace}
+
+	store := &failAppendStore{
+		Store:   memStore,
+		failKey: "branches.json",
+	}
+
+	ing, err := ingest.NewIngester(store)
+	require.NoError(t, err)
+
+	ns := namespace.DefaultNamespace
+	parent := "parent"
+	child := "child"
+
+	_, err = manifest.Write(ctx, memStore, defaultKey(parent), &storagepb.BranchManifest{CheckpointSeq: 1}, "")
+	require.NoError(t, err)
+
+	err = ing.Fork(ctx, ns, parent, child)
+	require.Error(t, err)
+
+	_, _, err = manifest.Read(ctx, memStore, defaultKey(child))
+	require.ErrorIs(t, err, objectstore.ErrNotFound)
+
+	branches, err := scope.ListBranches(ctx, memStore)
+	require.NoError(t, err)
+	require.NotContains(t, branches, child)
+
+	retryIng, err := ingest.NewIngester(memStore)
+	require.NoError(t, err)
+	require.NoError(t, retryIng.Fork(ctx, ns, parent, child))
+
+	_, _, err = manifest.Read(ctx, memStore, defaultKey(child))
+	require.NoError(t, err)
+
+	branches, err = scope.ListBranches(ctx, memStore)
+	require.NoError(t, err)
+	require.Contains(t, branches, child)
+}
