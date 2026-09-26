@@ -106,6 +106,8 @@
 ### Fixed
 
 - `ingest`: segments are named by the SHA-256 of their bytes, and a replay that finds the segment counts as success. A crash between the segment upload and the manifest commit no longer stalls the flusher. The query loader applies the ordered manifest by position. [#165]
+- `ingest.Ingester.Fork`: returns the `AddBranch` error and rolls back. A failed catalog write no longer leaves a branch that queries cannot see and a retry cannot repair. [#166]
+- `ingest.Ingester.Fork`: returns the `AddBranch` error and rolls back. A failed catalog write no longer leaves a branch that queries cannot see and a retry cannot repair. [#166]
 - `ingest.Flusher`: fixed cancellation handling to retry the active sequence on shutdown rather than skipping records. [#140]
 - `ingest.Ingester`: roll back created branch if appending the fork event fails. [#140]
 - `cloudy ingest`: gRPC GracefulStop bounded by a 5-second timeout with a
