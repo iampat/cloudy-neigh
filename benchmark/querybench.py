@@ -10,7 +10,7 @@ import grpc
 import pyarrow.parquet as pq
 
 from proto.cloudyneigh.v1 import index_pb2, index_pb2_grpc
-from scripts.interceptor import TenantClientInterceptor
+from benchmark.interceptor import TenantClientInterceptor
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
