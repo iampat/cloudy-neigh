@@ -9,7 +9,8 @@ manifest:
     absl: absl_py
     google.protobuf: protobuf
     grpc: grpcio
+    numpy: numpy
     pyarrow: pyarrow
   pip_repository:
     name: pip
-integrity: 375c7d151e0d762d018de580c11eb18f949f1a3936019c911ac2af90c69a3e7a
+integrity: 2aa8aecad615128a822c556109091b281188e412504c2151f9f99028bf0f2740
