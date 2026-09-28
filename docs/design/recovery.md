@@ -1,8 +1,8 @@
 # Crash recovery
 
-This note lists the crash and write failures that ingestion recovers from, and
-the ones it does not. Each case names the state it leaves in storage and what
-repairs it.
+This note lists the crash and write failures that ingestion recovers from.
+Each case names the state it leaves in storage and what repairs it.
+Open bugs and recovery gaps are tracked in `TODO.md`.
 
 ## Model
 
@@ -82,50 +82,3 @@ from a clean state.
 Before, Fork dropped the `AddBranch` error. The client saw success, queries on
 the branch returned empty results, and a retry got `ErrBranchAlreadyExists`.
 
-## Gaps
-
-These cases have no recovery yet.
-
-### Crash between a Fork failure and its rollback
-
-The rollback runs in the same process as the failure. A crash between the two
-leaves this state:
-
-```text
-target manifest   present, copy of parent
-branches.json     no target
-WAL               no FORK event
-client            no answer
-```
-
-The results:
-
-- A query on the target returns empty results.
-- A Fork retry returns `ErrBranchAlreadyExists`. The client cannot tell a real
-  fork from an orphan.
-- A write to the target repairs it. `Ingester.Upsert` does not check that the
-  branch exists. The flusher commit adds the catalog entry, and the branch
-  then holds the parent data at fork time plus the new writes.
-- Without a write, the orphan stays forever.
-
-The same state appears when the rollback itself fails. The rollback drops the
-errors of `Delete` and `RemoveBranch`.
-
-Two repairs fit:
-
-- An idempotent Fork retry. Fork treats a present target manifest as its own
-  when the manifest equals the parent's and the WAL has no FORK event for the
-  target. It then finishes `AddBranch` and the event.
-- Garbage collection. It deletes a manifest that has no catalog entry, has no
-  FORK event, and is older than a timeout. This rides on the GC worker in
-  `TODO.md`.
-
-CONSIDER(ali): GC is cheaper, but it keeps the retry ambiguous until the
-timeout passes. The idempotent retry fixes the client view but adds a WAL scan
-to Fork.
-
-### Stale loader after a shorter manifest
-
-After `ErrManifestTruncated`, the loader logs the error on every sync. The
-branch serves its old data until a restart. The fix is a loader that rebuilds
-its table from the full manifest when the manifest shrinks.
