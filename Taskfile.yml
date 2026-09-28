@@ -2,7 +2,7 @@ version: '3'
 
 includes:
   bench:
-    taskfile: ./Taskfile.bench.yml
+    taskfile: ./benchmark/Taskfile.yaml
 
 tasks:
   download-dataset:
@@ -26,4 +26,4 @@ tasks:
   load-dataset:
     desc: Load dataset via demoload
     cmds:
-      - bazel run //scripts:demoload -- {{.CLI_ARGS}}
+      - bazel run //benchmark:demoload -- {{.CLI_ARGS}}

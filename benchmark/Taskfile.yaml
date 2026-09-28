@@ -30,6 +30,7 @@ vars:
   CREATE_ROUNDS: 6
   MAX_RUN: '12h'
   KEEP_VMS: '{{.KEEP_VMS | default "0"}}'
+  TASKFILE: '{{.TASKFILE | default "benchmark/Taskfile.yaml"}}'
 
   PREAMBLE: |
     log() { echo "[$(date +%T)] $*" >&2; }
@@ -210,7 +211,7 @@ vars:
       shift 2
       account=$(vm_account "$m")
       [ -n "$account" ] || die "$(vm_name "$m") has no service account"
-      cmd="GCP_ACCOUNT=$(printf '%q' "$account") $(remote_env) task -f Taskfile.bench.yml $(printf '%q ' "$@")"
+      cmd="GCP_ACCOUNT=$(printf '%q' "$account") $(remote_env) task -f Taskfile.yaml $(printf '%q ' "$@")"
       cmd="$cmd && touch run/jobs/$job.ok || touch run/jobs/$job.fail"
       vm_ssh "$m" "mkdir -p run/jobs && rm -f run/jobs/$job.* &&
         (nohup bash -c $(printf '%q' "$cmd") >run/jobs/$job.log 2>&1 </dev/null &)" ||
@@ -241,7 +242,7 @@ tasks:
         log "build linux/amd64 binaries"
         flags=(-c opt --@rules_go//go/config:race=false
           --platforms=@rules_go//go/toolchain:linux_amd64 --use_target_platform_for_tests)
-        targets=(//cmd/cloudy //vector:vector_test //query:query_test //scripts:demoload //scripts:querybench)
+        targets=(//cmd/cloudy //vector:vector_test //query:query_test //benchmark:demoload //benchmark:querybench)
         bazel build "${flags[@]}" "${targets[@]}" >/dev/null 2>&1 || die "linux build failed"
         for t in "${targets[@]}"; do
           f=$(bazel cquery "${flags[@]}" --output=files "$t" 2>/dev/null | grep -m1 '^bazel-out/')
@@ -347,7 +348,7 @@ tasks:
         vm_ssh "$m" "rm -rf bin src.tar.gz Taskfile* && mkdir -p bin run" || die "ssh to $m failed"
         vm_scp_to "$m" bin/ "{{.RUN_DIR}}"/linux/*
         vm_scp_to "$m" src.tar.gz "{{.RUN_DIR}}/src.tar.gz"
-        vm_scp_to "$m" Taskfile.bench.yml Taskfile.bench.yml
+        vm_scp_to "$m" Taskfile.yaml benchmark/Taskfile.yaml
         vm_ssh "$m" "which task >/dev/null 2>&1 || (sudo curl -sL https://taskfile.dev/install.sh | sudo sh -s -- -b /usr/local/bin)"
         vm_bg "$m" setup host-setup M="$m"
         vm_wait "$m" setup
@@ -419,7 +420,7 @@ tasks:
         marker="{{.RUN_DIR}}/$m/BENCH_DONE"
         [ ! -f "$marker" ] || { log "$m: microbench done already"; exit 0; }
         if [ "$m" = mac ]; then
-          task -f Taskfile.bench.yml host-bench M=mac OUT="{{.RUN_DIR}}"
+          task -f {{.TASKFILE}} host-bench M=mac OUT="{{.RUN_DIR}}"
         else
           ZONE=$(vm_zone_or_die "$m")
           export ZONE
@@ -441,7 +442,7 @@ tasks:
         marker="{{.RUN_DIR}}/$m/LOAD_DONE"
         [ ! -f "$marker" ] || { log "$m: load done already"; exit 0; }
         if [ "$m" = mac ]; then
-          task -f Taskfile.bench.yml host-load M=mac STORE="{{.MAC_STORE}}" OUT="{{.RUN_DIR}}"
+          task -f {{.TASKFILE}} host-load M=mac STORE="{{.MAC_STORE}}" OUT="{{.RUN_DIR}}"
         else
           ZONE=$(vm_zone_or_die "$m")
           export ZONE
@@ -467,8 +468,8 @@ tasks:
           for v in $variants; do
             d="{{.RUN_DIR}}/e2e/mac/$v"
             [ ! -f "$d/DONE" ] || { log "mac $v: done already"; continue; }
-            task -f Taskfile.bench.yml host-serve M=mac V="$v" STORE="{{.MAC_STORE}}" CLIENT=mac OUT="{{.RUN_DIR}}"
-            task -f Taskfile.bench.yml host-stop M=mac V="$v" OUT="{{.RUN_DIR}}"
+            task -f {{.TASKFILE}} host-serve M=mac V="$v" STORE="{{.MAC_STORE}}" CLIENT=mac OUT="{{.RUN_DIR}}"
+            task -f {{.TASKFILE}} host-stop M=mac V="$v" OUT="{{.RUN_DIR}}"
             touch "$d/DONE"
           done
           exit 0
@@ -477,12 +478,12 @@ tasks:
         ZONE=$(vm_zone_or_die "$m")
         export ZONE
         ip=$(vm_ip "$m")
-        qb=$(built //scripts:querybench)
+        qb=$(built //benchmark:querybench)
         for v in $variants; do
           d="{{.RUN_DIR}}/e2e/$m/$v"
           [ ! -f "$d/DONE" ] || { log "$m $v: done already"; continue; }
-          task -f Taskfile.bench.yml firewall-open M="$m"
-          trap 'task -f Taskfile.bench.yml firewall-close M="$m"' EXIT
+          task -f {{.TASKFILE}} firewall-open M="$m"
+          trap 'task -f {{.TASKFILE}} firewall-close M="$m"' EXIT
           vm_bg "$m" "serve-$v" host-serve M="$m" V="$v" STORE="{{.GCS_STORE}}" CLIENT=vm OUT=run
           vm_wait "$m" "serve-$v"
           log "mac client against $m ($ip) $v"
@@ -490,7 +491,7 @@ tasks:
           vm_bg "$m" "stop-$v" host-stop M="$m" V="$v" CLIENT=mac OUT=run
           vm_wait "$m" "stop-$v"
           vm_pull "$m" "e2e/$m/$v" "{{.RUN_DIR}}/e2e/$m"
-          task -f Taskfile.bench.yml firewall-close M="$m"
+          task -f {{.TASKFILE}} firewall-close M="$m"
           trap - EXIT
           touch "$d/DONE"
         done
@@ -505,7 +506,7 @@ tasks:
         run="{{.RUN_DIR}}"
         out="{{.OUT | default .RUN_DIR}}"
         mkdir -p "$out"
-        tool() { "$(built "//scripts/e2e:$1")" "${@:2}"; }
+        tool() { "$(built "//benchmark/e2e:$1")" "${@:2}"; }
         if [ ! -f "{{.GROUNDTRUTH}}" ]; then
           log "ground truth: brute force over full corpus"
           tool groundtruth --data_dir="{{.DATA_DIR}}" --out="{{.GROUNDTRUTH}}"
@@ -528,7 +529,7 @@ tasks:
         {{.PREAMBLE}}
         set -euo pipefail
         for m in {{.VMS}}; do
-          task -f Taskfile.bench.yml firewall-close M="$m" >/dev/null 2>&1 || true
+          task -f {{.TASKFILE}} firewall-close M="$m" >/dev/null 2>&1 || true
         done
         gc compute instances list --filter="labels.cloudy-e2e={{.RUN_NAME}}" --format='value(name,zone.basename())' |
           while read -r name zone; do
@@ -545,39 +546,39 @@ tasks:
         set -euo pipefail
         mkdir -p "{{.RUN_DIR}}/logs"
         L="{{.RUN_DIR}}/logs"
-        task -f Taskfile.bench.yml build
+        task -f {{.TASKFILE}} build
         if [ "{{.KEEP_VMS}}" != "1" ]; then
-          trap 'task -f Taskfile.bench.yml cleanup' EXIT
+          trap 'task -f {{.TASKFILE}} cleanup' EXIT
         fi
         pids=""
         for m in {{.VMS}}; do
-          (task -f Taskfile.bench.yml vm-create M="$m" && \
-           task -f Taskfile.bench.yml vm-setup M="$m" && \
-           task -f Taskfile.bench.yml microbench M="$m") >"$L/vm-$m.log" 2>&1 &
+          (task -f {{.TASKFILE}} vm-create M="$m" && \
+           task -f {{.TASKFILE}} vm-setup M="$m" && \
+           task -f {{.TASKFILE}} microbench M="$m") >"$L/vm-$m.log" 2>&1 &
           pids="$pids $!"
           log "$m: create, setup and microbench in background, log $L/vm-$m.log"
         done
         log "mac: microbench, load, e2e"
-        task -f Taskfile.bench.yml microbench M=mac >"$L/microbench-mac.log" 2>&1
-        task -f Taskfile.bench.yml load M=mac >"$L/load-mac.log" 2>&1
-        task -f Taskfile.bench.yml e2e M=mac >"$L/e2e-mac.log" 2>&1
+        task -f {{.TASKFILE}} microbench M=mac >"$L/microbench-mac.log" 2>&1
+        task -f {{.TASKFILE}} load M=mac >"$L/load-mac.log" 2>&1
+        task -f {{.TASKFILE}} e2e M=mac >"$L/e2e-mac.log" 2>&1
 
         for pid in $pids; do wait "$pid"; done
         log "VM microbench finished"
 
         log "{{.LOADER}}: load into GCS"
-        task -f Taskfile.bench.yml load M="{{.LOADER}}" >"$L/load-{{.LOADER}}.log" 2>&1
+        task -f {{.TASKFILE}} load M="{{.LOADER}}" >"$L/load-{{.LOADER}}.log" 2>&1
 
         pids=""
         for m in {{.VMS}}; do
-          task -f Taskfile.bench.yml e2e M="$m" >"$L/e2e-$m.log" 2>&1 &
+          task -f {{.TASKFILE}} e2e M="$m" >"$L/e2e-$m.log" 2>&1 &
           pids="$pids $!"
           log "$m: e2e in background, log $L/e2e-$m.log"
         done
         for pid in $pids; do wait "$pid"; done
         log "VM e2e finished"
 
-        task -f Taskfile.bench.yml report
+        task -f {{.TASKFILE}} report
         log "e2e benchmark run complete: {{.RUN_DIR}}/report.md"
 
   host-setup:
@@ -609,7 +610,7 @@ tasks:
         echo "download_s $(($(date +%s) - t0))" >"$out/setup.txt"
 
         t0=$(date +%s)
-        (cd "$REPO" && bazel build //scripts:querybench //scripts:demoload)
+        (cd "$REPO" && bazel build //benchmark:querybench //benchmark:demoload)
         echo "build_s $(($(date +%s) - t0))" >>"$out/setup.txt"
 
   host-bench:
@@ -691,7 +692,7 @@ tasks:
 
         log "$m: demoload into $store"
         t0=$(date +%s)
-        demoload=$(built //scripts:demoload)
+        demoload=$(built //benchmark:demoload)
         "$demoload" --tenant="{{.TENANT}}" --namespace="{{.NAMESPACE}}" --batch_size="{{.BATCH_SIZE}}" \
           --data_dir="{{.DATA_DIR}}" >"$d/demoload.log" 2>&1 </dev/null || die "demoload failed: $d/demoload.log"
         echo "demoload_s $(($(date +%s) - t0))" >"$d/load.txt"
@@ -773,7 +774,7 @@ tasks:
         sleep 5
         echo "rss_kb_after_sync $(ps -o rss= -p "$pid" | tr -d ' ')" >>"$d/server.txt"
 
-        qb=$(built //scripts:querybench)
+        qb=$(built //benchmark:querybench)
         scenarios "$qb" localhost:50052 "$d/$client" "$ccpu"
 
   host-stop:

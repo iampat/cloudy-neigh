@@ -2,7 +2,7 @@
 
 ### Added
 
-- `e2e-benchmark` skill and Taskfile automation with pinned Python reporting tools in `scripts/e2e`. [#157]
+- `e2e-benchmark` skill and Taskfile automation with pinned Python reporting tools in `benchmark/`. [#157]
 - Draft [garbage collection and point-in-time branch design](docs/design/garbage-collection.md). Covers checkpoints, retention, archives, and collection safety. Publication capacity and reader cleanup remain unresolved. [#169]
 - Documentation consolidation: 14 overlapping design notes consolidated into docs/architecture.md and 3 subsystem specifications (docs/design/storage.md, docs/design/ingestion.md, docs/design/query.md). Benchmarks unified under docs/benchmarks/. [#167]
 - Storage layout: `branches.json` holds branch names in a `BranchCatalog` proto, `ns.json` drops `version` and `status`, manifests are protojson at `ns/<ns>/refs/heads/<branch>.json`, `SegmentRef` drops `key`, and segments are content-addressed by SHA-256 hash. [#164]

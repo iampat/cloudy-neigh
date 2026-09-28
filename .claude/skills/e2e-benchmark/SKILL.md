@@ -6,7 +6,7 @@ allowed-tools: Bash, Read
 
 # E2E benchmark
 
-The tasks in `Taskfile.bench.yml` run the full benchmark, one command per phase. Each
+The tasks in `benchmark/Taskfile.yaml` run the full benchmark, one command per phase. Each
 phase skips the work it finished, so a rerun resumes. Never replace a phase
 with ad hoc commands.
 
@@ -47,7 +47,7 @@ stays idle, and the client runs on the other cores. The Mac cannot pin a core.
 
 ## Config
 
-`Taskfile.bench.yml` holds every setting. An environment variable overrides a
+`benchmark/Taskfile.yaml` holds every setting. An environment variable overrides a
 setting. The important ones:
 
 | Variable | Default | Purpose |
@@ -102,7 +102,7 @@ the Mac client.
 A full run takes about four hours and about eight VM-hours. Check the price of
 the shapes before a run.
 
-The Python tools are Bazel targets in `scripts/e2e`: `groundtruth`,
+The Python tools are Bazel targets in `benchmark/e2e`: `groundtruth`,
 `analyze` and `report`. The tasks never call `bazel run`. The `built` helper
 runs `bazel build`, finds the executable with `bazel cquery --output=files`, and
 runs that file. `task bench:report` does this for you.
@@ -154,7 +154,7 @@ ground truth sits in `bench/groundtruth-1000x100.jsonl` and serves every run.
   float32 table needs 13.5 GB of RSS, a 16-bit table about 10 GB.
 - A phase on a VM runs detached. Its log is `run/jobs/<job>.log` on the VM.
   The phase prints the tail of the log when the job fails.
-- The query client is the executable that `bazel build //scripts:querybench`
+- The query client is the executable that `bazel build //benchmark:querybench`
   writes. No Bazel server holds its pipes.
   No Bazel server holds a pipe of the profile capture, and `curl` has a time
   limit.
