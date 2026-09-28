@@ -155,7 +155,18 @@ func (ing *Ingester) Fork(ctx context.Context, ns, source, target string) error 
 		}
 		return err
 	}
-	_ = scope.AddBranch(ctx, ing.store, target)
+
+	rollback := func(err error) error {
+		delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer delCancel()
+		_ = ing.store.Delete(delCtx, targetKey)
+		_ = scope.RemoveBranch(delCtx, ing.store, target)
+		return err
+	}
+
+	if err := scope.AddBranch(ctx, ing.store, target); err != nil {
+		return rollback(err)
+	}
 
 	eventRec := &storagepb.WalRecord{
 		Record: &storagepb.WalRecord_BranchEvent{
@@ -167,19 +178,17 @@ func (ing *Ingester) Fork(ctx context.Context, ns, source, target string) error 
 		},
 	}
 	recBytes, err := proto.Marshal(eventRec)
-	if err == nil {
-		var log *logstream.Log
-		log, err = ing.getOrCreateLog(ctx, scope)
-		if err == nil {
-			_, err = log.Append(ctx, []logstream.Record{recBytes})
-		}
-	}
 	if err != nil {
-		delCtx, delCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer delCancel()
-		_ = ing.store.Delete(delCtx, targetKey)
-		_ = scope.RemoveBranch(delCtx, ing.store, target)
-		return err
+		return rollback(err)
 	}
+
+	log, err := ing.getOrCreateLog(ctx, scope)
+	if err != nil {
+		return rollback(err)
+	}
+	if _, err := log.Append(ctx, []logstream.Record{recBytes}); err != nil {
+		return rollback(err)
+	}
+
 	return nil
 }
