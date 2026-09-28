@@ -61,8 +61,7 @@ A Fork rollback deletes a manifest, and a retry from a smaller parent writes a
 shorter one. The loader returns `ErrManifestTruncated` for a manifest shorter
 than `applied` [#165]. Before, it panicked in `Engine.Run`.
 
-The branch then keeps its old data until the process restarts. See the gaps
-below.
+The branch then keeps its old data until the process restarts.
 
 ## Fork
 
