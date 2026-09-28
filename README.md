@@ -17,10 +17,10 @@ See [ROADMAP.md](ROADMAP.md) for the phased milestones and feature roadmap.
 
 ## Documentation and Design Notes
 
-- [Storage and Filesystem Engine](docs/design/storage.md): write-ahead log streams and branching KVFS on object storage.
-- [LogStream](docs/design/wal.md): append-only log on object storage, with no coordination service.
-- [gRPC API Contract](docs/design/grpc-api.md): service definition for writes, vector similarity, text search, and hybrid queries.
-- [RecordIO Framing](docs/design/recordio.md): append-only record framing format with CRC32C integrity checks.
+- [Architecture Overview](docs/architecture.md): system topology, component layering, and end-to-end execution flows.
+- [Storage Subsystem](docs/design/storage.md): write-ahead log streams, manifests, content-addressed segments, and branching KVFS on object storage.
+- [Ingestion Subsystem](docs/design/ingestion.md): gRPC write endpoints, WAL sequencing, RecordIO framing, and flusher commit loops.
+- [Query Subsystem](docs/design/query.md): manifest polling, flat memory table layout, SIMD kernel dispatch, and vector distance kernels.
 
 ## Go versions
 

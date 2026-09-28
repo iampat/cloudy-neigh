@@ -12,10 +12,9 @@
 - [ ] Design document storage for point lookup. Today every document sits in one flat array.
 - [ ] Background compaction worker to merge flat immutable segments across branches and purge tombstoned rows.
 - [X] Move multi-tenant log stream routing into the `ingest` library. `cmd/cloudy` acts strictly as an assembly root using dependency injection, without hardcoded stream names or paths. [#144]
-- [ ] Implement tenant management mechanism and control-plane API to register, list, and delete tenants in root tenants.json with CAS updates. Design note in `docs/design/tenant-isolation.md`. [#155]
+- [ ] Implement tenant management mechanism and control-plane API to register, list, and delete tenants in root tenants.json with CAS updates. Design note in `docs/design/storage.md`. [#155]
 - [X] Implement cross-tenant isolation across ingestion, query execution, local cache tiers, and storage keys. [#156]
-- [ ] Consolidate existing design docs into a smaller set of docs, and fix any conflict between docs and code.
-  - [ ] Update `docs/implementation-walkthrough.md` for content-hash segments. Remove the `loaded` map step, replace the random segment ID format with SHA-256, and show the `CheckpointSeq >= seq` skip. [#165]
+- [X] Consolidate existing design docs into a smaller set of docs, and fix any conflict between docs and code. [#167]
 - [ ] Use `https://github.com/google/subcommands` for cloudy CLI subcommand dispatch.
 - [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
 - [ ] Expose branch deletion RPC in IngestService to remove branch pointers and update `branches.json`.
@@ -33,13 +32,13 @@
   - [ ] Fix demoload script exceeding `max_docs` configuration.
 - [ ] Remove forwarding wrappers, redundant types, and single-caller helpers.
   - [X] Delete `Table.Builder` forwarding wrapper and constructors (`query/table.go:397-426`). Mutate cloned `Table` directly. [#147]
-  - [ ] Clean up distance kernel forwarders (`query/distance/distance_fallback.go:9-39`, `distance_simd.go:20-34`, `distance.go:42-44`). Delete `*Portable` forwarders and `NormalizeInPlace` wrapper.
+  - [ ] Clean up distance kernel forwarders (`vector/distance_simd_other.go:5-19`, `distance.go:42-44`). Delete the forwarders to the `*Portable` kernels and the `NormalizeInPlace` wrapper.
   - [X] Delete `segment.Writer` lifecycle wrappers (`segment/writer.go:45-51`). Call `recordio.Writer` directly. [#154]
   - [X] Unify redundant name validators (`namespace/namespace.go:43-53`). Export single `ValidateName`. [#149]
   - [ ] Delete `objectstore.Store.Exists` method (`objectstore/objectstore.go:40`). Callers inspect `Stat` errors.
   - [X] Delete `objectstore.gcsStore.bkt()` forwarding helper (`objectstore/gcs.go:26-28`). Store `*storage.BucketHandle` on struct. [#154]
   - [ ] Replace `logstream.Record` named type (`logstream/log.go:22`) with standard `[]byte` and `[][]byte`.
-  - [ ] Delete duplicate `distance.ErrDimensionMismatch` sentinel (`query/distance/distance.go:9`). Keep `query.ErrDimensionMismatch`.
+  - [ ] Delete duplicate `vector.ErrDimensionMismatch` sentinel (`vector/distance.go:9`). Keep `query.ErrDimensionMismatch`.
   - [X] Delete dead sentinels `ErrNilLog`, `recordio.ErrUnexpectedEOF`, and `ErrBufferTooSmall`. [#149]
   - [ ] Replace memory store mtime-based generation formatting (`objectstore/mem.go:127, 150`) with an atomic integer string.
   - [X] Delete single-caller helper `recordio.mask` (`recordio/crc.go:29-31`). Inline into `computeMaskedCRC`. [#149]
@@ -94,7 +93,7 @@
       and that is where a storage protocol fails. [#58]
   - [ ] Choose the tool. TLA+ with PlusCal, or Alloy. Model one protocol in
         both before the choice binds the rest.
-  - [ ] Model the LogStream append protocol from `docs/design/wal.md`. Check
+  - [ ] Model the LogStream append protocol from `docs/design/ingestion.md`. Check
         the contiguity invariant, that the live sequence numbers form `1..T`
         with no hole, against many writers and a lost acknowledgement.
   - [ ] Model the manifest and branch protocol from `docs/design/storage.md`.
@@ -160,6 +159,16 @@
 - [X] Fix the double expansion of `--config=race`. `.bazelrc` sets it by default, so an explicit `--config=race` expands it twice. [#108, #153]
 - [X] Drop `--test_output=streamed` from `test:fuzz`. It disables sharding and serializes the test run. [#108, #153]
 - [ ] Build fuzz targets with coverage instrumentation. Without it, fuzzing runs without coverage guidance. [#82, #108]
+
+## Optimization
+
+Measure each item with `BenchmarkDistance` on darwin/arm64 and linux/amd64, before and after. [#157]
+
+- [X] Split the FMA chain in the AVX-512 kernels into independent accumulators: eight for dot and L2, six for cosine (`vector/distance_amd64.go`). [#157]
+- [ ] Split the FMA chain in the portable SIMD kernels too. They keep one accumulator (`vector/distance_simd.go`).
+- [X] Compare the portable SIMD kernels with arch-specific kernels over D = 32 to 4096. amd64 has AVX-512 kernels. `docs/benchmarks/distance.md` has the EMR and GNR numbers at D = 128, 1024 and 4096. arm64 has no arch kernel since PR 134. [#108, #134, #157]
+- [X] Measure recall@10 of the 16-bit variants on the Cohere corpus. On 1M docs and 300 queries, `fp16` gives recall@10 1.0000, the float32 result. The removed paired bf16 variant gives 0.9987 with no filter and 0.9983 with `lang=en`. The unpaired bf16 variant was not run. `docs/benchmarks/distance.md` has the numbers. [#157]
+- [ ] Try int8 row quantization with a per-row scale. It halves the 16-bit row stream again. Measure the 10K scan and recall@10 against `fp16`.
 
 ## Known bugs
 

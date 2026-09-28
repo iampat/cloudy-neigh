@@ -2,6 +2,11 @@
 
 ### Added
 
+- Documentation consolidation: 14 overlapping design notes consolidated into docs/architecture.md and 3 subsystem specifications (docs/design/storage.md, docs/design/ingestion.md, docs/design/query.md). Benchmarks unified under docs/benchmarks/. [#167]
+- Storage layout: `branches.json` holds branch names in a `BranchCatalog` proto, `ns.json` drops `version` and `status`, manifests are protojson at `ns/<ns>/refs/heads/<branch>.json`, `SegmentRef` drops `key`, and segments are content-addressed by SHA-256 hash. [#164]
+- `cloudy query -distance`: select the distance variant at startup. `pure` and `simd` run float32 rows. `simd` runs the AVX-512 kernels on an AVX-512 CPU and the portable `simd` kernels elsewhere. `fp16` runs fp16 rows and needs AVX-512. The default is `simd`, and an unsupported variant stops startup. bf16 and int8 rows are on the roadmap. [#162, #163]
+- `vector` (was `query/distance`): AVX-512 kernels through `simd/archsimd` and Go assembly, with an AVX-512 fp16 decoder. Cosine search scores one dot product per row with stored inverse norms. Benchmarks live in docs/benchmarks/distance.md. [#163]
+
 - `grpcapi`: `server-time-us` trailer on Query. `querybench` splits server and client-server latency and writes JSONL. [#161]
 - Static tenant registry, gRPC metadata interceptor, and storage isolation across ingest, flush, and query. [#156]
 - Multi-tenant log stream routing and root `tenants.json` catalog management. [#144]
