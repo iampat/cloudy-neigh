@@ -16,6 +16,7 @@
 - [X] Implement cross-tenant isolation across ingestion, query execution, local cache tiers, and storage keys. [#156]
 - [X] Consolidate existing design docs into a smaller set of docs, and fix any conflict between docs and code. [#167]
 - [ ] Use `https://github.com/google/subcommands` for cloudy CLI subcommand dispatch.
+- [X] Draft [garbage collection and point-in-time branch design](docs/design/garbage-collection.md). Metadata publication and reader cleanup remain open decisions. [#169]
 - [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
 - [ ] Expose branch deletion RPC in IngestService to remove branch pointers and update `branches.json`.
 - [ ] Ingestion and flusher cleanups.

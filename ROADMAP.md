@@ -217,6 +217,7 @@ Provide Git-like dataset branching and point-in-time snapshot isolation.
 - **Branch deletion RPC**: Expose administrative RPC in `IngestService` to remove branch pointers and update `branches.json`.
 - **Zero-copy namespace branching (Done)**: Instant creation of isolated branch copies with `Fork` RPC without copying segments. [#79, #138, #139, #140, #142]
 - **Point-in-time queries**: Pin queries to specific historical snapshot versions.
+- **Historical branch design (Draft)**: Configurable retention, periodic checkpoints, and read-only archives. See [garbage collection design](docs/design/garbage-collection.md). [#169]
 - **Garbage collection (GC)**: Background service to clean up unreferenced blobs and superseded manifest files.
 
 **User Value**: Safe experimentation, instant staging environments, and rollbacks that copy no data.

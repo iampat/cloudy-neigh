@@ -1,6 +1,6 @@
 # Garbage collection and point-in-time branches
 
-Status: Draft. 2026-09-28.
+Status: Draft. 2026-09-28. [#169]
 
 The retention and recovery model is proposed for review.
 The shared metadata protocol below is a correctness baseline, not an approved production publication architecture.
