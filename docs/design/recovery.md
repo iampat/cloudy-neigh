@@ -129,11 +129,3 @@ to Fork.
 After `ErrManifestTruncated`, the loader logs the error on every sync. The
 branch serves its old data until a restart. The fix is a loader that rebuilds
 its table from the full manifest when the manifest shrinks.
-
-### Local store durability
-
-`localStore.Put` does not fsync the file before the link. After a power loss,
-a segment key can hold a truncated file. The flush treats a present key as
-stored, so the replay accepts the truncated segment without an error. GCS
-writes are atomic, so this affects only the local store. `TODO.md` holds the
-fsync fix.

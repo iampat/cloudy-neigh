@@ -19,27 +19,9 @@
 - [ ] Use `https://github.com/google/subcommands` for cloudy CLI subcommand dispatch.
 - [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
 - [ ] Expose branch deletion RPC in IngestService to remove branch pointers and update `branches.json`.
-- [ ] Fix storage durability and error handling bugs.
-  - [ ] Make flusher segment upload idempotent during replay. Ignore `ErrPreconditionFailed` when the segment key exists in storage (`ingest/flusher.go:375`).
-  - [ ] Add `Sync()` and parent directory fsync to local store mutations (`objectstore/local.go:305, 317, 353`). Prevent data loss across power loss and crashes. A replay treats an existing segment key as stored, so a truncated local segment now passes silently. [#165]
-  - [ ] Return lock errors from `objectstore.diskLock.lock` (`objectstore/local.go:39-54`). Do not fall back to process mutex when directory access or flock fails.
-  - [ ] Prevent GCS `Put` committing truncated objects on copy failure (`objectstore/gcs.go:125-132`). Cancel writer context before closing.
-  - [ ] Guard against integer overflow in memory store range reads (`objectstore/mem.go:85-89`). Clamp end offset to object size.
-  - [ ] Restrict local store `List` walk to the requested prefix path (`objectstore/local.go:368-415`). Do not walk the entire storage root.
-- [ ] Fix ingestion and flusher concurrency and lifecycle bugs.
-  - [ ] Monitor flusher stream workers with `errgroup.WithContext` (`ingest/flusher.go:54, 190`). Stop all workers and exit `Run` on worker crash.
+- [ ] Ingestion and flusher cleanups.
   - [ ] Remove `shutdownFlush` drain after context cancellation (`ingest/flusher.go:241-306`). WAL is durable, and restarting resumes from checkpoints.
   - [ ] Remove redundant mutex and cancel map from `Flusher` (`ingest/flusher.go:31-36, 195-201`). Stream dispatch runs on a single goroutine.
-  - [X] Propagate `scope.AddBranch` errors during flusher segment commit and ingester fork (`ingest/flusher.go:418`, `ingest/ingester.go:150`). [#166]
-  - [ ] Validate vector dimensions at gRPC ingestion boundary (`grpcapi/ingest.go:102-111`). Reject mismatched dimensions before WAL append.
-  - [ ] Validate record size against `DefaultMaxRecordSize` before log append (`logstream/log.go:54`, `recordio/writer.go:71-76`). Reject records over 64 MiB.
-- [ ] Fix query engine and loader integrity bugs.
-  - [ ] Fix query engine root branch discovery bug (`query/engine.go:50`, `namespace/branch.go:114-126`). Replace root `branches.json` reads with scoped `<tenant>/ns/<namespace>/branches.json` discovery.
-  - [ ] Prevent query loader from publishing partial segment mutations on failure (`query/loader.go:73-77`). Clone table before loading segments and publish atomically only after all segments load.
-  - [ ] Pass `context.Context` to `Table.Search` and propagate cancellation to gRPC error codes (`query/table.go:314`, `grpcapi/query.go:62-70`).
-  - [ ] Return not found error when query loader is missing instead of returning empty results (`query/engine.go:118-120`).
-  - [ ] Fix catalog cache race overwriting newer versions (`namespace/catalog.go:268-283`). Verify version under mutex before updating cache.
-  - [ ] Reject unknown fields during catalog JSON decoding (`namespace/catalog.go:28`). Remove `DiscardUnknown: true` to prevent data loss on rewrites.
 - [ ] Eliminate configuration fallbacks and compatibility shims.
   - [ ] Eliminate duplicate free functions in `namespace` (`BranchRef`, `SegmentKey`, `BranchesPath`, `CatalogPath`, `ListBranches`, `AddBranch`, `RemoveBranch`). Require explicit `Scope` arguments and resolve defaults once at gRPC boundary.
   - [X] Remove `ScopeFromRef` (`namespace/namespace.go`). [#156]
@@ -179,8 +161,33 @@
 - [X] Drop `--test_output=streamed` from `test:fuzz`. It disables sharding and serializes the test run. [#108, #153]
 - [ ] Build fuzz targets with coverage instrumentation. Without it, fuzzing runs without coverage guidance. [#82, #108]
 
+## Known bugs
+
+- [ ] [CRITICAL] Add `Sync()` and parent directory fsync to `localStore.Put` (`objectstore/local.go:302, 314, 350`). Prevent data loss across power loss and crashes. A replay treats an existing segment key as stored, so a truncated local segment now passes silently. [#165]
+- [ ] [CRITICAL] Discarded namespace creation error in `Ingester.getOrCreateLog` strands WAL mutations (`ingest/ingester.go:52-57`, `namespace/catalog.go:80-113`). WAL appends succeed but the namespace never registers in `ns.json`, leaving mutations unflushed forever.
+- [ ] [CRITICAL] Prevent GCS `Put` committing truncated objects on copy failure (`objectstore/gcs.go:125-132`). Cancel writer context before closing to prevent storing corrupted objects.
+- [ ] [CRITICAL] Corrupt WAL record causes infinite crash loop in flusher (`ingest/flusher.go:281-284, 237-242`). Checkpoints do not advance, blocking flusher permanently on startup.
+- [ ] [HIGH] Crash between Fork failure and rollback leaves orphan manifest (`ingest/ingester.go:139-194`, `grpcapi/ingest.go:199-201`). Target branch omitted from catalog and retries fail permanently with `ErrBranchAlreadyExists`.
+- [ ] [HIGH] Stale query loader after manifest shrinkage (`query/loader.go:67-69`, `query/engine.go:86-88`). `ErrManifestTruncated` logs on every sync, and queries serve stale data indefinitely until restart.
+- [ ] [HIGH] Monitor flusher stream workers with `errgroup.WithContext` (`ingest/flusher.go:54, 134-161, 190`). Discovery skips dead instance in `f.flushers`, halting ingestion for that namespace.
+- [ ] [HIGH] Prevent query loader from publishing partial segment mutations on failure (`query/loader.go:73-77, 86, 115-136`). Failed segment read stores partial mutations and later re-applies from offset 0 out of order.
+- [ ] [HIGH] Fix query engine root branch discovery bug (`query/engine.go:50`, `namespace/branch.go:114-126`). Replace root `branches.json` reads with scoped `<tenant>/ns/<namespace>/branches.json` discovery.
+- [ ] [HIGH] Fix catalog cache race overwriting newer versions (`namespace/catalog.go:268-283`). Verify version under mutex before updating cache.
+- [ ] [HIGH] Reject unknown fields during catalog JSON decoding (`namespace/catalog.go:28`). Remove `DiscardUnknown: true` to prevent data loss on rewrites.
+- [ ] [MEDIUM] Make flusher segment upload idempotent during replay (`ingest/flusher.go:375`). Ignore `ErrPreconditionFailed` when the segment key exists in storage.
+- [ ] [MEDIUM] Segment compaction breaks query loader slicing (`query/loader.go:67-73`). Merging segments reduces slice length and permanently triggers `ErrManifestTruncated`.
+- [ ] [MEDIUM] Deleted branches remain queryable in query engine memory (`query/engine.go:32, 65-90, 128-136`). Engine never unloads removed branches.
+- [ ] [MEDIUM] Return lock errors from `objectstore.diskLock.lock` (`objectstore/local.go:39-54`). Do not fall back to process mutex when directory access or flock fails.
+- [ ] [MEDIUM] Return not found error when query loader is missing instead of returning empty results (`query/engine.go:118-120`).
+- [ ] [MEDIUM] Validate vector dimensions at gRPC ingestion boundary (`grpcapi/ingest.go:102-111`). Reject mismatched dimensions before WAL append.
+- [ ] [MEDIUM] Validate record size against `DefaultMaxRecordSize` before log append (`logstream/log.go:54`, `recordio/writer.go:71-76`). Reject records over 64 MiB.
+- [ ] [LOW] Guard against integer overflow in memory store range reads (`objectstore/mem.go:85-89`). Clamp end offset to object size.
+- [ ] [LOW] Restrict local store `List` walk to the requested prefix path (`objectstore/local.go:368-415`). Do not walk the entire storage root.
+- [ ] [LOW] Pass `context.Context` to `Table.Search` and propagate cancellation to gRPC error codes (`query/table.go:314`, `grpcapi/query.go:62-70`).
+
 ## Done
 
+- [X] Propagate `scope.AddBranch` errors during flusher segment commit and ingester fork (`ingest/flusher.go:418`, `ingest/ingester.go:150`). [#166]
 - [X] Enable `--config=race` by default for `build` in `.bazelrc`. Gazelle
       analysis under race mode works after upgrading to rules_go 0.63.0 and
       gazelle 0.53.0. [#98]
