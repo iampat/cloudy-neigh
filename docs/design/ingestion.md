@@ -1,68 +1,386 @@
-# Ingestion and Materialization
+# Ingestion Subsystem
 
-## Problem
+The ingestion subsystem processes real-time document mutations across multiple
+dataset branches without external coordination.
+It ingests documents from client Remote Procedure Call (RPC) requests into
+durable, content-addressed storage segments.
+The cloudy ingest daemon hosts both the public gRPC ingest server and the
+background flusher worker.
 
-A search engine must ingest real-time document mutations across multiple dataset branches. It must also support bulk backfills and point-in-time recovery. Running external coordination or workflow clusters increases operational cost.
+## 1. Ingestion Pipeline Architecture
 
-## Goals
+The ingestion pipeline decouples fast client acknowledgment from background
+segment materialization.
+The diagram below shows the component boundaries and end-to-end data flow.
 
-- Single unified write-ahead log for all document mutations across branches.
-- In-memory dispatch of log records to per-branch Memtables.
-- Point-in-time recovery and snapshot queries through manifest sequence anchors.
-- Bulk backfill via direct immutable segment creation with zero external coordination.
-- Periodic flushing of Memtables into immutable CAS segment blobs.
-
-## Non-goals
-
-- Partitioning write-ahead logs into per-branch storage prefixes.
-- External workflow engines such as Temporal or distributed locking services.
-- Distributed multi-worker lease heartbeats for single-node ingestion.
-
-## Architecture
-
-```
-Ingestion & Materialization Pipeline
-┌────────────────────────┐ Write(branch, doc)
-│ Ingestion Client       ├─────────────────────────────────────────┐
-└────────────────────────┘                                         ▼
-┌────────────────────────┐ Write(branch, doc) ┌────────────────────────────┐
-│ Bulk Ingest Worker     ├───────────────────►│ Global WAL (logstream.Log) │
-└────────────────────────┘                    │ wal/<020d_seq>.recordio    │
-                                              └─────────────┬──────────────┘
-                                                            │ Read(seq)
-┌───────────────────────────────────────────────────────────▼──────────────┐
-│ Consumer & Branch Router                                                 │
-│ (Tails global WAL, inspects record.Branch, routes to Memtable)           │
-└──────────────┬────────────────────────────────────────────┬──────────────┘
-               │                                            │
-               ▼                                            ▼
-┌────────────────────────────┐               ┌─────────────────────────────┐
-│ Branch "main" Memtable     │               │ Branch "dev" Memtable       │
-│ (Vectors, Postings, Docs)  │               │ (Vectors, Postings, Docs)   │
-└──────────────┬─────────────┘               └──────────────┬──────────────┘
-               │ Flush at size/time threshold               │ Flush at size/time threshold
-               │ (e.g. 64 MB / 1 min)                       │ (e.g. 64 MB / 1 min)
-               ▼                                            ▼
-┌────────────────────────────┐               ┌─────────────────────────────┐
-│ refs/heads/main            │               │ refs/heads/dev              │
-│ (Inlined BranchManifest)   │               │ (Inlined BranchManifest)    │
-└──────────────┬─────────────┘               └──────────────┬──────────────┘
-               │                                            │
-               └─────────────────────┬──────────────────────┘
-                                     ▼
-                      ┌────────────────────────────┐
-                      │ segments/                  │
-                      │ seg_001.{vec,post,doc}     │
-                      └────────────────────────────┘
+```text
+┌─────────────────────────┐ Upsert, Delete, Fork
+│ Client                  ├────────────────────────────┐
+└─────────────────────────┘                            ▼
+                            ┌──────────────────────────────────────┐
+                            │ IngestServer (gRPC)                  │
+                            └──────────────────┬───────────────────┘
+                                               │ Ingester
+                                               ▼
+                            ┌──────────────────────────────────────┐
+                            │ LogStream Write-Ahead Log (WAL)      │
+                            │ ns/<namespace>/wal/<020d_seq>.recordio│
+                            └──────────────────┬───────────────────┘
+                                               │ Read(seq)
+                                               ▼
+                            ┌──────────────────────────────────────┐
+                            │ Flusher (Background Worker)          │
+                            └─────────┬──────────────────┬─────────┘
+        Upload Segment (CAS)          │                  │ Update Manifest (CAS)
+                                      ▼                  ▼
+┌──────────────────────────────────────┐   ┌───────────────────────────────┐
+│ Immutable Segments                   │   │ Branch Manifests and Catalogs │
+│ ns/<namespace>/segments/<hash>.recordio  │ refs/heads/<branch>.json      │
+└──────────────────────────────────────┘   │ branches.json                 │
+                                           └───────────────────────────────┘
 ```
 
-## Record Format
+The pipeline executes through eleven discrete stages:
 
-Mutations and branch lifecycle events serialize into RecordIO frames inside the global WAL.
+1. The client issues a write RPC to IngestServer.
+2. IngestServer extracts tenant identity from the request context.
+3. IngestServer validates document payloads, record identifiers, and branch
+names.
+4. Ingester wraps mutations into storage Write-Ahead Log (WAL) records.
+5. Ingester appends the batch to LogStream as a single RecordIO object.
+6. LogStream commits the object with an atomic conditional write.
+7. The RPC acknowledges success to the client immediately after commit.
+8. The background Flusher discovers active namespaces from ns.json.
+9. The Flusher tails each LogStream sequentially starting from the lowest
+checkpoint.
+10. The Flusher writes batch mutations into content-addressed segment files.
+11. The Flusher updates branch manifests using atomic Compare-And-Swap (CAS)
+operations.
+
+## 2. gRPC Ingest Service Endpoints
+
+The IngestService exposes three RPC endpoints: Upsert, Delete, and Fork.
+The Protocol Buffers (protobuf) schema lives in
+proto/cloudyneigh/v1/index.proto.
 
 ```proto
 syntax = "proto3";
-package cloudyneigh.ingest;
+
+package cloudyneigh.v1;
+
+service IngestService {
+  rpc Upsert(UpsertRequest) returns (UpsertResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Fork(ForkRequest) returns (ForkResponse);
+}
+```
+
+### Endpoint Schemas
+
+Upsert ingests a batch of documents into a dataset branch.
+
+```proto
+message UpsertRequest {
+  string namespace = 1;
+  repeated Record records = 2;
+  string branch = 3;
+}
+
+message UpsertResponse {
+  uint32 upserted_count = 1;
+}
+
+message Record {
+  string id = 1;
+  map<string, Vector> vectors = 2;
+  map<string, AttributeValue> attributes = 3;
+}
+
+message Vector {
+  repeated float values = 1;
+}
+
+message AttributeValue {
+  oneof value {
+    string string_value = 1;
+  }
+}
+```
+
+Delete appends tombstones for a list of document identifiers.
+
+```proto
+message DeleteRequest {
+  string namespace = 1;
+  repeated string ids = 2;
+  string branch = 3;
+}
+
+message DeleteResponse {
+  uint32 deleted_count = 1;
+}
+```
+
+Fork duplicates an existing branch manifest to create a new branch.
+
+```proto
+message ForkRequest {
+  string namespace = 1;
+  string source_branch = 2;
+  string target_branch = 3;
+}
+
+message ForkResponse {}
+```
+
+### Validation Rules
+
+The server normalizes empty namespace strings to "default".
+The server normalizes empty branch strings to "main".
+Valid namespace and branch names must start with an ASCII letter and contain
+only ASCII alphanumeric characters, hyphens, or underscores
+(`^[a-zA-Z][a-zA-Z0-9_-]*$`).
+Upsert returns InvalidArgument if any record pointer is nil.
+Upsert returns InvalidArgument if any record contains an empty id.
+Delete returns InvalidArgument if any identifier string is empty.
+Fork returns InvalidArgument when target_branch is empty.
+Fork returns InvalidArgument when source_branch equals target_branch.
+
+### Multi-Tenant Routing
+
+The gRPC interceptor extracts tenant identity from the x-tenant-id metadata
+header.
+The server maps tenant identities to dedicated in-memory Ingester instances.
+Requests with missing tenant headers fail with Unauthenticated.
+Requests with unrecognized tenant identities fail with NotFound.
+
+### Status Code Mappings
+
+The table below outlines gRPC status codes returned by the ingest service.
+
+| Status Code | Condition | Description |
+| --- | --- | --- |
+| InvalidArgument | Bad request | Invalid name, nil record, or empty id. |
+| Unauthenticated | Missing auth | Missing x-tenant-id metadata header. |
+| NotFound | Missing item | Unrecognized tenant or missing source branch. |
+| AlreadyExists | Target exists | Target manifest exists on fork. |
+| Canceled | Canceled | Request context canceled early. |
+| DeadlineExceeded | Timeout | Context deadline expired during write. |
+| Internal | Storage error | Object store operation failed. |
+
+### Batch Semantics
+
+All records in an Upsert or Delete request commit atomically.
+The Ingester serializes the entire batch into one WAL segment.
+The server never commits partial batches to storage.
+Clients can safely retry failed requests due to idempotent mutations.
+
+## 3. LogStream Architecture & Sequencing
+
+LogStream implements Layer 1 of the storage architecture.
+It provides an append-only, sequentially numbered log on cloud object storage.
+The log operates without an external coordination service.
+
+### Storage Layout
+
+Each namespace maintains its own log prefix under ns/<namespace>/wal/.
+Individual log segment keys follow the pattern wal/<020d_seq>.recordio.
+The sequence number is a 20-digit zero-padded decimal integer.
+Lexicographical string sorting matches numeric sequence order.
+
+```text
+wal/
+├── 00000000000000000001.recordio
+├── 00000000000000000002.recordio
+└── 00000000000000000003.recordio   <- head (seq 3)
+```
+
+### Contiguity Invariant
+
+Committed sequence numbers form a contiguous range 1..N with zero gaps.
+The reader halts iteration on the first missing sequence number.
+The engine relies on this invariant for deterministic crash recovery.
+
+### Conditional Append Protocol
+
+Writers append records without central locking through cloud storage
+preconditions.
+
+1. The writer determines candidate sequence seq = last_known_seq + 1.
+2. The writer serializes the batch into a RecordIO segment buffer.
+3. The writer issues a conditional create operation to cloud storage.
+On Google Cloud Storage (GCS), the writer sets if-generation-match=0.
+On Amazon Web Services (AWS) S3, the writer sets If-None-Match="*".
+4. If the write succeeds, the batch commits under sequence seq.
+5. If the write returns HTTP 412 (Precondition Failed), another writer claimed
+seq.
+The writer locates the new head and retries at head + 1.
+
+### Multi-Record Batching
+
+LogStream packs all records in an Append call into a single segment.
+This commits the entire batch in one cloud round-trip.
+Batching amortizes network Round-Trip Time (RTT) and object storage PUT fees.
+
+### Tail Discovery and Exponential Probing
+
+When a writer starts cold, it discovers the log head.
+Tail issues a List operation with a limit of 1000 keys.
+If the list contains fewer than 1000 items, the last key is head.
+If the list returns 1000 items, LogStream runs an exponential jump search.
+
+The diagram below illustrates the exponential probe and binary search phases.
+
+```text
+Step 1: Exponential Probing (find upper bound)
+Seq:   1000 ──▶ 1001 ──▶ 1003 ──▶ 1007 ──▶ 1015 (Absent)
+              (Exists) (Exists) (Exists)
+
+Step 2: Binary Search (locate exact head)
+Range: [1007, 1015] ──▶ Mid: 1011 (Exists) ──▶ Range: [1011, 1015]
+                     ──▶ Mid: 1013 (Absent) ──▶ Range: [1011, 1013]
+                     ──▶ Mid: 1012 (Exists) ──▶ Head = 1012
+```
+
+The search doubles the jump step size until a segment key is absent.
+It then executes a binary search between the bounds.
+This locates the current stream head in O(log N) operations.
+
+### Delivery Guarantees
+
+LogStream provides at-least-once delivery semantics.
+A network interruption during acknowledgment can cause a retry to write
+duplicates.
+Downstream consumers must handle deduplication or apply idempotent state
+mutations.
+
+## 4. RecordIO Binary Framing Format
+
+RecordIO encapsulates variable-length binary payloads with 16 bytes of framing
+overhead.
+The wire layout guarantees corruption detection and supports zero-allocation
+streaming.
+
+### Wire Format Layout
+
+Each frame consists of a 12-byte header, data payload, and 4-byte footer.
+
+```text
+┌───────────────────────┬───────────────────────┬──────────────┬───────────────┐
+│ Length (uint64 LE)    │ LengthCRC (uint32 LE) │ Data Payload │ DataCRC       │
+│ 8 Bytes               │ 4 Bytes               │ N Bytes      │ 4 Bytes       │
+└───────────────────────┴───────────────────────┴──────────────┴───────────────┘
+└────────────── 12-Byte Header ─────────────────┘              └─ 4-Byte Footer┘
+```
+
+The header fields use Little-Endian (LE) byte order:
+- Length (8 bytes): Unsigned 64-bit integer specifying payload size N.
+- LengthCRC (4 bytes): Masked CRC32C checksum of the Length bytes.
+
+The body holds the uninterpreted payload:
+- Data (N bytes): Raw byte payload.
+
+The footer protects the payload:
+- DataCRC (4 bytes): Masked CRC32C checksum of the Data bytes.
+
+### Castagnoli CRC32C Masking
+
+Checksums use the hardware-accelerated Castagnoli polynomial (0x82F63B78).
+The implementation applies bit rotation and constant addition masking:
+
+```go
+const maskDelta = 0xa282ead8
+
+func mask(crc uint32) uint32 {
+	return ((crc >> 15) | (crc << 17)) + maskDelta
+}
+
+func unmask(masked uint32) uint32 {
+	rot := masked - maskDelta
+	return (rot >> 17) | (rot << 15)
+}
+```
+
+Masking prevents checksum collisions with file system signatures and all-zero
+storage blocks.
+
+### Memory Model
+
+The RecordIO package enforces a zero-allocation model in steady-state streaming.
+
+```text
+               [ File or io.Reader ]
+                         │
+                         ▼
+┌────────────────────────────────────────────────────────┐
+│ Scanner Reusable Buffer                                │
+│ ┌───────────────┬────────────────────────┬───────────┐ │
+│ │  12B Header   │   Payload (N bytes)    │ 4B Footer │ │
+│ │  (prealloc)   │                        │ (prealloc)│ │
+│ └───────────────┴───────────┬────────────┴───────────┘ │
+└─────────────────────────────┼──────────────────────────┘
+                              │
+              Borrowed slice: buf[12 : 12+N]
+                              │
+                              ▼
+                 [ Caller or Deserializer ]
+```
+
+Writer memory behavior:
+1. The writer uses preallocated byte arrays for the header and footer.
+2. A default 64 KB buffer amortizes syscall and write overhead.
+3. The writer tracks stream offset and returns start offsets for each record.
+
+Scanner memory behavior:
+1. Scanner allocates a single reusable internal buffer.
+2. Record returns a borrowed slice valid until the next Scan call.
+3. The scanner validates Length against MaxRecordSize before expanding memory.
+Corrupt length headers fail before triggering large allocations.
+4. Fast skip uses io.Seeker when supported to discard payloads without
+allocation.
+
+### Error Handling and Crash Recovery
+
+RecordIO differentiates between recoverable crash truncations and
+unrecoverable data corruption.
+
+```go
+var (
+	ErrTornWrite = errors.New(
+		"recordio: incomplete record at stream tail (torn write)")
+	ErrHeaderCorrupted = errors.New(
+		"recordio: header length CRC mismatch mid-stream")
+	ErrDataCorrupted = errors.New(
+		"recordio: payload data CRC mismatch mid-stream")
+	ErrRecordTooLarge = errors.New(
+		"recordio: record size exceeds max limit")
+)
+```
+
+1. Torn write at tail (recoverable):
+A process crash produces incomplete frames at the end of a stream.
+Scanner encounters an unexpected End of File (EOF) and returns ErrTornWrite.
+Recovery callers query LastValidOffset to truncate the file at the clean
+boundary.
+
+2. Mid-stream corruption (fatal):
+A CRC mismatch in the middle of a stream indicates bit corruption.
+The scanner halts immediately with ErrHeaderCorrupted or ErrDataCorrupted.
+Iteration never skips over corrupted records during WAL replay.
+
+3. Clean EOF:
+When EOF aligns exactly with a frame boundary, Scan returns false and Err
+returns nil.
+
+## 5. WAL Record Schema
+
+Mutations and lifecycle events serialize into RecordIO frames inside the WAL.
+The schema lives in proto/storage/v1/storage.proto.
+
+```proto
+syntax = "proto3";
+
+package cloudyneigh.storage.v1;
 
 enum MutationOp {
   MUTATION_OP_UNSPECIFIED = 0;
@@ -79,9 +397,8 @@ message DocumentMutation {
 
 message BranchLifecycleEvent {
   enum Type {
-    TYPE_UNSPECIFIED = 0;
+    UNSPECIFIED = 0;
     FORK = 1;
-    DELETE = 2;
   }
   Type type = 1;
   string branch = 2;
@@ -96,117 +413,132 @@ message WalRecord {
 }
 ```
 
-## Ingestion Protocol
+### Mutation Records
 
-1. Client sends a document mutation or branch lifecycle request.
-2. The ingestion node wraps the operation into a `WalRecord`.
-3. The node appends the record to `logstream.Log`.
-4. `logstream.Log` commits the segment file under `wal/<020d_seq>.recordio`.
-5. The node returns sequence number `seq` to the client.
+A DocumentMutation represents an update or removal of a single document.
+- branch: Target dataset branch receiving the mutation.
+- doc_id: Unique string identifier of the document.
+- op: Operation type, either PUT or DELETE.
+- payload: Marshaled cloudyneigh.v1.Record protobuf bytes for PUT operations.
+For DELETE operations, payload remains empty.
 
-## Consumer and Memtable Materialization
+### Branch Lifecycle Records
 
-1. The consumer tails `logstream.Log` sequentially starting from `checkpoint_seq + 1`.
-2. For each `WalRecord`:
-   - If `branch_event.type == FORK`:
-     1. Freeze the parent branch Memtable.
-     2. Flush parent Memtable into columnar segment files.
-     3. Commit updated `BranchManifest` for parent branch (`checkpoint_seq = fork_seq`).
-     4. Write `refs/heads/<child>` with parent `BranchManifest` and precondition `Absent: true`.
-     5. Open new active Memtables for both parent and child branches.
-   - If `branch_event.type == DELETE`:
-     1. Purge the in-memory Memtable, index structures, and lookup maps for the target branch.
-     2. Delete `refs/heads/<branch>`.
-   - If `mutation`:
-     1. Route the mutation to the target branch active Memtable.
-3. The branch Memtable updates its internal structures:
-   - Vector buffer for brute-force distance calculation.
-   - Inverted index postings for lexical matching.
-   - Attribute map for document retrieval and scalar filtering.
-   - Tombstone bitset for deletions.
-4. The consumer updates `last_applied_seq = seq`.
+A BranchLifecycleEvent captures dataset branch creation.
+- type: Lifecycle operation type, set to FORK.
+- branch: Target branch name created by the fork.
+- parent_branch: Source branch from which state was copied.
 
-## Memtable Flush Protocol
+### Ordering Invariants
 
-A branch Memtable flushes on two independent triggers:
-- **Size threshold (e.g. 64 MB):** Bounds memory usage under high write throughput.
-- **Time threshold (e.g. 1 minute):** Bounds persistence latency for idle or low-volume branches. A single document flushes even if no further writes arrive.
+Each WAL entry holds mutations for only one branch.
+The Flusher rejects WAL entries containing mutations spanning multiple
+branches.
+The sequential WAL order establishes the authoritative timeline across all
+branches in a namespace.
 
-When either threshold triggers:
-1. Freeze active Memtable and open a new active Memtable.
-2. Serialize frozen state into columnar segment files:
-   - `segments/<id>.vec`
-   - `segments/<id>.post`
-   - `segments/<id>.doc`
-3. Store columnar files in `objectstore.Store`.
-4. Commit updated `BranchManifest` directly to `refs/heads/<branch>` with GCS `if-generation-match`.
-5. Discard the frozen Memtable.
+## 6. Flusher Commit Loops & Execution
 
-## Point-in-Time Recovery and Queries
+The Flusher materializes WAL records into queryable, immutable segments and
+manifests.
+It executes as a background service inside the cloudy ingest daemon.
 
-Each branch manifest records `checkpoint_seq` and `fork_seq`.
+### Stream Discovery
 
-To query branch `B` at historical sequence `T`:
-1. Load the manifest snapshot on branch `B` with `checkpoint_seq <= T`.
-2. Load cached segment blobs referenced by this manifest.
-3. Replay WAL records from `checkpoint_seq + 1` up to `T` where `mutation.branch == B`.
-4. Apply the replayed mutations to the in-memory candidate set.
-5. Execute query across the combined dataset.
+Flusher polls the tenant catalog ns.json every 100 milliseconds.
+It calls namespace.ActiveNamespaces to discover newly added namespaces.
+Soft-deleted namespaces with non-zero deleted_at timestamps are ignored
+automatically.
+Flusher launches a persistent streamFlusher goroutine for each active
+namespace.
+An errgroup.Group manages worker lifecycles and propagates shutdown signals.
 
-## Bulk Backfill Orchestration
+### Checkpoint Initialization
 
-Bulk backfills bypass the sequential write-ahead log.
+Before replaying a stream, streamFlusher recovers branch checkpoints.
 
-1. **Segment Generation**:
-   Workers read source datasets and write immutable columnar segment files directly to `segments/`.
-2. **Manifest Commit Batches**:
-   Workers commit segment references in chunks directly to `refs/heads/<branch>`.
-   Commits use conditional GCS `if-generation-match` writes.
-3. **Crash Recovery**:
-   If a worker crashes, the replacement worker reads `refs/heads/<branch>`.
-   It resumes backfill from the last committed segment chunk.
-4. **Zero Coordination**:
-   The protocol requires no external database or workflow orchestrator.
+1. The worker lists active branches from branches.json.
+2. It reads each branch manifest under refs/heads/<branch>.json.
+3. It records the CheckpointSeq from each manifest.
+4. It sets the replay start sequence to min(CheckpointSeq) + 1.
+If no branches exist, replay starts at sequence 1.
 
-## Concurrency and Coordination Model
+### Sequential Record Processing
 
-Document ingestion and materialization split concurrency across two distinct phases:
+The stream worker processes WAL entries sequentially by integer sequence
+number.
 
-### In-Memory Mutation Dispatch (Hot Path)
+1. The worker calls log.Read(ctx, seq).
+2. If Read returns ErrEndOfStream, the worker sleeps for pollInterval before
+retrying.
+3. The worker parses each raw byte record into a WalRecord protobuf.
+4. On a FORK event, the worker updates the child branch checkpoint.
+5. On mutation records, the worker checks the target branch checkpoint.
+If seq <= branchCheckpoints[branch], the flusher skips the mutation.
+This prevents duplicate application during crash replay.
 
-- Each document mutation updates three internal structures:
-  1. Attribute map for document retrieval.
-  2. Inverted index postings for lexical search.
-  3. Vector buffer for similarity search.
-- The consumer updates these structures sequentially under a Memtable mutex.
-- Sub-microsecond memory writes do not justify per-document goroutine spawn overhead.
+### Content-Addressed Segment Writing
 
-### Segment Flush and Storage Sink (Cold Path)
+The flusher writes unapplied mutations into immutable segment files.
 
-- Mutations do not write to object storage individually.
-- When the size or time threshold triggers, three concurrent goroutines upload the columnar segment files in parallel.
-- An `errgroup.Group` coordinates the three upload tasks:
-  - `segments/<id>.doc`
-  - `segments/<id>.post`
-  - `segments/<id>.vec`
-- After all uploads succeed, a single atomic commit updates `refs/heads/<branch>`.
+1. Mutations are encoded into a RecordIO buffer using segment.NewWriter.
+2. The worker computes the SHA-256 hash over the segment bytes.
+3. The segment identifier is the hex-encoded SHA-256 digest.
+4. The worker uploads the segment to segments/<sha256>.recordio with Absent:
+true.
+If upload fails with ErrPreconditionFailed (HTTP 412), the segment exists
+already.
+Because segment contents are identical, the flusher treats HTTP 412 as success.
 
-## Appendix: Ingestion Modes (Async vs Sync)
+### Manifest CAS Update Loop
 
-The ingestion pipeline supports two delivery modes:
+After uploading the segment, the flusher links it to the branch manifest.
+The update loop uses optimistic concurrency control:
 
-### 1. Asynchronous Ingestion (Default)
+```text
+┌────────────────────────────────────────────────────────┐
+│ 1. Read manifest refs/heads/<branch>.json + Generation │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│ 2. Check: m.CheckpointSeq >= seq?                      │
+│    YES ──▶ Branch up to date, AddBranch, return nil    │
+└───────────────────────────┬────────────────────────────┘
+                            │ NO
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│ 3. Append SegmentRef & Set m.CheckpointSeq = seq       │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│ 4. Write manifest (Condition: if-generation-match)     │
+└───────────────┬────────────────────────┬───────────────┘
+                │ Success                │ HTTP 412
+                ▼                        ▼
+┌───────────────────────────┐  ┌─────────────────────────┐
+│ AddBranch & return nil    │  │ Retry loop from Step 1  │
+└───────────────────────────┘  └─────────────────────────┘
+```
 
-- The write returns immediately after appending to `logstream.Log`.
-- The consumer tails the log and updates the branch Memtable in the background.
-- Read queries observe mutations only after Memtable dispatch.
+1. The worker reads the branch manifest and captures its generation string.
+If the manifest does not exist, it initializes a new manifest.
+2. If m.CheckpointSeq >= seq, another flush committed this sequence.
+The worker registers the branch in branches.json and completes.
+3. The worker appends a SegmentRef containing the segment ID, document count,
+and byte size.
+It updates m.CheckpointSeq to seq.
+4. The worker writes the manifest with an if-generation-match precondition.
+If the write succeeds, the worker registers the branch and completes.
+If the write returns HTTP 412, concurrent flushes occurred.
+The worker rereads the manifest and retries the loop.
 
-### 2. Synchronous Ingestion (Read-After-Write)
+### Graceful Shutdown Drain
 
-- The write ensures immediate read visibility.
-- Writers return once the log write commits. They do not wait for index materialization.
-- The query engine executes across two sources:
-  1. The indexed dataset (active Memtable and columnar segment files).
-  2. The unindexed pending buffer in `logstream.Log`.
-- The engine unions and deduplicates candidates before ranking.
-- Linear scan over small unindexed buffers keeps write and read latencies balanced.
+When the flusher context receives a cancellation signal, workers drain the WAL.
+Workers create a shutdown context with a 5-second deadline.
+Each worker continues reading WAL entries until reaching ErrEndOfStream.
+It flushes all pending mutations before terminating cleanly.
+This prevents uncommitted mutations from lagging behind during planned service
+restarts.
