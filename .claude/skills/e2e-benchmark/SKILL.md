@@ -6,9 +6,9 @@ allowed-tools: Bash, Read
 
 # E2E benchmark
 
-The scripts in `scripts/` run the full benchmark, one command per phase. Each
+The tasks in `Taskfile.bench.yml` run the full benchmark, one command per phase. Each
 phase skips the work it finished, so a rerun resumes. Never replace a phase
-with ad hoc commands. Change the script, and commit the change.
+with ad hoc commands.
 
 ## What it measures
 
@@ -33,11 +33,7 @@ stays idle, and the client runs on the other cores. The Mac cannot pin a core.
 - The dataset on the Mac in `datasets/cohere-wikipedia`:
 
   ```sh
-  hf download CohereLabs/wikipedia-2023-11-embed-multilingual-v3 \
-    en/0000.parquet en/0001.parquet en/0002.parquet en/0003.parquet \
-    en/0004.parquet en/0005.parquet en/0006.parquet de/0000.parquet \
-    es/0000.parquet fr/0000.parquet --repo-type dataset \
-    --local-dir datasets/cohere-wikipedia
+  task download-dataset
   ```
 
 - `gcloud` logged in as `amiri1982@gmail.com`. The scripts pass the account
@@ -51,7 +47,7 @@ stays idle, and the client runs on the other cores. The Mac cannot pin a core.
 
 ## Config
 
-`scripts/config.sh` holds every setting. An environment variable overrides a
+`Taskfile.bench.yml` holds every setting. An environment variable overrides a
 setting. The important ones:
 
 | Variable | Default | Purpose |
@@ -65,32 +61,30 @@ setting. The important ones:
 | `SHAPES_<machine>` | see file | Shape and zone pairs, in order of preference. |
 | `QUERIES`, `WARMUP` | 300, 20 | Queries per scenario. `QUERIES` stays at 1000 or less. |
 | `LOADER` | `gnr` | The VM that loads the GCS store. |
-| `KEEP_VMS` | 0 | Set 1 to stop `run-all.sh` from deleting the VMs on exit. |
+| `KEEP_VMS` | 0 | Set 1 to stop `task bench:all` from deleting the VMs on exit. |
 
-The machines are `mac`, `emr` and `gnr`. To add a VM, add its name to `VMS` and
-set `VM_`, `PLATFORM_`, `MODEL_`, `SHAPES_`, `VARIANTS_` and `PROFILE_` for it.
+The machines are `mac`, `emr` and `gnr`.
 
 ## Phases
 
 Run the commands from the repository root. Name the experiment first:
 
 ```sh
-S=.claude/skills/e2e-benchmark/scripts
 export NAMESPACE=f32
 ```
 
 | Phase | Command | Time |
 | --- | --- | --- |
-| Build | `bash $S/build.sh` | 1 to 5 min |
-| Create a VM | `bash $S/vm.sh create emr` | 1 min, hours for GNR when capacity is short |
-| Set up a VM | `bash $S/vm.sh setup emr` | 40 min, most of it the C++ gRPC build |
-| Microbenchmarks | `bash $S/microbench.sh mac\|emr\|gnr` | 15 min |
-| Load | `bash $S/load.sh mac\|gnr` | 10 min on the Mac |
-| End to end | `bash $S/e2e.sh mac\|emr\|gnr [variant...]` | 20 to 45 min per variant |
-| Report | `bash $S/report.sh` | 1 min, plus the ground truth on the first run |
-| Cleanup | `bash $S/cleanup.sh` | 1 min |
+| Build | `task bench:build` | 1 to 5 min |
+| Create a VM | `task bench:vm-create -- emr` | 1 min, hours for GNR when capacity is short |
+| Set up a VM | `task bench:vm-setup -- emr` | 40 min, most of it the C++ gRPC build |
+| Microbenchmarks | `task bench:microbench -- mac\|emr\|gnr` | 15 min |
+| Load | `task bench:load -- mac\|gnr` | 10 min on the Mac |
+| End to end | `task bench:e2e -- mac\|emr\|gnr` | 20 to 45 min per variant |
+| Report | `task bench:report` | 1 min, plus the ground truth on the first run |
+| Cleanup | `task bench:cleanup` | 1 min |
 
-`bash $S/run-all.sh` runs all phases with this parallelism:
+`task bench:all` runs all phases with this parallelism:
 
 ```
 build
@@ -109,9 +103,9 @@ A full run takes about four hours and about eight VM-hours. Check the price of
 the shapes before a run.
 
 The Python tools are Bazel targets in `scripts/e2e`: `groundtruth`,
-`analyze` and `report`. The scripts never call `bazel run`. The `built` helper
-in `lib.sh` runs `bazel build`, finds the executable with `bazel cquery
---output=files`, and the script runs that file. `report.sh` does this for you.
+`analyze` and `report`. The tasks never call `bazel run`. The `built` helper
+runs `bazel build`, finds the executable with `bazel cquery --output=files`, and
+runs that file. `task bench:report` does this for you.
 
 ## Run directory
 
@@ -124,7 +118,7 @@ bench/<RUN_NAME>/
 │                               # cpu-scan1m-*.pprof, load.txt
 ├── e2e/<machine>/<variant>/    # server.txt, server.log, cpu-server.pprof,
 │   └── <client>/top<k>-<all|en>.jsonl
-├── logs/                       # run-all.sh logs
+├── logs/                       # all task logs
 ├── summary.json
 └── report.md
 ```
@@ -148,29 +142,29 @@ ground truth sits in `bench/groundtruth-1000x100.jsonl` and serves every run.
 ## Troubleshooting
 
 - Race detection is on in `.bazelrc`. Every benchmark binary needs
-  `-c opt --@rules_go//go/config:race=false`. `build.sh` does this.
-- `build.sh` refuses a Mach-O binary for the VMs. `bazel-bin` can point at the
-  Mac build, so the script reads the path from `bazel cquery --output=files`.
-- `vm.sh create` goes through `SHAPES_<machine>` for `CREATE_ROUNDS` rounds. It
+  `-c opt --@rules_go//go/config:race=false`. `task bench:build` does this.
+- `task bench:build` refuses a Mach-O binary for the VMs. `bazel-bin` can point
+  at the Mac build, so the task reads the path from `bazel cquery --output=files`.
+- `task bench:vm-create` goes through shapes for `CREATE_ROUNDS` rounds. It
   deletes a VM with the wrong CPU model (207 for EMR, 173 for GNR). Granite
   Rapids exists only in `us-central1-a` and `us-central1-f`.
 - A VM deletes itself after `MAX_RUN`, 12 hours by default.
 - Start the query server only after the load flushed all segments. A server
   during a live load cloned the table on each sync and reached 46 GB. The
   float32 table needs 13.5 GB of RSS, a 16-bit table about 10 GB.
-- A phase on a VM runs detached. Its log is `~/run/jobs/<job>.log` on the VM.
+- A phase on a VM runs detached. Its log is `run/jobs/<job>.log` on the VM.
   The phase prints the tail of the log when the job fails.
 - The query client is the executable that `bazel build //scripts:querybench`
   writes. No Bazel server holds its pipes.
   No Bazel server holds a pipe of the profile capture, and `curl` has a time
   limit.
-- The Mac client needs port 50052 open. `firewall.sh` opens it to the public IP
-  of the Mac only, and `e2e.sh` closes it on exit.
+- The Mac client needs port 50052 open. `task bench:firewall-open` opens it to
+  the public IP of the Mac only, and `task bench:firewall-close` closes it.
 
 ## Cleanup
 
-`cleanup.sh` deletes the firewall rules and every VM with the label
-`cloudy-e2e=$RUN_NAME`. `run-all.sh` calls it on exit unless `KEEP_VMS=1`. The
+`task bench:cleanup` deletes the firewall rules and every VM with the label
+`cloudy-e2e=$RUN_NAME`. `task bench:all` calls it on exit unless `KEEP_VMS=1`. The
 namespaces in the GCS store and in the Mac store stay, so the next experiment
 can reuse a loaded namespace. Delete one by hand when it is final:
 

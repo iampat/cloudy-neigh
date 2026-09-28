@@ -1,0 +1,798 @@
+version: '3'
+
+vars:
+  GCP_ACCOUNT: '{{.GCP_ACCOUNT | default "amiri1982@gmail.com"}}'
+  GCP_PROJECT: '{{.GCP_PROJECT | default "kentrolabs-ai"}}'
+  BUCKET: '{{.BUCKET | default "kentrolabs-ai-cloudy-neigh-bench"}}'
+  TENANT: '{{.TENANT | default "cloudy"}}'
+  NAMESPACE: '{{.NAMESPACE | default "f32"}}'
+  RUN_NAME:
+    sh: 'echo "${RUN_NAME:-$(date +%F)-e2e}"'
+  RUN_DIR: 'bench/{{.RUN_NAME}}'
+  GCS_STORE: 'gs://{{.BUCKET}}/{{.TENANT}}'
+  MAC_STORE: 'file://{{.HOME}}/cloudy-bench-data/{{.TENANT}}?create_dir=true'
+  DATA_DIR: 'datasets/cohere-wikipedia'
+  HF_DATASET: 'CohereLabs/wikipedia-2023-11-embed-multilingual-v3'
+  HF_FILES: >-
+    en/0000.parquet en/0001.parquet en/0002.parquet en/0003.parquet
+    en/0004.parquet en/0005.parquet en/0006.parquet
+    de/0000.parquet es/0000.parquet fr/0000.parquet
+  GROUNDTRUTH: 'bench/groundtruth-1000x100.jsonl'
+  BATCH_SIZE: 1000
+  SEGMENTS: 1000
+  QUERIES: 300
+  WARMUP: 20
+  TOP_KS: '10 100'
+  FILTERS: 'all en'
+  VMS: 'emr gnr'
+  LOADER: 'gnr'
+  POLL: 10
+  CREATE_ROUNDS: 6
+  MAX_RUN: '12h'
+  KEEP_VMS: '{{.KEEP_VMS | default "0"}}'
+
+  PREAMBLE: |
+    log() { echo "[$(date +%T)] $*" >&2; }
+    die() { log "ERROR: $*"; exit 1; }
+    gc() { gcloud "$@" --account="{{.GCP_ACCOUNT}}" --project="{{.GCP_PROJECT}}"; }
+
+    vm_name() {
+      case "$1" in
+        emr) echo "bench-emr" ;;
+        gnr) echo "bench-gnr2" ;;
+        *) echo "$1" ;;
+      esac
+    }
+
+    vm_platform() {
+      case "$1" in
+        emr) echo "Intel Emerald Rapids" ;;
+        gnr) echo "Intel Granite Rapids" ;;
+      esac
+    }
+
+    vm_model() {
+      case "$1" in
+        emr) echo "207" ;;
+        gnr) echo "173" ;;
+      esac
+    }
+
+    vm_shapes() {
+      case "$1" in
+        emr) echo "c4-standard-8,us-east1-c c4-standard-8,us-east4-a" ;;
+        gnr) echo "c4d-standard-8,us-central1-a c4d-standard-8,us-central1-f" ;;
+      esac
+    }
+
+    vm_variants() {
+      case "$1" in
+        mac) echo "pure simd" ;;
+        emr|gnr) echo "pure simd fp16" ;;
+      esac
+    }
+
+    vm_profile() {
+      case "$1" in
+        mac|emr|gnr) echo "simd" ;;
+      esac
+    }
+
+    now() {
+      if [ "$(uname)" = Linux ]; then date +%s.%N; else perl -MTime::HiRes=time -e 'printf "%.3f\n", time'; fi
+    }
+
+    bin_dir() {
+      local base=$1
+      if [ "$(uname)" = Linux ]; then echo "$HOME/bin"; else echo "$base/mac/bin"; fi
+    }
+
+    pin_layout() {
+      [ "$(uname)" = Linux ] || return 0
+      lscpu -p=CPU,CORE | awk -F, '
+        !/^#/ { n++; cpu[n] = $1; core[n] = $2 + 0; if (core[n] > max) max = core[n] }
+        END {
+          for (i = 1; i <= n; i++)
+            if (core[i] == max) { if (s == "") s = cpu[i] }
+            else cl = cl (cl == "" ? "" : ",") cpu[i]
+          print s, cl
+        }'
+    }
+
+    pinned() {
+      local cpus=$1
+      shift
+      if [ -n "$cpus" ]; then taskset -c "$cpus" "$@"; else "$@"; fi
+    }
+
+    segment_count() {
+      local store=$1 ns="{{.NAMESPACE}}" path listing
+      case "$store" in
+        file://*)
+          path=${store#file://}
+          path=${path%%\?*}/ns/$ns/segments
+          if [ -d "$path" ]; then find "$path" -name '*.recordio' | wc -l | tr -d ' '; else echo 0; fi
+          ;;
+        gs://*)
+          if ! listing=$(gc storage ls "$store/ns/$ns/segments/" 2>&1); then
+            case "$listing" in *"matched no objects"*) echo 0 && return ;; esac
+            die "cannot list $store/ns/$ns/segments/: $listing"
+          fi
+          awk '/\.recordio$/ { n++ } END { print n + 0 }' <<<"$listing"
+          ;;
+        *) die "unknown store '$store'" ;;
+      esac
+    }
+
+    store_bytes() {
+      local p
+      case "$1" in
+        gs://*) gc storage du -s "$1" | awk '{print $1}' ;;
+        file://*)
+          p=${1#file://}
+          du -sk "${p%%\?*}" | awk '{print $1 * 1024}'
+          ;;
+      esac
+    }
+
+    write_tenants() {
+      printf '{"tenants":{"%s":{"storage_url":"%s"}}}\n' "{{.TENANT}}" "$2" >"$1"
+    }
+
+    built() {
+      (bazel build "$1" >/dev/null 2>&1) || die "cannot build $1"
+      echo "$PWD/$(bazel cquery --output=files "$1" 2>/dev/null | grep -m1 '^bazel-out/')"
+    }
+
+    scenarios() {
+      local qb=$1 target=$2 out=$3 cpus=$4 k f lang
+      mkdir -p "$out"
+      for k in {{.TOP_KS}}; do
+        for f in {{.FILTERS}}; do
+          lang=""
+          [ "$f" = en ] && lang=en
+          log "client $target top$k-$f"
+          pinned "$cpus" "$qb" --target="$target" --tenant="{{.TENANT}}" --namespace="{{.NAMESPACE}}" \
+            --data_dir="{{.DATA_DIR}}" --queries="{{.QUERIES}}" --warmup="{{.WARMUP}}" \
+            --top_k="$k" --filter_lang="$lang" --out="$out/top$k-$f.jsonl" \
+            >"$out/top$k-$f.log" 2>&1 || die "querybench failed: $out/top$k-$f.log"
+        done
+      done
+    }
+
+    vm_zone() {
+      gc compute instances list --filter="name=$(vm_name "$1")" --format='value(zone.basename())' 2>/dev/null
+    }
+
+    vm_zone_or_die() {
+      local z
+      z=$(vm_zone "$1")
+      [ -n "$z" ] || die "VM $(vm_name "$1") does not exist"
+      echo "$z"
+    }
+
+    vm_ip() {
+      gc compute instances describe "$(vm_name "$1")" --zone="$(vm_zone_or_die "$1")" \
+        --format='value(networkInterfaces[0].accessConfigs[0].natIP)'
+    }
+
+    vm_account() {
+      gc compute instances describe "$(vm_name "$1")" --zone="${ZONE:-$(vm_zone_or_die "$1")}" \
+        --format='value(serviceAccounts[0].email)'
+    }
+
+    vm_ssh() {
+      local m=$1
+      shift
+      gc compute ssh "$(vm_name "$m")" --zone="${ZONE:-$(vm_zone_or_die "$m")}" --command="$*" 2>/dev/null
+    }
+
+    vm_scp_to() {
+      local m=$1 dest=$2
+      shift 2
+      gc compute scp --recurse "$@" "$(vm_name "$m"):$dest" --zone="${ZONE:-$(vm_zone_or_die "$m")}" >/dev/null 2>&1 ||
+        die "scp to $(vm_name "$m"):$dest failed"
+    }
+
+    vm_pull() {
+      mkdir -p "$3"
+      gc compute scp --recurse "$(vm_name "$1"):run/$2" "$3/" --zone="${ZONE:-$(vm_zone_or_die "$1")}" \
+        >/dev/null 2>&1 || die "scp from $(vm_name "$1"):run/$2 failed"
+    }
+
+    remote_env() {
+      printf 'RUN_NAME=%q TENANT=%q NAMESPACE=%q QUERIES=%q WARMUP=%q ' \
+        "{{.RUN_NAME}}" "{{.TENANT}}" "{{.NAMESPACE}}" "{{.QUERIES}}" "{{.WARMUP}}"
+    }
+
+    vm_bg() {
+      local m=$1 job=$2 cmd account
+      shift 2
+      account=$(vm_account "$m")
+      [ -n "$account" ] || die "$(vm_name "$m") has no service account"
+      cmd="GCP_ACCOUNT=$(printf '%q' "$account") $(remote_env) task -f Taskfile.bench.yml $(printf '%q ' "$@")"
+      cmd="$cmd && touch run/jobs/$job.ok || touch run/jobs/$job.fail"
+      vm_ssh "$m" "mkdir -p run/jobs && rm -f run/jobs/$job.* &&
+        (nohup bash -c $(printf '%q' "$cmd") >run/jobs/$job.log 2>&1 </dev/null &)" ||
+        die "cannot start $job on $(vm_name "$m")"
+      log "$(vm_name "$m"): started $job"
+    }
+
+    vm_wait() {
+      local m=$1 job=$2
+      until vm_ssh "$m" "test -e run/jobs/$job.ok -o -e run/jobs/$job.fail"; do sleep {{.POLL}}; done
+      if ! vm_ssh "$m" "test -e run/jobs/$job.ok"; then
+        vm_ssh "$m" "tail -20 run/jobs/$job.log" >&2 || true
+        die "$(vm_name "$m"): $job failed, log at ~/run/jobs/$job.log"
+      fi
+      log "$(vm_name "$m"): $job done"
+    }
+
+tasks:
+  build:
+    desc: Build benchmark binaries with Bazel for Mac and Linux
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        out="{{.RUN_DIR}}"
+        mkdir -p "$out/mac/bin" "$out/linux"
+        log "build linux/amd64 binaries"
+        flags=(-c opt --@rules_go//go/config:race=false
+          --platforms=@rules_go//go/toolchain:linux_amd64 --use_target_platform_for_tests)
+        targets=(//cmd/cloudy //vector:vector_test //query:query_test //scripts:demoload //scripts:querybench)
+        bazel build "${flags[@]}" "${targets[@]}" >/dev/null 2>&1 || die "linux build failed"
+        for t in "${targets[@]}"; do
+          f=$(bazel cquery "${flags[@]}" --output=files "$t" 2>/dev/null | grep -m1 '^bazel-out/')
+          case $(file -L "$f") in
+            *ELF*) ;;
+            *) die "$t is not ELF: $(file -L "$f")" ;;
+          esac
+          rm -f "$out/linux/$(basename "$f")"
+          cp "$f" "$out/linux/"
+          chmod u+w "$out/linux/$(basename "$f")"
+        done
+
+        log "build darwin binaries"
+        mflags=(-c opt --@rules_go//go/config:race=false)
+        bazel build "${mflags[@]}" "${targets[@]}" >/dev/null 2>&1 || die "darwin build failed"
+        for t in "${targets[@]}"; do
+          f=$(bazel cquery "${mflags[@]}" --output=files "$t" 2>/dev/null | grep -m1 '^bazel-out/')
+          case $(file -L "$f") in
+            *Mach-O*) ;;
+            *) die "$t is not Mach-O: $(file -L "$f")" ;;
+          esac
+          rm -f "$out/mac/bin/$(basename "$f")"
+          cp "$f" "$out/mac/bin/"
+          chmod u+w "$out/mac/bin/$(basename "$f")"
+        done
+
+        log "package source for VMs"
+        git archive -o "$out/src.tar.gz" HEAD
+        {
+          echo "commit $(git rev-parse HEAD)"
+          echo "branch $(git rev-parse --abbrev-ref HEAD)"
+          echo "built $(date -u +%FT%TZ)"
+        } >"$out/build.txt"
+        log "build complete: $out"
+
+  vm-create:
+    desc: Create a GCP benchmark VM (M=emr|gnr)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        m="${M:-{{.CLI_ARGS}}}"
+        [ -n "$m" ] || die "usage: task bench:vm-create -- emr|gnr"
+        name=$(vm_name "$m")
+        platform=$(vm_platform "$m")
+        model=$(vm_model "$m")
+        mkdir -p "{{.RUN_DIR}}/$m"
+        if [ -n "$(vm_zone "$m")" ]; then
+          log "$name exists"
+          exit 0
+        fi
+        for round in $(seq 1 {{.CREATE_ROUNDS}}); do
+          for sz in $(vm_shapes "$m"); do
+            shape=${sz%,*} zone=${sz#*,}
+            log "round $round: $name $shape $zone"
+            gc compute instances create "$name" --zone="$zone" --machine-type="$shape" \
+              --min-cpu-platform="$platform" --image-family=debian-12 --image-project=debian-cloud \
+              --boot-disk-size=60GB --boot-disk-type=hyperdisk-balanced --scopes=storage-full \
+              --tags="$name" --labels="cloudy-e2e={{.RUN_NAME}}" \
+              --max-run-duration="{{.MAX_RUN}}" --instance-termination-action=DELETE \
+              >>"{{.RUN_DIR}}/$m/create.log" 2>&1 || continue
+            export ZONE=$zone
+            got="unknown"
+            for _ in $(seq 1 12); do
+              if vm_ssh "$m" "lscpu" >"{{.RUN_DIR}}/$m/lscpu.txt" 2>/dev/null; then
+                got=$(awk -F: '/^[[:space:]]*Model:/ {gsub(/ /, "", $2); print $2}' "{{.RUN_DIR}}/$m/lscpu.txt")
+                break
+              fi
+              sleep 10
+            done
+            if [ "$got" = "$model" ]; then
+              echo "name $name" >"{{.RUN_DIR}}/$m/vm.txt"
+              echo "shape $shape" >>"{{.RUN_DIR}}/$m/vm.txt"
+              echo "zone $zone" >>"{{.RUN_DIR}}/$m/vm.txt"
+              log "$name up: $shape $zone, CPU model $got"
+              exit 0
+            fi
+            log "$name has CPU model $got, not $model: delete it"
+            gc compute instances delete "$name" --zone="$zone" --quiet >/dev/null 2>&1 || true
+            unset ZONE
+          done
+          sleep 90
+        done
+        die "no capacity for $name after {{.CREATE_ROUNDS}} rounds"
+
+  vm-setup:
+    desc: Set up a GCP benchmark VM (M=emr|gnr)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        m="${M:-{{.CLI_ARGS}}}"
+        [ -n "$m" ] || die "usage: task bench:vm-setup -- emr|gnr"
+        [ -f "{{.RUN_DIR}}/src.tar.gz" ] || die "no {{.RUN_DIR}}/src.tar.gz: run task bench:build first"
+        ZONE=$(vm_zone_or_die "$m")
+        export ZONE
+        if vm_ssh "$m" "test -e run/jobs/setup.ok" 2>/dev/null; then
+          log "$m: setup done already"
+          exit 0
+        fi
+        vm_ssh "$m" "rm -rf bin src.tar.gz Taskfile* && mkdir -p bin run" || die "ssh to $m failed"
+        vm_scp_to "$m" bin/ "{{.RUN_DIR}}"/linux/*
+        vm_scp_to "$m" src.tar.gz "{{.RUN_DIR}}/src.tar.gz"
+        vm_scp_to "$m" Taskfile.bench.yml Taskfile.bench.yml
+        vm_ssh "$m" "which task >/dev/null 2>&1 || (sudo curl -sL https://taskfile.dev/install.sh | sudo sh -s -- -b /usr/local/bin)"
+        vm_bg "$m" setup host-setup M="$m"
+        vm_wait "$m" setup
+        vm_pull "$m" "$m" "{{.RUN_DIR}}"
+
+  vm-delete:
+    desc: Delete a GCP benchmark VM (M=emr|gnr)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        m="${M:-{{.CLI_ARGS}}}"
+        [ -n "$m" ] || die "usage: task bench:vm-delete -- emr|gnr"
+        zone=$(vm_zone "$m")
+        [ -z "$zone" ] || gc compute instances delete "$(vm_name "$m")" --zone="$zone" --quiet
+        log "deleted $(vm_name "$m")"
+
+  vm-list:
+    desc: List all active cloudy-e2e GCP benchmark VMs
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        gc compute instances list --filter="labels.cloudy-e2e:*" \
+          --format='table(name,zone.basename(),machineType.basename(),status,labels.cloudy-e2e)'
+
+  firewall-open:
+    desc: Open port 50052 on VM for Mac client IP (M=emr|gnr)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        m="${M:-{{.CLI_ARGS}}}"
+        rule=$(vm_name "$m")-querybench
+        ip=$(curl -fsS --max-time 10 https://api.ipify.org) || die "cannot find public IP of Mac"
+        if gc compute firewall-rules describe "$rule" >/dev/null 2>&1; then
+          gc compute firewall-rules update "$rule" --source-ranges="$ip/32" >/dev/null
+        else
+          gc compute firewall-rules create "$rule" --network=default --direction=INGRESS \
+            --allow=tcp:50052 --source-ranges="$ip/32" --target-tags="$(vm_name "$m")" >/dev/null
+        fi
+        log "firewall $rule open to $ip"
+
+  firewall-close:
+    desc: Close port 50052 firewall rule (M=emr|gnr)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        m="${M:-{{.CLI_ARGS}}}"
+        rule=$(vm_name "$m")-querybench
+        if gc compute firewall-rules describe "$rule" >/dev/null 2>&1; then
+          gc compute firewall-rules delete "$rule" --quiet >/dev/null
+          log "firewall $rule deleted"
+        fi
+
+  microbench:
+    desc: Run tests and Go benchmarks on Mac or VM (M=mac|emr|gnr)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        m="${M:-{{.CLI_ARGS}}}"
+        [ -n "$m" ] || die "usage: task bench:microbench -- mac|emr|gnr"
+        marker="{{.RUN_DIR}}/$m/BENCH_DONE"
+        [ ! -f "$marker" ] || { log "$m: microbench done already"; exit 0; }
+        if [ "$m" = mac ]; then
+          task -f Taskfile.bench.yml host-bench M=mac OUT="{{.RUN_DIR}}"
+        else
+          ZONE=$(vm_zone_or_die "$m")
+          export ZONE
+          vm_bg "$m" bench host-bench M="$m" OUT=run
+          vm_wait "$m" bench
+          vm_pull "$m" "$m" "{{.RUN_DIR}}"
+        fi
+        touch "$marker"
+
+  load:
+    desc: Load 1M documents into store (M=mac|gnr)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        m="${M:-{{.CLI_ARGS}}}"
+        [ -n "$m" ] || die "usage: task bench:load -- mac|gnr"
+        marker="{{.RUN_DIR}}/$m/LOAD_DONE"
+        [ ! -f "$marker" ] || { log "$m: load done already"; exit 0; }
+        if [ "$m" = mac ]; then
+          task -f Taskfile.bench.yml host-load M=mac STORE="{{.MAC_STORE}}" OUT="{{.RUN_DIR}}"
+        else
+          ZONE=$(vm_zone_or_die "$m")
+          export ZONE
+          gc storage buckets describe "gs://{{.BUCKET}}" --format='value(location)' >"{{.RUN_DIR}}/bucket-location.txt"
+          vm_bg "$m" load host-load M="$m" STORE="{{.GCS_STORE}}" OUT=run
+          vm_wait "$m" load
+          vm_pull "$m" "$m" "{{.RUN_DIR}}"
+        fi
+        touch "$marker"
+        cat "{{.RUN_DIR}}/$m/load.txt"
+
+  e2e:
+    desc: Run query server and querybench client (M=mac|emr|gnr)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        m="${M:-{{.CLI_ARGS}}}"
+        [ -n "$m" ] || die "usage: task bench:e2e -- mac|emr|gnr"
+        variants=$(vm_variants "$m")
+        if [ "$m" = mac ]; then
+          for v in $variants; do
+            d="{{.RUN_DIR}}/e2e/mac/$v"
+            [ ! -f "$d/DONE" ] || { log "mac $v: done already"; continue; }
+            task -f Taskfile.bench.yml host-serve M=mac V="$v" STORE="{{.MAC_STORE}}" CLIENT=mac OUT="{{.RUN_DIR}}"
+            task -f Taskfile.bench.yml host-stop M=mac V="$v" OUT="{{.RUN_DIR}}"
+            touch "$d/DONE"
+          done
+          exit 0
+        fi
+
+        ZONE=$(vm_zone_or_die "$m")
+        export ZONE
+        ip=$(vm_ip "$m")
+        qb=$(built //scripts:querybench)
+        for v in $variants; do
+          d="{{.RUN_DIR}}/e2e/$m/$v"
+          [ ! -f "$d/DONE" ] || { log "$m $v: done already"; continue; }
+          task -f Taskfile.bench.yml firewall-open M="$m"
+          trap 'task -f Taskfile.bench.yml firewall-close M="$m"' EXIT
+          vm_bg "$m" "serve-$v" host-serve M="$m" V="$v" STORE="{{.GCS_STORE}}" CLIENT=vm OUT=run
+          vm_wait "$m" "serve-$v"
+          log "mac client against $m ($ip) $v"
+          scenarios "$qb" "$ip:50052" "$d/mac" ""
+          vm_bg "$m" "stop-$v" host-stop M="$m" V="$v" CLIENT=mac OUT=run
+          vm_wait "$m" "stop-$v"
+          vm_pull "$m" "e2e/$m/$v" "{{.RUN_DIR}}/e2e/$m"
+          task -f Taskfile.bench.yml firewall-close M="$m"
+          trap - EXIT
+          touch "$d/DONE"
+        done
+
+  report:
+    desc: Generate groundtruth, pprof tops, summary.json and report.md
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        run="{{.RUN_DIR}}"
+        out="{{.OUT | default .RUN_DIR}}"
+        mkdir -p "$out"
+        tool() { "$(built "//scripts/e2e:$1")" "${@:2}"; }
+        if [ ! -f "{{.GROUNDTRUTH}}" ]; then
+          log "ground truth: brute force over full corpus"
+          tool groundtruth --data_dir="{{.DATA_DIR}}" --out="{{.GROUNDTRUTH}}"
+        fi
+        find "$run" -name '*.pprof' | while read -r p; do
+          top=${p%.pprof}.top.txt
+          [ -f "$top" ] || bazel run @rules_go//go -- tool pprof -top -nodecount=25 "$p" >"$top" 2>/dev/null ||
+            log "pprof failed on $p"
+        done
+        tool analyze --run_dir="$run" --groundtruth="{{.GROUNDTRUTH}}" --data_dir="{{.DATA_DIR}}" \
+          --out="$out/summary.json"
+        tool report --run_dir="$run" --summary="$out/summary.json" --out="$out/report.md"
+        log "wrote $out/report.md"
+
+  cleanup:
+    desc: Delete benchmark VMs and firewall rules
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        for m in {{.VMS}}; do
+          task -f Taskfile.bench.yml firewall-close M="$m" >/dev/null 2>&1 || true
+        done
+        gc compute instances list --filter="labels.cloudy-e2e={{.RUN_NAME}}" --format='value(name,zone.basename())' |
+          while read -r name zone; do
+            log "delete $name in $zone"
+            gc compute instances delete "$name" --zone="$zone" --quiet </dev/null
+          done
+
+  all:
+    desc: Run the complete end-to-end benchmark suite
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        mkdir -p "{{.RUN_DIR}}/logs"
+        L="{{.RUN_DIR}}/logs"
+        task -f Taskfile.bench.yml build
+        if [ "{{.KEEP_VMS}}" != "1" ]; then
+          trap 'task -f Taskfile.bench.yml cleanup' EXIT
+        fi
+        pids=""
+        for m in {{.VMS}}; do
+          (task -f Taskfile.bench.yml vm-create M="$m" && \
+           task -f Taskfile.bench.yml vm-setup M="$m" && \
+           task -f Taskfile.bench.yml microbench M="$m") >"$L/vm-$m.log" 2>&1 &
+          pids="$pids $!"
+          log "$m: create, setup and microbench in background, log $L/vm-$m.log"
+        done
+        log "mac: microbench, load, e2e"
+        task -f Taskfile.bench.yml microbench M=mac >"$L/microbench-mac.log" 2>&1
+        task -f Taskfile.bench.yml load M=mac >"$L/load-mac.log" 2>&1
+        task -f Taskfile.bench.yml e2e M=mac >"$L/e2e-mac.log" 2>&1
+
+        for pid in $pids; do wait "$pid"; done
+        log "VM microbench finished"
+
+        log "{{.LOADER}}: load into GCS"
+        task -f Taskfile.bench.yml load M="{{.LOADER}}" >"$L/load-{{.LOADER}}.log" 2>&1
+
+        pids=""
+        for m in {{.VMS}}; do
+          task -f Taskfile.bench.yml e2e M="$m" >"$L/e2e-$m.log" 2>&1 &
+          pids="$pids $!"
+          log "$m: e2e in background, log $L/e2e-$m.log"
+        done
+        for pid in $pids; do wait "$pid"; done
+        log "VM e2e finished"
+
+        task -f Taskfile.bench.yml report
+        log "e2e benchmark run complete: {{.RUN_DIR}}/report.md"
+
+  host-setup:
+    desc: Internal task to set up host environment (run on VM)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        m="${M}"
+        out="$HOME/run/$m"
+        mkdir -p "$out"
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update -q
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q build-essential python3-venv git curl
+        sudo curl -fsSL -o /usr/local/bin/bazel \
+          https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
+        sudo chmod +x /usr/local/bin/bazel
+        REPO="$HOME/src"
+        rm -rf "$REPO" && mkdir -p "$REPO" && tar -xzf "$HOME/src.tar.gz" -C "$REPO"
+        lscpu >"$out/lscpu.txt"
+        lscpu -e=CPU,CORE,SOCKET,NODE >"$out/lscpu-e.txt"
+        free -g >"$out/free.txt"
+
+        python3 -m venv "$HOME/hf"
+        "$HOME/hf/bin/pip" install -q huggingface_hub==2.0.0
+        t0=$(date +%s)
+        read -ra files <<<"{{.HF_FILES}}"
+        "$HOME/hf/bin/hf" download "{{.HF_DATASET}}" "${files[@]}" --repo-type dataset --local-dir "{{.DATA_DIR}}"
+        echo "download_s $(($(date +%s) - t0))" >"$out/setup.txt"
+
+        t0=$(date +%s)
+        (cd "$REPO" && bazel build //scripts:querybench //scripts:demoload)
+        echo "build_s $(($(date +%s) - t0))" >>"$out/setup.txt"
+
+  host-bench:
+    desc: Internal task to run benchmarks on host (Mac or VM)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        out="${OUT:-{{.RUN_DIR}}}"
+        m="${M}"
+        mkdir -p "$out" && out=$(cd "$out" && pwd)
+        d="$out/$m"
+        bin=$(bin_dir "$out")
+        mkdir -p "$d"
+        read -r cpu _ <<<"$(pin_layout)"
+        cd "$bin"
+
+        "$bin/vector_test" -test.run=. -test.count=1 >"$d/tests.txt" 2>&1 || die "vector tests failed: $d/tests.txt"
+        "$bin/query_test" -test.run=. -test.count=1 >>"$d/tests.txt" 2>&1 || die "query tests failed: $d/tests.txt"
+        log "$m: tests pass, benchmarks on cpu '${cpu:-any}'"
+
+        export GOMAXPROCS=1
+        b() {
+          local name=$1 bbin=$2 pattern=$3
+          shift 3
+          log "$m: $name"
+          pinned "$cpu" "$bbin" -test.run='^$' -test.cpu=1 -test.count=5 -test.bench="$pattern" "$@" \
+            >"$d/bench-$m-$name.txt" 2>&1 || die "$name failed: $d/bench-$m-$name.txt"
+        }
+        b distance "$bin/vector_test" '^BenchmarkDistance$' -test.benchtime=200ms
+        b decode16 "$bin/vector_test" '^BenchmarkDecode16$' -test.benchtime=200ms
+        b scankernel "$bin/vector_test" '^BenchmarkScanKernel$'
+        b search "$bin/query_test" '^BenchmarkSearch(10K1024|256x1024)_Table$'
+        b scan1m "$bin/query_test" '^BenchmarkScan1M_Table$'
+
+        prof=$(vm_profile "$m")
+        for v in $prof; do
+          log "$m: profile Scan1M $v"
+          pinned "$cpu" "$bin/query_test" -test.run='^$' -test.cpu=1 -test.count=1 -test.benchtime=10s \
+            -test.bench="^BenchmarkScan1M_Table/$v\$" -test.cpuprofile="$d/cpu-scan1m-$m-$v.pprof" \
+            >"$d/bench-$m-scan1m-prof-$v.txt" 2>&1 || die "profile $v failed"
+        done
+
+  host-load:
+    desc: Internal task to run demoload on host (Mac or VM)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        out="${OUT:-{{.RUN_DIR}}}"
+        m="${M}"
+        store="${STORE}"
+        mkdir -p "$out" && out=$(cd "$out" && pwd)
+        d="$out/$m"
+        mkdir -p "$d"
+        n=$(segment_count "$store")
+        if [ "$n" -ge {{.SEGMENTS}} ]; then
+          log "$m: $store holds $n segments: skip upload"
+          bytes=$(store_bytes "$store")
+          {
+            echo "reused_load 1"
+            echo "segments $n"
+            echo "store $store"
+            echo "store_bytes $bytes"
+          } >"$d/load.txt"
+          exit 0
+        fi
+        [ "$n" -eq 0 ] || die "$store holds $n of {{.SEGMENTS}} segments from incomplete load: delete ns/{{.NAMESPACE}} first"
+
+        write_tenants "$d/tenants-ingest.json" "$store"
+        "$(bin_dir "$out")/cloudy" ingest -tenants-file="$d/tenants-ingest.json" -addr=localhost:50051 \
+          >"$d/ingest.log" 2>&1 </dev/null &
+        ingest=$!
+        trap 'kill "$ingest" 2>/dev/null || true' EXIT
+        sleep 3
+        kill -0 "$ingest" || die "ingest server died: $d/ingest.log"
+
+        log "$m: demoload into $store"
+        t0=$(date +%s)
+        demoload=$(built //scripts:demoload)
+        "$demoload" --tenant="{{.TENANT}}" --namespace="{{.NAMESPACE}}" --batch_size="{{.BATCH_SIZE}}" \
+          --data_dir="{{.DATA_DIR}}" >"$d/demoload.log" 2>&1 </dev/null || die "demoload failed: $d/demoload.log"
+        echo "demoload_s $(($(date +%s) - t0))" >"$d/load.txt"
+
+        log "$m: wait for {{.SEGMENTS}} segments"
+        deadline=$(($(date +%s) + 3600))
+        while true; do
+          n=$(segment_count "$store")
+          [ "$n" -lt {{.SEGMENTS}} ] || break
+          [ "$(date +%s)" -lt "$deadline" ] || die "fewer than {{.SEGMENTS}} segments after one hour"
+          kill -0 "$ingest" || die "ingest server died: $d/ingest.log"
+          sleep 10
+        done
+        flushed_s=$(($(date +%s) - t0))
+        sleep 15
+        n=$(segment_count "$store")
+        bytes=$(store_bytes "$store")
+        {
+          echo "demoload_s $(awk '/^demoload_s / {print $2}' "$d/load.txt")"
+          echo "flushed_s $flushed_s"
+          echo "segments $n"
+          echo "store $store"
+          echo "store_bytes $bytes"
+        } >"$d/load.txt"
+        log "$m: flushed $n segments in ${flushed_s}s"
+
+  host-serve:
+    desc: Internal task to start query server and run querybench on host
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        out="${OUT:-{{.RUN_DIR}}}"
+        m="${M}"
+        v="${V}"
+        store="${STORE}"
+        client="${CLIENT}"
+        mkdir -p "$out" && out=$(cd "$out" && pwd)
+        d="$out/e2e/$m/$v"
+        mkdir -p "$d/$client"
+        read -r cpu ccpu <<<"$(pin_layout)"
+        bin=$(bin_dir "$out")
+        n=$(segment_count "$store")
+        [ "$n" -ge {{.SEGMENTS}} ] || die "$store holds $n segments, not {{.SEGMENTS}}: run load first"
+
+        if [ -f "$out/server.pid" ]; then
+          kill "$(cat "$out/server.pid")" 2>/dev/null || true
+          sleep 2
+        fi
+        addr=localhost:50052
+        [ "$(uname)" = Linux ] && addr=:50052
+        write_tenants "$out/tenants-query.json" "$store"
+        cmd=("$bin/cloudy" query -tenants-file="$out/tenants-query.json" -distance="$v" -addr="$addr" \
+          -pprof-addr=localhost:6060)
+        [ -n "$cpu" ] && cmd=(taskset -c "$cpu" "${cmd[@]}")
+
+        log "$m: start $v server on cpu '${cpu:-any}'"
+        t0=$(now)
+        GOMAXPROCS=1 nohup "${cmd[@]}" >"$d/server.log" 2>&1 </dev/null &
+        pid=$!
+        echo "$pid" >"$out/server.pid"
+        synced() {
+          awk -v key="manifest=ns/{{.NAMESPACE}}/refs/heads/main.json" '/msg="sync pass"/ && index($0, key " ") { print; exit }' "$d/server.log"
+        }
+        deadline=$(($(date +%s) + 1800))
+        until [ -n "$(synced)" ]; do
+          kill -0 "$pid" 2>/dev/null || die "server died: $d/server.log"
+          [ "$(date +%s)" -lt "$deadline" ] || die "no sync pass after 30 minutes"
+          sleep 1
+        done
+        t1=$(now)
+        {
+          echo "cold_start_wall_s $(awk -v a="$t0" -v b="$t1" 'BEGIN {printf "%.1f", b - a}')"
+          synced
+          echo "server_cpu ${cpu:-any}"
+          echo "client_cpus ${ccpu:-any}"
+        } >"$d/server.txt"
+        sleep 5
+        echo "rss_kb_after_sync $(ps -o rss= -p "$pid" | tr -d ' ')" >>"$d/server.txt"
+
+        qb=$(built //scripts:querybench)
+        scenarios "$qb" localhost:50052 "$d/$client" "$ccpu"
+
+  host-stop:
+    desc: Internal task to stop query server on host
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        out="${OUT:-{{.RUN_DIR}}}"
+        m="${M}"
+        v="${V}"
+        client="${CLIENT:-}"
+        mkdir -p "$out" && out=$(cd "$out" && pwd)
+        [ -f "$out/server.pid" ] || die "no server.pid in $out"
+        pid=$(cat "$out/server.pid")
+        if [ -n "$client" ]; then
+          echo "rss_kb_after_$client $(ps -o rss= -p "$pid" | tr -d ' ')" >>"$out/e2e/$m/$v/server.txt"
+        fi
+        kill "$pid" 2>/dev/null || true
+        while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+        rm -f "$out/server.pid"
