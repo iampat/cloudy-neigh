@@ -3,6 +3,7 @@ version: '3'
 includes:
   bench:
     taskfile: ./benchmark/Taskfile.yaml
+    dir: .
 
 tasks:
   download-dataset:
