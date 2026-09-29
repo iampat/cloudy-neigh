@@ -121,6 +121,16 @@ not trust memory over the help output.
 - Pass context files using `@<path>` arguments: `pi @file.go -p "<prompt>"`.
 - Credentials are managed by `pi`. Do not configure API keys.
 
+## Execution and permissions
+
+- Use relative paths within the workspace. Never create arbitrary directories in `$HOME`.
+- Permitted scratch paths: `./scratch/`, `./bench/`, and `/tmp/`.
+- No inline interpreters: never pass inline code strings like `python3 -c`, `node -e`, or multi-line awk scripts.
+- Write complex helper scripts to `./scratch/<name>.py` first, then run them as a file.
+- Prefer `jq` for JSON, `yq` for YAML, and POSIX tools (`cut`, `grep -c`, `sort`, `uniq`) for stream filtering.
+- Use `starlark` for hermetic data transformations without host side effects.
+- Prefer native gcloud `--format` and `--filter` flags over shell pipes.
+
 ## Gotchas & conventions
 
 - Prefer jq over Python scripts when analysing JSON files.
