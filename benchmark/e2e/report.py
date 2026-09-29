@@ -52,7 +52,12 @@ def machines(run: str) -> list[str]:
     }
     found |= {os.path.basename(p) for p in glob.glob(f"{run}/e2e/*")}
     order = ["mac", "emr", "gnr"]
-    return sorted(found, key=lambda m: (order.index(m) if m in order else 99, m))
+
+    def key(m: str) -> tuple[int, str]:
+        base = m.split("-")[0]
+        return (order.index(base) if base in order else 99, m)
+
+    return sorted(found, key=key)
 
 
 def medians(paths: list[str]) -> tuple[dict[str, float], dict[str, float]]:
@@ -80,8 +85,13 @@ def gb(kb: str | None) -> str:
 
 def section_machines(run: str, ms: list[str]) -> str:
     rows = []
+    seen = set()
     for m in ms:
-        if m == "mac":
+        base = m.split("-")[0]
+        if base in seen:
+            continue
+        seen.add(base)
+        if base == "mac":
             cpu = (
                 open(f"{run}/mac/cpu.txt").read().split("\n")
                 if os.path.exists(f"{run}/mac/cpu.txt")
@@ -89,16 +99,16 @@ def section_machines(run: str, ms: list[str]) -> str:
             )
             name = cpu[0] if cpu else "-"
             vcpu = cpu[1] if len(cpu) > 1 else "-"
-            rows.append([m, name, vcpu, "local", "-"])
+            rows.append(["mac", name, vcpu, "local", "-"])
             continue
-        lscpu = keyvals(f"{run}/{m}/lscpu.txt", r"^\s*([^:]+):\s+(.+)$")
-        vm = keyvals(f"{run}/{m}/vm.txt")
+        lscpu = keyvals(f"{run}/{base}/lscpu.txt", r"^\s*([^:]+):\s+(.+)$")
+        vm = keyvals(f"{run}/{base}/vm.txt")
         model = lscpu.get("Model name", "-")
         if "Model" in lscpu:
             model += f" (model {lscpu['Model']})"
         rows.append(
             [
-                m,
+                base,
                 model,
                 lscpu.get("CPU(s)", "-"),
                 vm.get("shape", "-"),
@@ -150,6 +160,11 @@ def section_server(run: str, ms: list[str]) -> str:
                 if hit:
                     sync = hit.group(1)
             cold = kv.get("cold_start_wall_s")
+            rss_query = (
+                kv.get("rss_kb_after_vm")
+                or kv.get("rss_kb_after_local")
+                or kv.get("rss_kb_after_mac")
+            )
             rows.append(
                 [
                     m,
@@ -157,8 +172,7 @@ def section_server(run: str, ms: list[str]) -> str:
                     f(float(cold)) if cold else "-",
                     sync,
                     gb(kv.get("rss_kb_after_sync")),
-                    gb(kv.get("rss_kb_after_local")),
-                    gb(kv.get("rss_kb_after_mac")),
+                    gb(rss_query),
                     kv.get("server_cpu", kv.get("psr", "-")),
                 ]
             )
@@ -170,8 +184,7 @@ def section_server(run: str, ms: list[str]) -> str:
         "Cold start s",
         "First sync",
         "RSS sync GiB",
-        "RSS local GiB",
-        "RSS Mac GiB",
+        "RSS query GiB",
         "CPU",
     ]
     return (
@@ -181,12 +194,10 @@ def section_server(run: str, ms: list[str]) -> str:
 
 
 def server_p50(summ: list[dict], m: str, v: str) -> float | None:
-    local = "mac" if m == "mac" else "vm"
     for r in summ:
-        if (r["machine"], r["variant"], r["client"], r["scenario"]) == (
+        if (r["machine"], r["variant"], r["scenario"]) == (
             m,
             v,
-            local,
             "top10-all",
         ):
             return r["server"]["p50"]
@@ -194,7 +205,8 @@ def server_p50(summ: list[dict], m: str, v: str) -> float | None:
 
 
 def section_kernels(run: str, m: str, summ: list[dict]) -> str:
-    ops, rows = medians([f"{run}/{m}/bench-{m}-{x}.txt" for x in BENCH_FILES])
+    base = m.split("-")[0]
+    ops, rows = medians([f"{run}/{base}/bench-{base}-{x}.txt" for x in BENCH_FILES])
     if not ops:
         return ""
     out = f"### {m}: per-row split, ns, D=1024, 1M rows\n\n"
@@ -354,6 +366,15 @@ def section_profiles(run: str) -> str:
     return out
 
 
+def section_sanity(run: str) -> str:
+    path = f"{run}/sanity/sanity.txt"
+    if not os.path.exists(path):
+        return ""
+    with open(path) as fh:
+        content = fh.read().strip()
+    return f"## Format Compatibility Sanity Check\n\n{content}\n"
+
+
 def main(argv: list[str]) -> None:
     del argv  # Unused.
     run = FLAGS.run_dir.rstrip("/")
@@ -370,11 +391,20 @@ def main(argv: list[str]) -> None:
     parts.append(section_machines(run, ms))
     parts.append(section_load(run, ms))
     parts.append(section_server(run, ms))
-    kernels = [section_kernels(run, m, summ) for m in ms]
-    if any(kernels):
-        parts.append("## Kernels\n\n" + "\n".join(k for k in kernels if k))
+    seen_bases = set()
+    kernels = []
+    for m in ms:
+        b = m.split("-")[0]
+        if b not in seen_bases:
+            seen_bases.add(b)
+            k = section_kernels(run, b, summ)
+            if k:
+                kernels.append(k)
+    if kernels:
+        parts.append("## Kernels\n\n" + "\n".join(kernels))
     parts.append(section_e2e(summ, ms))
     parts.append(section_recall(summ))
+    parts.append(section_sanity(run))
     parts.append(section_profiles(run))
     with open(FLAGS.out, "w") as fh:
         fh.write("\n".join(p for p in parts if p))
