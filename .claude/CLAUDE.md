@@ -126,9 +126,12 @@ not trust memory over the help output.
 - Use relative paths within the workspace. Never create arbitrary directories in `$HOME`.
 - Permitted scratch paths: `./scratch/`, `./bench/`, and `/tmp/`.
 - No inline interpreters: never pass inline code strings like `python3 -c`, `node -e`, or multi-line awk scripts.
-- Write complex helper scripts to `./scratch/<name>.py` first, then run them as a file.
+- Write helper scripts to `./scratch/<name>.star` first, then run them with `starlark`.
+  - Starlark is hermetic with no recursion, while loops, or host I/O. Use loops for accumulation (`sum` is absent).
+  - Delegate Starlark syntax lookups to a research subagent using `starlark --docs markdown`.
+  - Pass `--json` to `starlark` to omit diagnostics headers and pipe clean output to `jq`.
+  - Reuse existing scripts in `./scratch/` across runs to save time.
 - Prefer `jq` for JSON, `yq` for YAML, and POSIX tools (`cut`, `grep -c`, `sort`, `uniq`) for stream filtering.
-- Use `starlark` for hermetic data transformations without host side effects.
 - Prefer native gcloud `--format` and `--filter` flags over shell pipes.
 
 ## Gotchas & conventions
