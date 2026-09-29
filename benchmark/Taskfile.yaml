@@ -22,13 +22,19 @@ vars:
   TOP_KS: '{{.TOP_KS | default "10 100"}}'
   FILTERS: '{{.FILTERS | default "all en"}}'
   VARIANTS: '{{.VARIANTS | default ""}}'
-  VMS: '{{.VMS | default "emr gnr"}}'
-  LOADER: '{{.LOADER | default "gnr"}}'
+  VMS: '{{.VMS | default "emr"}}'
+  LOADER: '{{.LOADER | default "emr"}}'
   POLL: 10
   CREATE_ROUNDS: 6
   MAX_RUN: '12h'
   KEEP_VMS: '{{.KEEP_VMS | default "0"}}'
   TASKFILE: '{{.TASKFILE | default "benchmark/Taskfile.yaml"}}'
+  BACKEND: '{{.BACKEND | default ""}}'
+  MAC_GCP_QUERIES: '{{.MAC_GCP_QUERIES | default "32"}}'
+  MAC_GCP_WARMUP: '{{.MAC_GCP_WARMUP | default "5"}}'
+  SANITY_SEGMENTS: '{{.SANITY_SEGMENTS | default "100"}}'
+  SANITY_QUERIES: '{{.SANITY_QUERIES | default "32"}}'
+  SANITY_WARMUP: '{{.SANITY_WARMUP | default "5"}}'
   M: '{{.M | default ""}}'
   OUT: '{{.OUT | default ""}}'
   STORE: '{{.STORE | default ""}}'
@@ -87,6 +93,21 @@ vars:
       esac
     }
 
+    store_url() {
+      local m=$1 b=$2
+      case "$b" in
+        gcp) echo "gs://{{.BUCKET}}/{{.TENANT}}" ;;
+        local)
+          if [ "$m" = mac ] || [[ "$m" == mac-* ]]; then
+            echo "file://$HOME/cloudy-bench-data/{{.TENANT}}?create_dir=true"
+          else
+            echo "file:///home/ali/cloudy-bench-data/{{.TENANT}}?create_dir=true"
+          fi
+          ;;
+        *) die "unknown backend '$b'" ;;
+      esac
+    }
+
     now() {
       if [ "$(uname)" = Linux ]; then date +%s.%N; else perl -MTime::HiRes=time -e 'printf "%.3f\n", time'; fi
     }
@@ -115,7 +136,7 @@ vars:
     }
 
     segment_count() {
-      local store=$1 ns="{{.NAMESPACE}}" path listing
+      local store=$1 ns=${2:-"{{.NAMESPACE}}"} path listing
       case "$store" in
         file://*)
           path=${store#file://}
@@ -158,15 +179,15 @@ vars:
     }
 
     scenarios() {
-      local qb=$1 target=$2 out=$3 cpus=$4 k f lang
+      local qb=$1 target=$2 out=$3 cpus=$4 count=${5:-{{.QUERIES}}} warmup=${6:-{{.WARMUP}}} ns=${7:-{{.NAMESPACE}}} k f lang
       mkdir -p "$out"
       for k in {{.TOP_KS}}; do
         for f in {{.FILTERS}}; do
           lang=""
           [ "$f" = en ] && lang=en
-          log "client $target top$k-$f"
-          pinned "$cpus" "$qb" --target="$target" --tenant="{{.TENANT}}" --namespace="{{.NAMESPACE}}" \
-            --data_dir="{{.DATA_DIR}}" --queries="{{.QUERIES}}" --warmup="{{.WARMUP}}" \
+          log "client $target top$k-$f ($count queries)"
+          pinned "$cpus" "$qb" --target="$target" --tenant="{{.TENANT}}" --namespace="$ns" \
+            --data_dir="{{.DATA_DIR}}" --queries="$count" --warmup="$warmup" \
             --top_k="$k" --filter_lang="$lang" --out="$out/top$k-$f.jsonl" \
             >"$out/top$k-$f.log" 2>&1 || die "querybench failed: $out/top$k-$f.log"
         done
@@ -214,8 +235,8 @@ vars:
     }
 
     remote_env() {
-      printf 'RUN_NAME="%s" TENANT="%s" NAMESPACE="%s" SEGMENTS="%s" BATCH_SIZE="%s" QUERIES="%s" WARMUP="%s" TOP_KS="%s" FILTERS="%s" VARIANTS="%s" ' \
-        "{{.RUN_NAME}}" "{{.TENANT}}" "{{.NAMESPACE}}" "{{.SEGMENTS}}" "{{.BATCH_SIZE}}" "{{.QUERIES}}" "{{.WARMUP}}" "{{.TOP_KS}}" "{{.FILTERS}}" "{{.VARIANTS}}"
+      printf 'RUN_NAME="%s" TENANT="%s" NAMESPACE="%s" SEGMENTS="%s" BATCH_SIZE="%s" QUERIES="%s" WARMUP="%s" TOP_KS="%s" FILTERS="%s" VARIANTS="%s" BACKEND="%s" ' \
+        "{{.RUN_NAME}}" "{{.TENANT}}" "{{.NAMESPACE}}" "{{.SEGMENTS}}" "{{.BATCH_SIZE}}" "{{.QUERIES}}" "{{.WARMUP}}" "{{.TOP_KS}}" "{{.FILTERS}}" "{{.VARIANTS}}" "{{.BACKEND}}"
     }
 
     vm_bg() {
@@ -250,6 +271,12 @@ env:
   TOP_KS: '{{.TOP_KS}}'
   FILTERS: '{{.FILTERS}}'
   VARIANTS: '{{.VARIANTS}}'
+  BACKEND: '{{.BACKEND}}'
+  MAC_GCP_QUERIES: '{{.MAC_GCP_QUERIES}}'
+  MAC_GCP_WARMUP: '{{.MAC_GCP_WARMUP}}'
+  SANITY_SEGMENTS: '{{.SANITY_SEGMENTS}}'
+  SANITY_QUERIES: '{{.SANITY_QUERIES}}'
+  SANITY_WARMUP: '{{.SANITY_WARMUP}}'
   M: '{{.M}}'
   OUT: '{{.OUT}}'
   STORE: '{{.STORE}}'
@@ -458,70 +485,208 @@ tasks:
         touch "$marker"
 
   load:
-    desc: Load 1M documents into store (M=mac|gnr)
+    desc: Load 1M documents into store (M=mac|emr|gnr, BACKEND=local|gcp)
     silent: true
     cmds:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
         m="${M:-{{.M | default .CLI_ARGS}}}"
-        [ -n "$m" ] || die "usage: task bench:load -- mac|gnr"
-        marker="{{.RUN_DIR}}/$m/LOAD_DONE"
-        [ ! -f "$marker" ] || { log "$m: load done already"; exit 0; }
-        if [ "$m" = mac ]; then
-          task -d . -t {{.TASKFILE}} host-load M=mac STORE="{{.MAC_STORE}}" OUT="{{.RUN_DIR}}"
-        else
-          ZONE=$(vm_zone_or_die "$m")
-          export ZONE
-          gc storage buckets describe "gs://{{.BUCKET}}" --format='value(location)' >"{{.RUN_DIR}}/bucket-location.txt"
-          vm_bg "$m" load host-load M="$m" STORE="{{.GCS_STORE}}" OUT=run
-          vm_wait "$m" load
-          vm_pull "$m" "$m" "{{.RUN_DIR}}"
+        b="${BACKEND:-{{.BACKEND | default ""}}}"
+        [ -n "$m" ] || die "usage: task bench:load -- mac|emr|gnr [local|gcp]"
+        backends="local gcp"
+        if [ -n "$b" ] && [ "$b" != both ]; then
+          backends="$b"
         fi
-        touch "$marker"
-        cat "{{.RUN_DIR}}/$m/load.txt"
+        for backend in $backends; do
+          target="$m-$backend"
+          marker="{{.RUN_DIR}}/$target/LOAD_DONE"
+          [ ! -f "$marker" ] || { log "$target: load done already"; continue; }
+          store=$(store_url "$m" "$backend")
+          mkdir -p "{{.RUN_DIR}}/$target"
+          if [ "$m" = mac ]; then
+            task -d . -t {{.TASKFILE}} host-load M="$target" STORE="$store" OUT="{{.RUN_DIR}}"
+          else
+            ZONE=$(vm_zone_or_die "$m")
+            export ZONE
+            if [ "$backend" = gcp ]; then
+              gc storage buckets describe "gs://{{.BUCKET}}" --format='value(location)' >"{{.RUN_DIR}}/bucket-location.txt" 2>/dev/null || true
+            fi
+            vm_bg "$m" "load-$backend" host-load M="$target" STORE="$store" OUT=run
+            vm_wait "$m" "load-$backend"
+            vm_pull "$m" "$target" "{{.RUN_DIR}}"
+          fi
+          touch "$marker"
+          cat "{{.RUN_DIR}}/$target/load.txt" 2>/dev/null || true
+        done
 
   e2e:
-    desc: Run query server and querybench client (M=mac|emr|gnr)
+    desc: Run query server and querybench client (M=mac|emr|gnr, BACKEND=local|gcp)
     silent: true
     cmds:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
         m="${M:-{{.M | default .CLI_ARGS}}}"
-        [ -n "$m" ] || die "usage: task bench:e2e -- mac|emr|gnr"
+        b="${BACKEND:-{{.BACKEND | default ""}}}"
+        [ -n "$m" ] || die "usage: task bench:e2e -- mac|emr|gnr [local|gcp]"
         variants=$(vm_variants "$m")
+        backends="local gcp"
+        if [ -n "$b" ] && [ "$b" != both ]; then
+          backends="$b"
+        fi
+
         if [ "$m" = mac ]; then
-          for v in $variants; do
-            d="{{.RUN_DIR}}/e2e/mac/$v"
-            [ ! -f "$d/DONE" ] || { log "mac $v: done already"; continue; }
-            task -d . -t {{.TASKFILE}} host-serve M=mac V="$v" STORE="{{.MAC_STORE}}" CLIENT=mac OUT="{{.RUN_DIR}}"
-            task -d . -t {{.TASKFILE}} host-stop M=mac V="$v" OUT="{{.RUN_DIR}}"
-            touch "$d/DONE"
+          for backend in $backends; do
+            store=$(store_url mac "$backend")
+            target="mac-$backend"
+            qcount="{{.QUERIES}}"
+            qwarmup="{{.WARMUP}}"
+            if [ "$backend" = gcp ]; then
+              qcount="{{.MAC_GCP_QUERIES}}"
+              qwarmup="{{.MAC_GCP_WARMUP}}"
+            fi
+            for v in $variants; do
+              d="{{.RUN_DIR}}/e2e/$target/$v"
+              [ ! -f "$d/DONE" ] || { log "$target $v: done already"; continue; }
+              task -d . -t {{.TASKFILE}} host-serve M="$target" V="$v" STORE="$store" CLIENT=mac QUERIES="$qcount" WARMUP="$qwarmup" OUT="{{.RUN_DIR}}"
+              task -d . -t {{.TASKFILE}} host-stop M="$target" V="$v" CLIENT=mac OUT="{{.RUN_DIR}}"
+              touch "$d/DONE"
+            done
           done
           exit 0
         fi
 
         ZONE=$(vm_zone_or_die "$m")
         export ZONE
-        ip=$(vm_ip "$m")
-        qb=$(built //benchmark:querybench)
-        for v in $variants; do
-          d="{{.RUN_DIR}}/e2e/$m/$v"
-          [ ! -f "$d/DONE" ] || { log "$m $v: done already"; continue; }
-          task -t {{.TASKFILE}} firewall-open M="$m"
-          trap 'task -t {{.TASKFILE}} firewall-close M="$m"' EXIT
-          vm_bg "$m" "serve-$v" host-serve M="$m" V="$v" STORE="{{.GCS_STORE}}" CLIENT=vm OUT=run
-          vm_wait "$m" "serve-$v"
-          log "mac client against $m ($ip) $v"
-          scenarios "$qb" "$ip:50052" "$d/mac" ""
-          vm_bg "$m" "stop-$v" host-stop M="$m" V="$v" CLIENT=mac OUT=run
-          vm_wait "$m" "stop-$v"
-          vm_pull "$m" "e2e/$m/$v" "{{.RUN_DIR}}/e2e/$m"
-          task -t {{.TASKFILE}} firewall-close M="$m"
-          trap - EXIT
-          touch "$d/DONE"
+        for backend in $backends; do
+          store=$(store_url "$m" "$backend")
+          target="$m-$backend"
+          for v in $variants; do
+            d="{{.RUN_DIR}}/e2e/$target/$v"
+            [ ! -f "$d/DONE" ] || { log "$target $v: done already"; continue; }
+            vm_bg "$m" "serve-$backend-$v" host-serve M="$target" V="$v" STORE="$store" CLIENT=vm OUT=run
+            vm_wait "$m" "serve-$backend-$v"
+            vm_bg "$m" "stop-$backend-$v" host-stop M="$target" V="$v" CLIENT=vm OUT=run
+            vm_wait "$m" "stop-$backend-$v"
+            vm_pull "$m" "e2e/$target/$v" "{{.RUN_DIR}}/e2e/$target"
+            touch "$d/DONE"
+          done
         done
+
+  sanity:
+    desc: Run cross-platform format compatibility sanity check (10% dataset = 100 segments, 32 queries)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        m="${M:-emr}"
+        out="{{.RUN_DIR}}/sanity"
+        mkdir -p "$out/mac-to-vm" "$out/vm-to-mac"
+        qb=$(built //benchmark:querybench)
+        demoload=$(built //benchmark:demoload)
+        gcs_store="gs://{{.BUCKET}}/{{.TENANT}}"
+
+        log "=== Sanity 1: Mac ingest -> VM server -> Mac client ==="
+        ns_mac="{{.NAMESPACE}}_san_mac"
+        n=$(segment_count "$gcs_store" "$ns_mac")
+        if [ "$n" -lt {{.SANITY_SEGMENTS}} ]; then
+          log "mac: ingest {{.SANITY_SEGMENTS}} segments into $gcs_store ns $ns_mac"
+          pids=$(lsof -ti :50051 2>/dev/null || true)
+          [ -z "$pids" ] || kill -9 $pids 2>/dev/null || true
+          write_tenants "$out/tenants-ingest-mac.json" "$gcs_store"
+          "{{.RUN_DIR}}/mac/bin/cloudy" ingest -tenants-file="$out/tenants-ingest-mac.json" -addr=localhost:50051 \
+            >"$out/mac-to-vm/ingest.log" 2>&1 </dev/null &
+          ingest=$!
+          trap 'kill "$ingest" 2>/dev/null || true' EXIT
+          sleep 3
+          "$demoload" --tenant="{{.TENANT}}" --namespace="$ns_mac" --batch_size="{{.BATCH_SIZE}}" \
+            --max_docs=$(( {{.SANITY_SEGMENTS}} * {{.BATCH_SIZE}} )) \
+            --data_dir="{{.DATA_DIR}}" >"$out/mac-to-vm/demoload.log" 2>&1 || die "demoload failed"
+          while true; do
+            n=$(segment_count "$gcs_store" "$ns_mac")
+            [ "$n" -ge {{.SANITY_SEGMENTS}} ] && break
+            sleep 5
+          done
+          kill "$ingest" 2>/dev/null || true
+          trap - EXIT
+        fi
+        log "mac ingested $n segments to GCS ($ns_mac)"
+
+        ZONE=$(vm_zone_or_die "$m")
+        export ZONE
+        ip=$(vm_ip "$m")
+        task -t {{.TASKFILE}} firewall-open M="$m"
+        trap 'task -t {{.TASKFILE}} firewall-close M="$m"' EXIT
+        vm_ssh "$m" "pkill -f 'cloudy query' || true"
+        vm_bg "$m" "san-serve-mac" host-serve M="sanity-mac" V=simd STORE="$gcs_store" NAMESPACE="$ns_mac" SEGMENTS={{.SANITY_SEGMENTS}} QUERIES={{.SANITY_QUERIES}} WARMUP={{.SANITY_WARMUP}} CLIENT=mac OUT=run
+        deadline=$(($(date +%s) + 300))
+        synced=0
+        while [ "$(date +%s)" -lt "$deadline" ]; do
+          if vm_ssh "$m" "grep -q 'manifest=ns/$ns_mac/refs/heads/main.json' run/e2e/sanity-mac/simd/server.log 2>/dev/null"; then
+            synced=1
+            break
+          fi
+          sleep 2
+        done
+        [ "$synced" = 1 ] || die "VM server failed to sync Mac-ingested segments"
+        log "VM server synced Mac segments successfully"
+
+        scenarios "$qb" "$ip:50052" "$out/mac-to-vm" "" {{.SANITY_QUERIES}} {{.SANITY_WARMUP}} "$ns_mac"
+        status1="PASS"
+        [ -s "$out/mac-to-vm/top10-all.jsonl" ] || status1="FAIL"
+
+        vm_ssh "$m" "pkill -f 'cloudy query' || true"
+        task -t {{.TASKFILE}} firewall-close M="$m"
+        trap - EXIT
+        log "Sanity 1: $status1"
+
+        log "=== Sanity 2: VM ingest -> Mac server -> Mac client ==="
+        ns_vm="{{.NAMESPACE}}_san_vm"
+        n=$(segment_count "$gcs_store" "$ns_vm")
+        if [ "$n" -lt {{.SANITY_SEGMENTS}} ]; then
+          log "vm: ingest {{.SANITY_SEGMENTS}} segments into $gcs_store ns $ns_vm"
+          vm_bg "$m" "san-load-vm" host-load M="sanity-vm" STORE="$gcs_store" NAMESPACE="$ns_vm" SEGMENTS={{.SANITY_SEGMENTS}} OUT=run
+          vm_wait "$m" "san-load-vm"
+        fi
+        log "VM ingested {{.SANITY_SEGMENTS}} segments to GCS ($ns_vm)"
+
+        pids=$(lsof -ti :50052 2>/dev/null || true)
+        [ -z "$pids" ] || kill -9 $pids 2>/dev/null || true
+        write_tenants "$out/tenants-query-mac.json" "$gcs_store"
+        "{{.RUN_DIR}}/mac/bin/cloudy" query -tenants-file="$out/tenants-query-mac.json" -distance=simd -addr=localhost:50052 \
+          >"$out/vm-to-mac/server.log" 2>&1 </dev/null &
+        srv_pid=$!
+        trap 'kill "$srv_pid" 2>/dev/null || true' EXIT
+        deadline=$(($(date +%s) + 300))
+        synced=0
+        while [ "$(date +%s)" -lt "$deadline" ]; do
+          if grep -q "manifest=ns/$ns_vm/refs/heads/main.json" "$out/vm-to-mac/server.log" 2>/dev/null; then
+            synced=1
+            break
+          fi
+          kill -0 "$srv_pid" 2>/dev/null || die "Mac server died while syncing VM segments"
+          sleep 2
+        done
+        [ "$synced" = 1 ] || die "Mac server failed to sync VM-ingested segments"
+        log "Mac server synced VM segments successfully"
+
+        scenarios "$qb" localhost:50052 "$out/vm-to-mac" "" {{.SANITY_QUERIES}} {{.SANITY_WARMUP}} "$ns_vm"
+        status2="PASS"
+        [ -s "$out/vm-to-mac/top10-all.jsonl" ] || status2="FAIL"
+
+        kill "$srv_pid" 2>/dev/null || true
+        trap - EXIT
+        log "Sanity 2: $status2"
+
+        {
+          echo "| Check | Ingest | Server | Client | Segments | Queries | Status |"
+          echo "| --- | --- | --- | --- | ---: | ---: | --- |"
+          echo "| Mac -> VM | Mac (ARM64) | VM (x86_64) | Mac | {{.SANITY_SEGMENTS}} | {{.SANITY_QUERIES}} | $status1 |"
+          echo "| VM -> Mac | VM (x86_64) | Mac (ARM64) | Mac | {{.SANITY_SEGMENTS}} | {{.SANITY_QUERIES}} | $status2 |"
+        } >"$out/sanity.txt"
+        cat "$out/sanity.txt"
 
   report:
     desc: Generate groundtruth, pprof tops, summary.json and report.md
@@ -593,17 +758,15 @@ tasks:
         for pid in $pids; do wait "$pid"; done
         log "VM microbench finished"
 
-        log "{{.LOADER}}: load into GCS"
-        task -t {{.TASKFILE}} load M="{{.LOADER}}" >"$L/load-{{.LOADER}}.log" 2>&1
-
-        pids=""
         for m in {{.VMS}}; do
-          task -t {{.TASKFILE}} e2e M="$m" >"$L/e2e-$m.log" 2>&1 &
-          pids="$pids $!"
-          log "$m: e2e in background, log $L/e2e-$m.log"
+          log "$m: load"
+          task -t {{.TASKFILE}} load M="$m" >"$L/load-$m.log" 2>&1
+          log "$m: e2e"
+          task -t {{.TASKFILE}} e2e M="$m" >"$L/e2e-$m.log" 2>&1
         done
-        for pid in $pids; do wait "$pid"; done
-        log "VM e2e finished"
+
+        log "sanity check: cross-platform format compatibility"
+        task -t {{.TASKFILE}} sanity >"$L/sanity.log" 2>&1
 
         task -t {{.TASKFILE}} report
         log "e2e benchmark run complete: {{.RUN_DIR}}/report.md"
@@ -696,11 +859,14 @@ tasks:
         [ -n "$m" ] || m="{{.M}}"
         store="${STORE:-}"
         [ -n "$store" ] || store="{{.STORE}}"
+        ns="${NAMESPACE:-{{.NAMESPACE}}}"
+        segs="${SEGMENTS:-{{.SEGMENTS}}}"
+        batch="${BATCH_SIZE:-{{.BATCH_SIZE}}}"
         mkdir -p "$out" && out=$(cd "$out" && pwd)
         d="$out/$m"
         mkdir -p "$d"
-        n=$(segment_count "$store")
-        if [ "$n" -ge {{.SEGMENTS}} ]; then
+        n=$(segment_count "$store" "$ns")
+        if [ "$n" -ge "$segs" ]; then
           log "$m: $store holds $n segments: skip upload"
           bytes=$(store_bytes "$store")
           {
@@ -711,7 +877,7 @@ tasks:
           } >"$d/load.txt"
           exit 0
         fi
-        [ "$n" -eq 0 ] || die "$store holds $n of {{.SEGMENTS}} segments from incomplete load: delete ns/{{.NAMESPACE}} first"
+        [ "$n" -eq 0 ] || die "$store holds $n of $segs segments from incomplete load: delete ns/$ns first"
 
         pids=$(lsof -ti :50051 2>/dev/null || true)
         [ -z "$pids" ] || kill -9 $pids 2>/dev/null || true
@@ -726,24 +892,24 @@ tasks:
         log "$m: demoload into $store"
         t0=$(date +%s)
         demoload=$(built //benchmark:demoload)
-        "$demoload" --tenant="{{.TENANT}}" --namespace="{{.NAMESPACE}}" --batch_size="{{.BATCH_SIZE}}" \
-          --max_docs=$(( {{.SEGMENTS}} * {{.BATCH_SIZE}} )) \
+        "$demoload" --tenant="{{.TENANT}}" --namespace="$ns" --batch_size="$batch" \
+          --max_docs=$(( segs * batch )) \
           --data_dir="{{.DATA_DIR}}" >"$d/demoload.log" 2>&1 </dev/null || die "demoload failed: $d/demoload.log"
         demoload_s=$(($(date +%s) - t0))
         echo "demoload_s $demoload_s" >"$d/load.txt"
 
-        log "$m: wait for {{.SEGMENTS}} segments"
+        log "$m: wait for $segs segments"
         deadline=$(($(date +%s) + 3600))
         while true; do
-          n=$(segment_count "$store")
-          [ "$n" -lt {{.SEGMENTS}} ] || break
-          [ "$(date +%s)" -lt "$deadline" ] || die "fewer than {{.SEGMENTS}} segments after one hour"
+          n=$(segment_count "$store" "$ns")
+          [ "$n" -lt "$segs" ] || break
+          [ "$(date +%s)" -lt "$deadline" ] || die "fewer than $segs segments after one hour"
           kill -0 "$ingest" || die "ingest server died: $d/ingest.log"
           sleep 10
         done
         flushed_s=$(($(date +%s) - t0))
         sleep 15
-        n=$(segment_count "$store")
+        n=$(segment_count "$store" "$ns")
         bytes=$(store_bytes "$store")
         {
           echo "demoload_s $demoload_s"
@@ -773,13 +939,17 @@ tasks:
         [ -n "$store" ] || store="{{.STORE}}"
         client="${CLIENT:-}"
         [ -n "$client" ] || client="{{.CLIENT}}"
+        ns="${NAMESPACE:-{{.NAMESPACE}}}"
+        segs="${SEGMENTS:-{{.SEGMENTS}}}"
+        qcount="${QUERIES:-{{.QUERIES}}}"
+        qwarmup="${WARMUP:-{{.WARMUP}}}"
         mkdir -p "$out" && out=$(cd "$out" && pwd)
         d="$out/e2e/$m/$v"
         mkdir -p "$d/$client"
         read -r cpu ccpu <<<"$(pin_layout)"
         bin=$(bin_dir "$out")
-        n=$(segment_count "$store")
-        [ "$n" -ge {{.SEGMENTS}} ] || die "$store holds $n segments, not {{.SEGMENTS}}: run load first"
+        n=$(segment_count "$store" "$ns")
+        [ "$n" -ge "$segs" ] || die "$store holds $n segments, not $segs: run load first"
 
         if [ -f "$out/server.pid" ]; then
           kill "$(cat "$out/server.pid")" 2>/dev/null || true
@@ -800,7 +970,7 @@ tasks:
         pid=$!
         echo "$pid" >"$out/server.pid"
         synced() {
-          awk -v key="manifest=ns/{{.NAMESPACE}}/refs/heads/main.json" '/msg="sync pass"/ && index($0, key " ") { print; exit }' "$d/server.log"
+          awk -v key="manifest=ns/$ns/refs/heads/main.json" '/msg="sync pass"/ && index($0, key " ") { print; exit }' "$d/server.log"
         }
         deadline=$(($(date +%s) + 1800))
         until [ -n "$(synced)" ]; do
@@ -819,7 +989,7 @@ tasks:
         echo "rss_kb_after_sync $(ps -o rss= -p "$pid" | tr -d ' ')" >>"$d/server.txt"
 
         qb=$(built //benchmark:querybench)
-        scenarios "$qb" localhost:50052 "$d/$client" "$ccpu"
+        scenarios "$qb" localhost:50052 "$d/$client" "$ccpu" "$qcount" "$qwarmup" "$ns"
         EOF
 
   host-stop:
@@ -839,7 +1009,7 @@ tasks:
         mkdir -p "$out" && out=$(cd "$out" && pwd)
         [ -f "$out/server.pid" ] || die "no server.pid in $out"
         pid=$(cat "$out/server.pid")
-        if [ -n "$client" ]; then
+        if [ -n "$client" ] && [ -d "$out/e2e/$m/$v" ]; then
           echo "rss_kb_after_$client $(ps -o rss= -p "$pid" | tr -d ' ')" >>"$out/e2e/$m/$v/server.txt"
         fi
         kill "$pid" 2>/dev/null || true

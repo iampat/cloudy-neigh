@@ -12,21 +12,28 @@ with ad hoc commands.
 
 ## What it measures
 
-- Load: `demoload` time and flush time for 1M documents in 1000 segments.
-- Server: cold start to the first `sync pass`, and the resident set size (RSS).
+The suite runs in two tiers.
+
+Tier 1: Zero-Network Benchmark (1M documents, 1000 segments):
+- Runs server and client on the same machine over `localhost`.
+- Removes WAN latency noise and reduces VM egress cost.
+- VM: tests GCP backend and local disk backend. Client runs on the VM.
+- Mac: tests local disk backend and GCP backend. Client runs on the Mac.
+- Query counts: Mac with GCP backend runs 32 queries to save time. Other runs use 300 queries.
+- Cold start: measures time to the first `sync pass`, and RSS.
 - Kernels: `BenchmarkDistance`, `BenchmarkDecode16`, `BenchmarkScanKernel`,
   `BenchmarkSearch*_Table` and `BenchmarkScan1M_Table` on one pinned core.
-- Latency: `querybench` per variant, `top_k` 10 and 100, no filter and
-  `lang=en`. The report splits each query into server time and client-server
-  time. Client-server time is the total minus the `server-time-us` trailer.
-- Clients: a local client on each machine, and the Mac as a remote client of
-  each VM.
-- Correctness: recall@k, top-1 match, maximum score error, wrong-language hits
-  and short results against a brute-force ground truth.
-- Profiles: a CPU profile of `Scan1M` per machine and of each query server.
+- Latency: `querybench` per variant, `top_k` 10 and 100, no filter and `lang=en`.
+- Correctness: recall@k, top-1 match, maximum score error against ground truth.
+- Profiles: CPU profiles of `Scan1M` and each query server.
+
+Tier 2: Format Compatibility Sanity Check (100 segments, 32 queries):
+- Ensures file formats and manifests stay stable across platforms.
+- Scenario 1: Ingest on Mac to GCS, query server on VM, query client on Mac.
+- Scenario 2: Ingest on VM to GCS, query server on Mac, query client on Mac.
 
 Each server runs with `GOMAXPROCS=1` on one vCPU. The SMT sibling of that vCPU
-stays idle, and the client runs on the other cores. The Mac cannot pin a core.
+stays idle, and the client runs on other cores. The Mac cannot pin a core.
 
 ## Prerequisites
 
@@ -79,25 +86,26 @@ export NAMESPACE=f32
 | Create a VM | `task bench:vm-create -- emr` | 1 min, hours for GNR when capacity is short |
 | Set up a VM | `task bench:vm-setup -- emr` | 40 min, most of it the C++ gRPC build |
 | Microbenchmarks | `task bench:microbench -- mac\|emr\|gnr` | 15 min |
-| Load | `task bench:load -- mac\|gnr` | 10 min on the Mac |
-| End to end | `task bench:e2e -- mac\|emr\|gnr` | 20 to 45 min per variant |
+| Load | `task bench:load -- mac\|emr [local\|gcp]` | 10 min per store |
+| End to end | `task bench:e2e -- mac\|emr` | 20 to 45 min per variant |
+| Sanity check | `task bench:sanity` | 5 min |
 | Report | `task bench:report` | 1 min, plus the ground truth on the first run |
 | Cleanup | `task bench:cleanup` | 1 min |
 
-`task bench:all` runs all phases with this parallelism:
+`task bench:all` runs all phases with this order:
 
 ```
 build
 ├── per VM, in the background: create ─▶ setup ─▶ microbench
 └── Mac: microbench ─▶ load ─▶ e2e
-load on LOADER
-e2e on every VM, in parallel
+load on VM (local and GCS)
+e2e on VM (local and GCS)
+sanity (cross-platform check)
 report ─▶ cleanup
 ```
 
 A Mac-client run never shares a server with another client. The Mac e2e phase
-ends before the VM e2e phases start, so the Mac server does not compete with
-the Mac client.
+ends before the VM e2e phases start.
 
 A full run takes about four hours and about eight VM-hours. Check the price of
 the shapes before a run.
