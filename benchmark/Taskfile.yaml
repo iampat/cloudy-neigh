@@ -13,29 +13,33 @@ vars:
   MAC_STORE: 'file://{{.HOME}}/cloudy-bench-data/{{.TENANT}}?create_dir=true'
   DATA_DIR: 'datasets/cohere-wikipedia'
   HF_DATASET: 'CohereLabs/wikipedia-2023-11-embed-multilingual-v3'
-  HF_FILES: >-
-    en/0000.parquet en/0001.parquet en/0002.parquet en/0003.parquet
-    en/0004.parquet en/0005.parquet en/0006.parquet
-    de/0000.parquet es/0000.parquet fr/0000.parquet
+  HF_FILES: '{{.HF_FILES | default "en/0000.parquet en/0001.parquet en/0002.parquet en/0003.parquet en/0004.parquet en/0005.parquet en/0006.parquet de/0000.parquet es/0000.parquet fr/0000.parquet"}}'
   GROUNDTRUTH: 'bench/groundtruth-1000x100.jsonl'
-  BATCH_SIZE: 1000
-  SEGMENTS: 1000
-  QUERIES: 300
-  WARMUP: 20
-  TOP_KS: '10 100'
-  FILTERS: 'all en'
-  VMS: 'emr gnr'
-  LOADER: 'gnr'
+  BATCH_SIZE: '{{.BATCH_SIZE | default "1000"}}'
+  SEGMENTS: '{{.SEGMENTS | default "1000"}}'
+  QUERIES: '{{.QUERIES | default "300"}}'
+  WARMUP: '{{.WARMUP | default "20"}}'
+  TOP_KS: '{{.TOP_KS | default "10 100"}}'
+  FILTERS: '{{.FILTERS | default "all en"}}'
+  VARIANTS: '{{.VARIANTS | default ""}}'
+  VMS: '{{.VMS | default "emr gnr"}}'
+  LOADER: '{{.LOADER | default "gnr"}}'
   POLL: 10
   CREATE_ROUNDS: 6
   MAX_RUN: '12h'
   KEEP_VMS: '{{.KEEP_VMS | default "0"}}'
   TASKFILE: '{{.TASKFILE | default "benchmark/Taskfile.yaml"}}'
+  M: '{{.M | default ""}}'
+  OUT: '{{.OUT | default ""}}'
+  STORE: '{{.STORE | default ""}}'
+  V: '{{.V | default ""}}'
+  CLIENT: '{{.CLIENT | default ""}}'
 
   PREAMBLE: |
     log() { echo "[$(date +%T)] $*" >&2; }
     die() { log "ERROR: $*"; exit 1; }
     gc() { gcloud "$@" --account="{{.GCP_ACCOUNT}}" --project="{{.GCP_PROJECT}}"; }
+    kill() { /bin/kill "$@"; }
 
     vm_name() {
       case "$1" in
@@ -62,11 +66,15 @@ vars:
     vm_shapes() {
       case "$1" in
         emr) echo "c4-standard-8,us-east1-c c4-standard-8,us-east4-a" ;;
-        gnr) echo "c4d-standard-8,us-central1-a c4d-standard-8,us-central1-f" ;;
+        gnr) echo "c4a-standard-8,us-central1-a c4a-standard-8,us-central1-b c4a-standard-8,us-central1-f" ;;
       esac
     }
 
     vm_variants() {
+      if [ -n "{{.VARIANTS}}" ]; then
+        echo "{{.VARIANTS}}"
+        return
+      fi
       case "$1" in
         mac) echo "pure simd" ;;
         emr|gnr) echo "pure simd fp16" ;;
@@ -141,8 +149,12 @@ vars:
     }
 
     built() {
-      (bazel build "$1" >/dev/null 2>&1) || die "cannot build $1"
-      echo "$PWD/$(bazel cquery --output=files "$1" 2>/dev/null | grep -m1 '^bazel-out/')"
+      local repo=$PWD
+      if [ ! -f "$repo/MODULE.bazel" ] && [ -f "$HOME/src/MODULE.bazel" ]; then
+        repo="$HOME/src"
+      fi
+      (cd "$repo" && bazel build "$1" >/dev/null 2>&1) || die "cannot build $1"
+      echo "$repo/$(cd "$repo" && bazel cquery --output=files "$1" 2>/dev/null | grep -m1 '^bazel-out/')"
     }
 
     scenarios() {
@@ -202,8 +214,8 @@ vars:
     }
 
     remote_env() {
-      printf 'RUN_NAME=%q TENANT=%q NAMESPACE=%q QUERIES=%q WARMUP=%q ' \
-        "{{.RUN_NAME}}" "{{.TENANT}}" "{{.NAMESPACE}}" "{{.QUERIES}}" "{{.WARMUP}}"
+      printf 'RUN_NAME="%s" TENANT="%s" NAMESPACE="%s" SEGMENTS="%s" BATCH_SIZE="%s" QUERIES="%s" WARMUP="%s" TOP_KS="%s" FILTERS="%s" VARIANTS="%s" ' \
+        "{{.RUN_NAME}}" "{{.TENANT}}" "{{.NAMESPACE}}" "{{.SEGMENTS}}" "{{.BATCH_SIZE}}" "{{.QUERIES}}" "{{.WARMUP}}" "{{.TOP_KS}}" "{{.FILTERS}}" "{{.VARIANTS}}"
     }
 
     vm_bg() {
@@ -211,10 +223,8 @@ vars:
       shift 2
       account=$(vm_account "$m")
       [ -n "$account" ] || die "$(vm_name "$m") has no service account"
-      cmd="GCP_ACCOUNT=$(printf '%q' "$account") $(remote_env) task -f Taskfile.yaml $(printf '%q ' "$@")"
-      cmd="$cmd && touch run/jobs/$job.ok || touch run/jobs/$job.fail"
-      vm_ssh "$m" "mkdir -p run/jobs && rm -f run/jobs/$job.* &&
-        (nohup bash -c $(printf '%q' "$cmd") >run/jobs/$job.log 2>&1 </dev/null &)" ||
+      cmd="GCP_ACCOUNT=\"$account\" $(remote_env) task -t Taskfile.yaml $* && touch run/jobs/$job.ok || touch run/jobs/$job.fail"
+      vm_ssh "$m" "mkdir -p run/jobs && rm -f run/jobs/$job.* && (nohup bash -c '$cmd' >run/jobs/$job.log 2>&1 </dev/null &)" ||
         die "cannot start $job on $(vm_name "$m")"
       log "$(vm_name "$m"): started $job"
     }
@@ -229,6 +239,23 @@ vars:
       log "$(vm_name "$m"): $job done"
     }
 
+env:
+  RUN_NAME: '{{.RUN_NAME}}'
+  RUN_DIR: '{{.RUN_DIR}}'
+  TENANT: '{{.TENANT}}'
+  NAMESPACE: '{{.NAMESPACE}}'
+  SEGMENTS: '{{.SEGMENTS}}'
+  QUERIES: '{{.QUERIES}}'
+  WARMUP: '{{.WARMUP}}'
+  TOP_KS: '{{.TOP_KS}}'
+  FILTERS: '{{.FILTERS}}'
+  VARIANTS: '{{.VARIANTS}}'
+  M: '{{.M}}'
+  OUT: '{{.OUT}}'
+  STORE: '{{.STORE}}'
+  V: '{{.V}}'
+  CLIENT: '{{.CLIENT}}'
+
 tasks:
   build:
     desc: Build benchmark binaries with Bazel for Mac and Linux
@@ -242,7 +269,7 @@ tasks:
         log "build linux/amd64 binaries"
         flags=(-c opt --@rules_go//go/config:race=false
           --platforms=@rules_go//go/toolchain:linux_amd64 --use_target_platform_for_tests)
-        targets=(//cmd/cloudy //vector:vector_test //query:query_test //benchmark:demoload //benchmark:querybench)
+        targets=(//cmd/cloudy //vector:vector_test //query:query_test)
         bazel build "${flags[@]}" "${targets[@]}" >/dev/null 2>&1 || die "linux build failed"
         for t in "${targets[@]}"; do
           f=$(bazel cquery "${flags[@]}" --output=files "$t" 2>/dev/null | grep -m1 '^bazel-out/')
@@ -285,7 +312,7 @@ tasks:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        m="${M:-{{.CLI_ARGS}}}"
+        m="${M:-{{.M | default .CLI_ARGS}}}"
         [ -n "$m" ] || die "usage: task bench:vm-create -- emr|gnr"
         name=$(vm_name "$m")
         platform=$(vm_platform "$m")
@@ -336,7 +363,7 @@ tasks:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        m="${M:-{{.CLI_ARGS}}}"
+        m="${M:-{{.M | default .CLI_ARGS}}}"
         [ -n "$m" ] || die "usage: task bench:vm-setup -- emr|gnr"
         [ -f "{{.RUN_DIR}}/src.tar.gz" ] || die "no {{.RUN_DIR}}/src.tar.gz: run task bench:build first"
         ZONE=$(vm_zone_or_die "$m")
@@ -361,7 +388,7 @@ tasks:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        m="${M:-{{.CLI_ARGS}}}"
+        m="${M:-{{.M | default .CLI_ARGS}}}"
         [ -n "$m" ] || die "usage: task bench:vm-delete -- emr|gnr"
         zone=$(vm_zone "$m")
         [ -z "$zone" ] || gc compute instances delete "$(vm_name "$m")" --zone="$zone" --quiet
@@ -383,7 +410,7 @@ tasks:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        m="${M:-{{.CLI_ARGS}}}"
+        m="${M:-{{.M | default .CLI_ARGS}}}"
         rule=$(vm_name "$m")-querybench
         ip=$(curl -fsS --max-time 10 https://api.ipify.org) || die "cannot find public IP of Mac"
         if gc compute firewall-rules describe "$rule" >/dev/null 2>&1; then
@@ -401,7 +428,7 @@ tasks:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        m="${M:-{{.CLI_ARGS}}}"
+        m="${M:-{{.M | default .CLI_ARGS}}}"
         rule=$(vm_name "$m")-querybench
         if gc compute firewall-rules describe "$rule" >/dev/null 2>&1; then
           gc compute firewall-rules delete "$rule" --quiet >/dev/null
@@ -415,12 +442,12 @@ tasks:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        m="${M:-{{.CLI_ARGS}}}"
+        m="${M:-{{.M | default .CLI_ARGS}}}"
         [ -n "$m" ] || die "usage: task bench:microbench -- mac|emr|gnr"
         marker="{{.RUN_DIR}}/$m/BENCH_DONE"
         [ ! -f "$marker" ] || { log "$m: microbench done already"; exit 0; }
         if [ "$m" = mac ]; then
-          task -f {{.TASKFILE}} host-bench M=mac OUT="{{.RUN_DIR}}"
+          task -d . -t {{.TASKFILE}} host-bench M=mac OUT="{{.RUN_DIR}}"
         else
           ZONE=$(vm_zone_or_die "$m")
           export ZONE
@@ -437,12 +464,12 @@ tasks:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        m="${M:-{{.CLI_ARGS}}}"
+        m="${M:-{{.M | default .CLI_ARGS}}}"
         [ -n "$m" ] || die "usage: task bench:load -- mac|gnr"
         marker="{{.RUN_DIR}}/$m/LOAD_DONE"
         [ ! -f "$marker" ] || { log "$m: load done already"; exit 0; }
         if [ "$m" = mac ]; then
-          task -f {{.TASKFILE}} host-load M=mac STORE="{{.MAC_STORE}}" OUT="{{.RUN_DIR}}"
+          task -d . -t {{.TASKFILE}} host-load M=mac STORE="{{.MAC_STORE}}" OUT="{{.RUN_DIR}}"
         else
           ZONE=$(vm_zone_or_die "$m")
           export ZONE
@@ -461,15 +488,15 @@ tasks:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        m="${M:-{{.CLI_ARGS}}}"
+        m="${M:-{{.M | default .CLI_ARGS}}}"
         [ -n "$m" ] || die "usage: task bench:e2e -- mac|emr|gnr"
         variants=$(vm_variants "$m")
         if [ "$m" = mac ]; then
           for v in $variants; do
             d="{{.RUN_DIR}}/e2e/mac/$v"
             [ ! -f "$d/DONE" ] || { log "mac $v: done already"; continue; }
-            task -f {{.TASKFILE}} host-serve M=mac V="$v" STORE="{{.MAC_STORE}}" CLIENT=mac OUT="{{.RUN_DIR}}"
-            task -f {{.TASKFILE}} host-stop M=mac V="$v" OUT="{{.RUN_DIR}}"
+            task -d . -t {{.TASKFILE}} host-serve M=mac V="$v" STORE="{{.MAC_STORE}}" CLIENT=mac OUT="{{.RUN_DIR}}"
+            task -d . -t {{.TASKFILE}} host-stop M=mac V="$v" OUT="{{.RUN_DIR}}"
             touch "$d/DONE"
           done
           exit 0
@@ -482,8 +509,8 @@ tasks:
         for v in $variants; do
           d="{{.RUN_DIR}}/e2e/$m/$v"
           [ ! -f "$d/DONE" ] || { log "$m $v: done already"; continue; }
-          task -f {{.TASKFILE}} firewall-open M="$m"
-          trap 'task -f {{.TASKFILE}} firewall-close M="$m"' EXIT
+          task -t {{.TASKFILE}} firewall-open M="$m"
+          trap 'task -t {{.TASKFILE}} firewall-close M="$m"' EXIT
           vm_bg "$m" "serve-$v" host-serve M="$m" V="$v" STORE="{{.GCS_STORE}}" CLIENT=vm OUT=run
           vm_wait "$m" "serve-$v"
           log "mac client against $m ($ip) $v"
@@ -491,7 +518,7 @@ tasks:
           vm_bg "$m" "stop-$v" host-stop M="$m" V="$v" CLIENT=mac OUT=run
           vm_wait "$m" "stop-$v"
           vm_pull "$m" "e2e/$m/$v" "{{.RUN_DIR}}/e2e/$m"
-          task -f {{.TASKFILE}} firewall-close M="$m"
+          task -t {{.TASKFILE}} firewall-close M="$m"
           trap - EXIT
           touch "$d/DONE"
         done
@@ -529,7 +556,7 @@ tasks:
         {{.PREAMBLE}}
         set -euo pipefail
         for m in {{.VMS}}; do
-          task -f {{.TASKFILE}} firewall-close M="$m" >/dev/null 2>&1 || true
+          task -t {{.TASKFILE}} firewall-close M="$m" >/dev/null 2>&1 || true
         done
         gc compute instances list --filter="labels.cloudy-e2e={{.RUN_NAME}}" --format='value(name,zone.basename())' |
           while read -r name zone; do
@@ -546,39 +573,39 @@ tasks:
         set -euo pipefail
         mkdir -p "{{.RUN_DIR}}/logs"
         L="{{.RUN_DIR}}/logs"
-        task -f {{.TASKFILE}} build
+        task -t {{.TASKFILE}} build
         if [ "{{.KEEP_VMS}}" != "1" ]; then
-          trap 'task -f {{.TASKFILE}} cleanup' EXIT
+          trap 'task -t {{.TASKFILE}} cleanup' EXIT
         fi
         pids=""
         for m in {{.VMS}}; do
-          (task -f {{.TASKFILE}} vm-create M="$m" && \
-           task -f {{.TASKFILE}} vm-setup M="$m" && \
-           task -f {{.TASKFILE}} microbench M="$m") >"$L/vm-$m.log" 2>&1 &
+          (task -t {{.TASKFILE}} vm-create M="$m" && \
+           task -t {{.TASKFILE}} vm-setup M="$m" && \
+           task -t {{.TASKFILE}} microbench M="$m") >"$L/vm-$m.log" 2>&1 &
           pids="$pids $!"
           log "$m: create, setup and microbench in background, log $L/vm-$m.log"
         done
         log "mac: microbench, load, e2e"
-        task -f {{.TASKFILE}} microbench M=mac >"$L/microbench-mac.log" 2>&1
-        task -f {{.TASKFILE}} load M=mac >"$L/load-mac.log" 2>&1
-        task -f {{.TASKFILE}} e2e M=mac >"$L/e2e-mac.log" 2>&1
+        task -t {{.TASKFILE}} microbench M=mac >"$L/microbench-mac.log" 2>&1
+        task -t {{.TASKFILE}} load M=mac >"$L/load-mac.log" 2>&1
+        task -t {{.TASKFILE}} e2e M=mac >"$L/e2e-mac.log" 2>&1
 
         for pid in $pids; do wait "$pid"; done
         log "VM microbench finished"
 
         log "{{.LOADER}}: load into GCS"
-        task -f {{.TASKFILE}} load M="{{.LOADER}}" >"$L/load-{{.LOADER}}.log" 2>&1
+        task -t {{.TASKFILE}} load M="{{.LOADER}}" >"$L/load-{{.LOADER}}.log" 2>&1
 
         pids=""
         for m in {{.VMS}}; do
-          task -f {{.TASKFILE}} e2e M="$m" >"$L/e2e-$m.log" 2>&1 &
+          task -t {{.TASKFILE}} e2e M="$m" >"$L/e2e-$m.log" 2>&1 &
           pids="$pids $!"
           log "$m: e2e in background, log $L/e2e-$m.log"
         done
         for pid in $pids; do wait "$pid"; done
         log "VM e2e finished"
 
-        task -f {{.TASKFILE}} report
+        task -t {{.TASKFILE}} report
         log "e2e benchmark run complete: {{.RUN_DIR}}/report.md"
 
   host-setup:
@@ -592,7 +619,7 @@ tasks:
         out="$HOME/run/$m"
         mkdir -p "$out"
         sudo DEBIAN_FRONTEND=noninteractive apt-get update -q
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q build-essential python3-venv git curl
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q build-essential python3-venv git curl lsof
         sudo curl -fsSL -o /usr/local/bin/bazel \
           https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
         sudo chmod +x /usr/local/bin/bazel
@@ -660,11 +687,15 @@ tasks:
     silent: true
     cmds:
       - |
+        exec bash <<'EOF'
         {{.PREAMBLE}}
         set -euo pipefail
-        out="${OUT:-{{.RUN_DIR}}}"
-        m="${M}"
-        store="${STORE}"
+        out="${OUT:-}"
+        [ -n "$out" ] || out="{{.RUN_DIR}}"
+        m="${M:-}"
+        [ -n "$m" ] || m="{{.M}}"
+        store="${STORE:-}"
+        [ -n "$store" ] || store="{{.STORE}}"
         mkdir -p "$out" && out=$(cd "$out" && pwd)
         d="$out/$m"
         mkdir -p "$d"
@@ -682,6 +713,8 @@ tasks:
         fi
         [ "$n" -eq 0 ] || die "$store holds $n of {{.SEGMENTS}} segments from incomplete load: delete ns/{{.NAMESPACE}} first"
 
+        pids=$(lsof -ti :50051 2>/dev/null || true)
+        [ -z "$pids" ] || kill -9 $pids 2>/dev/null || true
         write_tenants "$d/tenants-ingest.json" "$store"
         "$(bin_dir "$out")/cloudy" ingest -tenants-file="$d/tenants-ingest.json" -addr=localhost:50051 \
           >"$d/ingest.log" 2>&1 </dev/null &
@@ -694,8 +727,10 @@ tasks:
         t0=$(date +%s)
         demoload=$(built //benchmark:demoload)
         "$demoload" --tenant="{{.TENANT}}" --namespace="{{.NAMESPACE}}" --batch_size="{{.BATCH_SIZE}}" \
+          --max_docs=$(( {{.SEGMENTS}} * {{.BATCH_SIZE}} )) \
           --data_dir="{{.DATA_DIR}}" >"$d/demoload.log" 2>&1 </dev/null || die "demoload failed: $d/demoload.log"
-        echo "demoload_s $(($(date +%s) - t0))" >"$d/load.txt"
+        demoload_s=$(($(date +%s) - t0))
+        echo "demoload_s $demoload_s" >"$d/load.txt"
 
         log "$m: wait for {{.SEGMENTS}} segments"
         deadline=$(($(date +%s) + 3600))
@@ -711,26 +746,33 @@ tasks:
         n=$(segment_count "$store")
         bytes=$(store_bytes "$store")
         {
-          echo "demoload_s $(awk '/^demoload_s / {print $2}' "$d/load.txt")"
+          echo "demoload_s $demoload_s"
           echo "flushed_s $flushed_s"
           echo "segments $n"
           echo "store $store"
           echo "store_bytes $bytes"
         } >"$d/load.txt"
         log "$m: flushed $n segments in ${flushed_s}s"
+        EOF
 
   host-serve:
     desc: Internal task to start query server and run querybench on host
     silent: true
     cmds:
       - |
+        exec bash <<'EOF'
         {{.PREAMBLE}}
         set -euo pipefail
-        out="${OUT:-{{.RUN_DIR}}}"
-        m="${M}"
-        v="${V}"
-        store="${STORE}"
-        client="${CLIENT}"
+        out="${OUT:-}"
+        [ -n "$out" ] || out="{{.RUN_DIR}}"
+        m="${M:-}"
+        [ -n "$m" ] || m="{{.M}}"
+        v="${V:-}"
+        [ -n "$v" ] || v="{{.V}}"
+        store="${STORE:-}"
+        [ -n "$store" ] || store="{{.STORE}}"
+        client="${CLIENT:-}"
+        [ -n "$client" ] || client="{{.CLIENT}}"
         mkdir -p "$out" && out=$(cd "$out" && pwd)
         d="$out/e2e/$m/$v"
         mkdir -p "$d/$client"
@@ -743,6 +785,8 @@ tasks:
           kill "$(cat "$out/server.pid")" 2>/dev/null || true
           sleep 2
         fi
+        pids=$(lsof -ti :50052 2>/dev/null || true)
+        [ -z "$pids" ] || kill -9 $pids 2>/dev/null || true
         addr=localhost:50052
         [ "$(uname)" = Linux ] && addr=:50052
         write_tenants "$out/tenants-query.json" "$store"
@@ -776,6 +820,7 @@ tasks:
 
         qb=$(built //benchmark:querybench)
         scenarios "$qb" localhost:50052 "$d/$client" "$ccpu"
+        EOF
 
   host-stop:
     desc: Internal task to stop query server on host
@@ -784,9 +829,12 @@ tasks:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        out="${OUT:-{{.RUN_DIR}}}"
-        m="${M}"
-        v="${V}"
+        out="${OUT:-}"
+        [ -n "$out" ] || out="{{.RUN_DIR}}"
+        m="${M:-}"
+        [ -n "$m" ] || m="{{.M}}"
+        v="${V:-}"
+        [ -n "$v" ] || v="{{.V}}"
         client="${CLIENT:-}"
         mkdir -p "$out" && out=$(cd "$out" && pwd)
         [ -f "$out/server.pid" ] || die "no server.pid in $out"

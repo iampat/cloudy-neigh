@@ -121,6 +121,19 @@ not trust memory over the help output.
 - Pass context files using `@<path>` arguments: `pi @file.go -p "<prompt>"`.
 - Credentials are managed by `pi`. Do not configure API keys.
 
+## Execution and permissions
+
+- Use relative paths within the workspace. Never create arbitrary directories in `$HOME`.
+- Permitted scratch paths: `./scratch/`, `./bench/`, and `/tmp/`.
+- No inline interpreters: never pass inline code strings like `python3 -c`, `node -e`, or multi-line awk scripts.
+- Write helper scripts to `./scratch/<name>.star` first, then run them with `starlark`.
+  - Starlark is hermetic with no recursion, while loops, or host I/O. Use loops for accumulation (`sum` is absent).
+  - Delegate Starlark syntax lookups to a research subagent using `starlark --docs markdown`.
+  - Pass `--json` to `starlark` to omit diagnostics headers and pipe clean output to `jq`.
+  - Reuse existing scripts in `./scratch/` across runs to save time.
+- Prefer `jq` for JSON, `yq` for YAML, and POSIX tools (`cut`, `grep -c`, `sort`, `uniq`) for stream filtering.
+- Prefer native gcloud `--format` and `--filter` flags over shell pipes.
+
 ## Gotchas & conventions
 
 - Prefer jq over Python scripts when analysing JSON files.

@@ -2,6 +2,7 @@
 
 ### Added
 
+- Execution and permission directives in CLAUDE.md for CLI sandbox safety. [#170]
 - `e2e-benchmark` skill and Taskfile automation with pinned Python reporting tools in `benchmark/`. [#157]
 - Draft [garbage collection and point-in-time branch design](docs/design/garbage-collection.md). Covers checkpoints, retention, archives, and collection safety. Publication capacity and reader cleanup remain unresolved. [#169]
 - Documentation consolidation: 14 overlapping design notes consolidated into docs/architecture.md and 3 subsystem specifications (docs/design/storage.md, docs/design/ingestion.md, docs/design/query.md). Benchmarks unified under docs/benchmarks/. [#167]
@@ -111,6 +112,7 @@
 
 ### Fixed
 
+- `benchmark`: fix VM taskfile execution directory, environment propagation, and lsof port cleanup. [#170]
 - `ingest`: segments are named by the SHA-256 of their bytes, and a replay that finds the segment counts as success. A crash between the segment upload and the manifest commit no longer stalls the flusher. The query loader applies the ordered manifest by position. [#165]
 - `ingest.Ingester.Fork`: returns the `AddBranch` error and rolls back. A failed catalog write no longer leaves a branch that queries cannot see and a retry cannot repair. [#166]
 - `ingest.Flusher`: fixed cancellation handling to retry the active sequence on shutdown rather than skipping records. [#140]

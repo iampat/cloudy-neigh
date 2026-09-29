@@ -9,3 +9,4 @@ datasets
 bazel-*
 .playwright-mcp/
 bench
+scratch
