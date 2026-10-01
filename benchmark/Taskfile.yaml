@@ -665,7 +665,7 @@ tasks:
           >"$out/vm-to-mac/server.log" 2>&1 </dev/null &
         srv_pid=$!
         trap 'kill "$srv_pid" 2>/dev/null || true' EXIT
-        deadline=$(($(date +%s) + 300))
+        deadline=$(($(date +%s) + 900))
         synced=0
         while [ "$(date +%s)" -lt "$deadline" ]; do
           if grep -q "manifest=ns/$ns_vm/refs/heads/main.json" "$out/vm-to-mac/server.log" 2>/dev/null; then
@@ -1029,3 +1029,52 @@ tasks:
         kill "$pid" 2>/dev/null || true
         while kill -0 "$pid" 2>/dev/null; do sleep 1; done
         rm -f "$out/server.pid"
+
+  status:
+    desc: Show local and VM benchmark process status and listening ports
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        log "=== Local Processes ==="
+        ps -eo pid,rss,command | grep -E '[c]loudy|[q]uerybench|[d]emoload' || echo "No local benchmark processes"
+        log "=== Listening Ports ==="
+        lsof -i :50051 -i :50052 -i :6060 2>/dev/null || echo "No active listening ports"
+        for m in {{.VMS}}; do
+          if z=$(vm_zone "$m"); [ -n "$z" ]; then
+            log "=== VM $m ($z) Jobs ==="
+            vm_ssh "$m" "ls -la run/jobs/ 2>/dev/null | tail -10" || echo "No remote jobs found"
+          fi
+        done
+
+  segcount:
+    desc: Count segments in a store (B=local|gcp, NS=namespace)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        b="${B:-{{.BACKEND | default "gcp"}}}"
+        ns="${NS:-{{.NAMESPACE}}}"
+        store=$(store_url mac "$b")
+        n=$(segment_count "$store" "$ns")
+        echo "$store ns $ns: $n segments"
+
+  vm-tail:
+    desc: Tail log of a job on VM (M=emr|gnr, JOB=job_name, N=lines)
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        m="${M:-emr}"
+        job="${JOB:-${CLI_ARGS:-setup}}"
+        n="${N:-25}"
+        vm_ssh "$m" "tail -n $n run/jobs/$job.log"
+
+  clean-scratch:
+    desc: Remove temporary scratch files
+    silent: true
+    cmds:
+      - rm -rf scratch/*.py
