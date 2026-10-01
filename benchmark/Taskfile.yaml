@@ -7,7 +7,7 @@ vars:
   TENANT: '{{.TENANT | default "cloudy"}}'
   NAMESPACE: '{{.NAMESPACE | default "f32"}}'
   RUN_NAME:
-    sh: 'echo "${RUN_NAME:-$(date +%F)-e2e}"'
+    sh: 'echo "${RUN_NAME:-2026-09-29-e2e}"'
   RUN_DIR: 'bench/{{.RUN_NAME}}'
   GCS_STORE: 'gs://{{.BUCKET}}/{{.TENANT}}'
   MAC_STORE: 'file://{{.HOME}}/cloudy-bench-data/{{.TENANT}}?create_dir=true'
@@ -778,7 +778,8 @@ tasks:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        m="${M}"
+        m="${M:-}"
+        [ -n "$m" ] || m="{{.M}}"
         out="$HOME/run/$m"
         mkdir -p "$out"
         sudo DEBIAN_FRONTEND=noninteractive apt-get update -q
@@ -810,12 +811,18 @@ tasks:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        out="${OUT:-{{.RUN_DIR}}}"
-        m="${M}"
+        out="${OUT:-}"
+        [ -n "$out" ] || out="{{.RUN_DIR}}"
+        m="${M:-}"
+        [ -n "$m" ] || m="{{.M}}"
         mkdir -p "$out" && out=$(cd "$out" && pwd)
         d="$out/$m"
         bin=$(bin_dir "$out")
         mkdir -p "$d"
+        if [ "$m" = mac ]; then
+          sysctl -n machdep.cpu.brand_string >"$d/cpu.txt" 2>/dev/null || true
+          sysctl -n hw.ncpu >>"$d/cpu.txt" 2>/dev/null || true
+        fi
         read -r cpu _ <<<"$(pin_layout)"
         cd "$bin"
 
