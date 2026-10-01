@@ -7,7 +7,7 @@ vars:
   TENANT: '{{.TENANT | default "cloudy"}}'
   NAMESPACE: '{{.NAMESPACE | default "f32"}}'
   RUN_NAME:
-    sh: 'echo "${RUN_NAME:-$(date +%F)-e2e}"'
+    sh: 'echo "${RUN_NAME:-2026-09-29-e2e}"'
   RUN_DIR: 'bench/{{.RUN_NAME}}'
   GCS_STORE: 'gs://{{.BUCKET}}/{{.TENANT}}'
   MAC_STORE: 'file://{{.HOME}}/cloudy-bench-data/{{.TENANT}}?create_dir=true'
