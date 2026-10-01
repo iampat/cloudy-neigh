@@ -168,7 +168,7 @@ Measure each item with `BenchmarkDistance` on darwin/arm64 and linux/amd64, befo
 - [X] Split the FMA chain in the AVX-512 kernels into independent accumulators: eight for dot and L2, six for cosine (`vector/distance_amd64.go`). [#157]
 - [ ] Split the FMA chain in the portable SIMD kernels too. They keep one accumulator (`vector/distance_simd.go`).
 - [X] Compare the portable SIMD kernels with arch-specific kernels over D = 32 to 4096. amd64 has AVX-512 kernels. `docs/benchmarks/distance.md` has the EMR and GNR numbers at D = 128, 1024 and 4096. arm64 has no arch kernel since PR 134. [#108, #134, #157]
-- [X] Measure recall@10 of the 16-bit variants on the Cohere corpus. On 1M docs and 300 queries, `fp16` gives recall@10 1.0000, the float32 result. The removed paired bf16 variant gives 0.9987 with no filter and 0.9983 with `lang=en`. The unpaired bf16 variant was not run. `docs/benchmarks/distance.md` has the numbers. [#157]
+- [X] Measure recall@10 of the 16-bit variants on the Cohere corpus. On 1M docs and 300 queries, `fp16` gives recall@10 1.0000, the float32 result. The removed paired bf16 variant gives 0.9987 with no filter and 0.9983 with `lang=en`. The unpaired bf16 variant was not run. `docs/benchmarks/distance.md` has the numbers. [#157, #171, #173]
 - [ ] Try int8 row quantization with a per-row scale. It halves the 16-bit row stream again. Measure the 10K scan and recall@10 against `fp16`.
 
 ## Known bugs
