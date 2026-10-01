@@ -1049,14 +1049,15 @@ tasks:
         done
 
   segcount:
-    desc: Count segments in a store (B=local|gcp, NS=namespace)
+    desc: 'Count segments in a store (usage: task bench:segcount -- [backend] [namespace])'
     silent: true
     cmds:
       - |
         {{.PREAMBLE}}
         set -euo pipefail
-        b="${B:-{{.BACKEND | default "gcp"}}}"
-        ns="${NS:-{{.NAMESPACE}}}"
+        set -- {{.CLI_ARGS}}
+        b="${1:-${B:-{{.B | default "gcp"}}}}"
+        ns="${2:-${NS:-{{.NS | default .NAMESPACE}}}}"
         store=$(store_url mac "$b")
         n=$(segment_count "$store" "$ns")
         echo "$store ns $ns: $n segments"
