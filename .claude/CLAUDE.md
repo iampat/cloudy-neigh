@@ -112,6 +112,7 @@ not trust memory over the help output.
   command and the error to the user, verbatim. Do not retry, and do not work
   around it.
 - A transcript of the conversation goes to `docs/reviews/<date>-<topic>.md`.
+- Always update local `.antigravity/settings.json` instead of global `~/.gemini/antigravity-cli/settings.json`.
 
 ## pi
 
