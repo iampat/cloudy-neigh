@@ -123,6 +123,10 @@ not trust memory over the help output.
 
 ## Execution and permissions
 
+- Use simple, single-purpose Bash commands. One command per tool call.
+- Never chain commands with `&&`, `;`, `||`, or pipes. Compound commands trigger permission prompts and block execution.
+- Avoid command substitutions like `$(...)` and backticks. Run commands as separate steps.
+- Avoid wrapper commands or variable prefixes before binaries. Keep commands prefix-matchable for automatic approvals.
 - Use relative paths within the workspace. Never create arbitrary directories in `$HOME`.
 - Permitted scratch paths: `./scratch/`, `./bench/`, and `/tmp/`.
 - No inline interpreters: never pass inline code strings like `python3 -c`, `node -e`, or multi-line awk scripts.
