@@ -193,14 +193,68 @@ def section_server(run: str, ms: list[str]) -> str:
     )
 
 
+def section_summary(summ: list[dict]) -> str:
+    top10 = [r for r in summ if r["scenario"] == "top10-all"]
+    if not top10:
+        return ""
+    order = ["emr", "mac", "gnr"]
+
+    def key(r: dict) -> tuple[int, str, int]:
+        m = r["machine"]
+        base = m.split("-")[0]
+        base_idx = order.index(base) if base in order else 99
+        v_idx = VARIANTS.index(r["variant"]) if r["variant"] in VARIANTS else 99
+        return (base_idx, m, v_idx)
+
+    rows = [
+        [
+            r["machine"],
+            f"`{r['variant']}`",
+            r["client"],
+            f(r["total"]["p50"]),
+            f(r["total"]["p99"]),
+            f(r["server"]["p50"]),
+            f(r["server"]["p99"]),
+            f(r["client_server"]["p50"]),
+            f(r["client_server"]["p99"]),
+            f(r["recall"], 4),
+        ]
+        for r in sorted(top10, key=key)
+    ]
+    head = [
+        "Machine",
+        "Variant",
+        "Client",
+        "Total p50",
+        "Total p99",
+        "Server p50",
+        "Server p99",
+        "C-S p50",
+        "C-S p99",
+        "Recall@k",
+    ]
+    return (
+        "## Summary (top10-all)\n\n"
+        "All values in ms. 1M documents, 300 queries, localhost client-server.\n\n"
+        + table(head, rows, 3)
+    )
+
+
 def server_p50(summ: list[dict], m: str, v: str) -> float | None:
-    for r in summ:
-        if (r["machine"], r["variant"], r["scenario"]) == (
-            m,
-            v,
-            "top10-all",
-        ):
-            return r["server"]["p50"]
+    target_machines = [f"{m}-local", m, f"{m}-gcp"]
+    for tm in target_machines:
+        for r in summ:
+            if (r["machine"], r["variant"], r["scenario"]) == (tm, v, "top10-all"):
+                return r["server"]["p50"]
+    return None
+
+
+def server_p99(summ: list[dict], m: str, v: str) -> float | None:
+    target_machines = [f"{m}-local", m, f"{m}-gcp"]
+    for tm in target_machines:
+        for r in summ:
+            if (r["machine"], r["variant"], r["scenario"]) == (tm, v, "top10-all"):
+                return r["server"]["p99"]
     return None
 
 
@@ -219,6 +273,7 @@ def section_kernels(run: str, m: str, summ: list[dict]) -> str:
             continue
         scan = scan / 1e6 if scan else None
         srv = server_p50(summ, m, v)
+        srv99 = server_p99(summ, m, v)
         k10 = ops.get(f"BenchmarkSearch10K1024_Table/{v}")
         k256 = ops.get(f"BenchmarkSearch256x1024_Table/{v}")
         split.append(
@@ -228,6 +283,7 @@ def section_kernels(run: str, m: str, summ: list[dict]) -> str:
                 f(stream),
                 f(scan),
                 f(srv),
+                f(srv99),
                 f(stream - cached if stream and cached else None),
                 f(scan - stream if scan and stream else None),
                 f(srv - scan if srv and scan else None),
@@ -241,6 +297,7 @@ def section_kernels(run: str, m: str, summ: list[dict]) -> str:
         "Streaming kernel",
         "Scan1M",
         "Server p50",
+        "Server p99",
         "DRAM",
         "Scan overhead",
         "Server minus Scan1M",
@@ -248,7 +305,10 @@ def section_kernels(run: str, m: str, summ: list[dict]) -> str:
         "256 Search",
     ]
     out += table(head, split)
-    out += "\nServer p50 is the top10-all server time in ms, which equals ns per row over 1M rows.\n"
+    out += (
+        "\nServer p50 and p99 are the top10-all server times in ms, which equal "
+        "ns per row over 1M rows.\n"
+    )
 
     out += f"\n### {m}: float32 kernels, median ns/op\n\n"
     kr = []
@@ -389,6 +449,7 @@ def main(argv: list[str]) -> None:
             f"Commit `{build.get('commit', '-')}` on `{build.get('branch', '-')}`, built {build.get('built', '-')}.\n"
         )
     parts.append(section_machines(run, ms))
+    parts.append(section_summary(summ))
     parts.append(section_load(run, ms))
     parts.append(section_server(run, ms))
     seen_bases = set()

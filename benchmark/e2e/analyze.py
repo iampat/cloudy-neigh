@@ -91,7 +91,8 @@ def main(argv: list[str]) -> None:
             print(
                 f"{row['machine']:4} {row['variant']:13} {row['client']:4} "
                 f"{row['scenario']:11} n={row['n']} "
-                f"total p50={row['total']['p50']:.1f} server p50={row['server']['p50']:.1f} "
+                f"total p50={row['total']['p50']:.1f} p99={row['total']['p99']:.1f} "
+                f"server p50={row['server']['p50']:.1f} p99={row['server']['p99']:.1f} "
                 f"recall={row['recall']:.4f}"
             )
     with open(FLAGS.out, "w") as f:

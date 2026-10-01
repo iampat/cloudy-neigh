@@ -2,6 +2,8 @@
 
 ### Added
 
+- Hermetic benchmark automation: `benchstat`, `status`, `segcount`, `vm-tail`, and `clean-scratch` tasks in `benchmark/Taskfile.yaml`. Standalone scripts removed from `bench/`. [#173]
+- Retrieval benchmark reports: p99 latency metrics, summary tables, and two-tier verification documented in `docs/benchmarks/distance.md`. [#173]
 - Execution and permission directives in CLAUDE.md for CLI sandbox safety. [#170]
 - `e2e-benchmark` skill and Taskfile automation with pinned Python reporting tools in `benchmark/`. [#157]
 - Draft [garbage collection and point-in-time branch design](docs/design/garbage-collection.md). Covers checkpoints, retention, archives, and collection safety. Publication capacity and reader cleanup remain unresolved. [#169]
