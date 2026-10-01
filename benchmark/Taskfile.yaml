@@ -1074,6 +1074,15 @@ tasks:
         n="${N:-25}"
         vm_ssh "$m" "tail -n $n run/jobs/$job.log"
 
+  benchstat:
+    desc: 'Compare benchmark outputs (usage: task bench:benchstat -- file1.txt file2.txt)'
+    silent: true
+    cmds:
+      - |
+        {{.PREAMBLE}}
+        set -euo pipefail
+        bazel run @rules_go//go -- run golang.org/x/perf/cmd/benchstat@latest "$@"
+
   clean-scratch:
     desc: Remove temporary scratch files
     silent: true
