@@ -619,7 +619,7 @@ tasks:
         ip=$(vm_ip "$m")
         task -t {{.TASKFILE}} firewall-open M="$m"
         trap 'task -t {{.TASKFILE}} firewall-close M="$m"' EXIT
-        vm_ssh "$m" "pkill -f 'cloudy query' || true"
+        vm_ssh "$m" "pkill -x cloudy || true"
         vm_bg "$m" "san-serve-mac" host-serve M="sanity-mac" V=simd STORE="$gcs_store" NAMESPACE="$ns_mac" SEGMENTS={{.SANITY_SEGMENTS}} QUERIES={{.SANITY_QUERIES}} WARMUP={{.SANITY_WARMUP}} CLIENT=mac OUT=run
         deadline=$(($(date +%s) + 300))
         synced=0
@@ -637,7 +637,7 @@ tasks:
         status1="PASS"
         [ -s "$out/mac-to-vm/top10-all.jsonl" ] || status1="FAIL"
 
-        vm_ssh "$m" "pkill -f 'cloudy query' || true"
+        vm_ssh "$m" "pkill -x cloudy || true"
         task -t {{.TASKFILE}} firewall-close M="$m"
         trap - EXIT
         log "Sanity 1: $status1"
