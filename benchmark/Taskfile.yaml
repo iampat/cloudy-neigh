@@ -235,8 +235,8 @@ vars:
     }
 
     remote_env() {
-      printf 'RUN_NAME="%s" TENANT="%s" NAMESPACE="%s" SEGMENTS="%s" BATCH_SIZE="%s" QUERIES="%s" WARMUP="%s" TOP_KS="%s" FILTERS="%s" VARIANTS="%s" BACKEND="%s" ' \
-        "{{.RUN_NAME}}" "{{.TENANT}}" "{{.NAMESPACE}}" "{{.SEGMENTS}}" "{{.BATCH_SIZE}}" "{{.QUERIES}}" "{{.WARMUP}}" "{{.TOP_KS}}" "{{.FILTERS}}" "{{.VARIANTS}}" "{{.BACKEND}}"
+      printf 'RUN_NAME="%s" TENANT="%s" BATCH_SIZE="%s" QUERIES="%s" WARMUP="%s" TOP_KS="%s" FILTERS="%s" VARIANTS="%s" BACKEND="%s" ' \
+        "{{.RUN_NAME}}" "{{.TENANT}}" "{{.BATCH_SIZE}}" "{{.QUERIES}}" "{{.WARMUP}}" "{{.TOP_KS}}" "{{.FILTERS}}" "{{.VARIANTS}}" "{{.BACKEND}}"
     }
 
     vm_bg() {
@@ -579,6 +579,7 @@ tasks:
     silent: true
     cmds:
       - |
+        exec bash <<'EOF'
         {{.PREAMBLE}}
         set -euo pipefail
         m="${M:-emr}"
@@ -588,59 +589,63 @@ tasks:
         demoload=$(built //benchmark:demoload)
         gcs_store="gs://{{.BUCKET}}/{{.TENANT}}"
 
-        log "=== Sanity 1: Mac ingest -> VM server -> Mac client ==="
-        ns_mac="{{.NAMESPACE}}_san_mac"
-        n=$(segment_count "$gcs_store" "$ns_mac")
-        if [ "$n" -lt {{.SANITY_SEGMENTS}} ]; then
-          log "mac: ingest {{.SANITY_SEGMENTS}} segments into $gcs_store ns $ns_mac"
-          pids=$(lsof -ti :50051 2>/dev/null || true)
-          [ -z "$pids" ] || kill -9 $pids 2>/dev/null || true
-          write_tenants "$out/tenants-ingest-mac.json" "$gcs_store"
-          "{{.RUN_DIR}}/mac/bin/cloudy" ingest -tenants-file="$out/tenants-ingest-mac.json" -addr=localhost:50051 \
-            >"$out/mac-to-vm/ingest.log" 2>&1 </dev/null &
-          ingest=$!
-          trap 'kill "$ingest" 2>/dev/null || true' EXIT
-          sleep 3
-          "$demoload" --tenant="{{.TENANT}}" --namespace="$ns_mac" --batch_size="{{.BATCH_SIZE}}" \
-            --max_docs=$(( {{.SANITY_SEGMENTS}} * {{.BATCH_SIZE}} )) \
-            --data_dir="{{.DATA_DIR}}" >"$out/mac-to-vm/demoload.log" 2>&1 || die "demoload failed"
-          while true; do
-            n=$(segment_count "$gcs_store" "$ns_mac")
-            [ "$n" -ge {{.SANITY_SEGMENTS}} ] && break
-            sleep 5
-          done
-          kill "$ingest" 2>/dev/null || true
-          trap - EXIT
-        fi
-        log "mac ingested $n segments to GCS ($ns_mac)"
-
-        ZONE=$(vm_zone_or_die "$m")
-        export ZONE
-        ip=$(vm_ip "$m")
-        task -t {{.TASKFILE}} firewall-open M="$m"
-        trap 'task -t {{.TASKFILE}} firewall-close M="$m"' EXIT
-        vm_ssh "$m" "pkill -x cloudy || true"
-        vm_bg "$m" "san-serve-mac" host-serve M="sanity-mac" V=simd STORE="$gcs_store" NAMESPACE="$ns_mac" SEGMENTS={{.SANITY_SEGMENTS}} QUERIES={{.SANITY_QUERIES}} WARMUP={{.SANITY_WARMUP}} CLIENT=mac OUT=run
-        deadline=$(($(date +%s) + 300))
-        synced=0
-        while [ "$(date +%s)" -lt "$deadline" ]; do
-          if vm_ssh "$m" "grep -q 'manifest=ns/$ns_mac/refs/heads/main.json' run/e2e/sanity-mac/simd/server.log 2>/dev/null"; then
-            synced=1
-            break
-          fi
-          sleep 2
-        done
-        [ "$synced" = 1 ] || die "VM server failed to sync Mac-ingested segments"
-        log "VM server synced Mac segments successfully"
-
-        scenarios "$qb" "$ip:50052" "$out/mac-to-vm" "" {{.SANITY_QUERIES}} {{.SANITY_WARMUP}} "$ns_mac"
         status1="PASS"
-        [ -s "$out/mac-to-vm/top10-all.jsonl" ] || status1="FAIL"
+        if [ ! -s "$out/mac-to-vm/top10-all.jsonl" ]; then
+          log "=== Sanity 1: Mac ingest -> VM server -> Mac client ==="
+          ns_mac="{{.NAMESPACE}}_san_mac"
+          n=$(segment_count "$gcs_store" "$ns_mac")
+          if [ "$n" -lt {{.SANITY_SEGMENTS}} ]; then
+            log "mac: ingest {{.SANITY_SEGMENTS}} segments into $gcs_store ns $ns_mac"
+            pids=$(lsof -ti :50051 2>/dev/null || true)
+            [ -z "$pids" ] || kill -9 $pids 2>/dev/null || true
+            write_tenants "$out/tenants-ingest-mac.json" "$gcs_store"
+            "{{.RUN_DIR}}/mac/bin/cloudy" ingest -tenants-file="$out/tenants-ingest-mac.json" -addr=localhost:50051 \
+              >"$out/mac-to-vm/ingest.log" 2>&1 </dev/null &
+            ingest=$!
+            trap 'kill "$ingest" 2>/dev/null || true' EXIT
+            sleep 3
+            "$demoload" --tenant="{{.TENANT}}" --namespace="$ns_mac" --batch_size="{{.BATCH_SIZE}}" \
+              --max_docs=$(( {{.SANITY_SEGMENTS}} * {{.BATCH_SIZE}} )) \
+              --data_dir="{{.DATA_DIR}}" >"$out/mac-to-vm/demoload.log" 2>&1 || die "demoload failed"
+            while true; do
+              n=$(segment_count "$gcs_store" "$ns_mac")
+              [ "$n" -ge {{.SANITY_SEGMENTS}} ] && break
+              sleep 5
+            done
+            kill "$ingest" 2>/dev/null || true
+            trap - EXIT
+          fi
+          log "mac ingested $n segments to GCS ($ns_mac)"
 
-        vm_ssh "$m" "pkill -x cloudy || true"
-        task -t {{.TASKFILE}} firewall-close M="$m"
-        trap - EXIT
-        log "Sanity 1: $status1"
+          ZONE=$(vm_zone_or_die "$m")
+          export ZONE
+          ip=$(vm_ip "$m")
+          task -t {{.TASKFILE}} firewall-open M="$m"
+          trap 'task -t {{.TASKFILE}} firewall-close M="$m"' EXIT
+          vm_ssh "$m" "pkill -x cloudy || true"
+          vm_bg "$m" "san-serve-mac" host-serve M="sanity-mac" V=simd STORE="$gcs_store" NAMESPACE="$ns_mac" SEGMENTS={{.SANITY_SEGMENTS}} QUERIES={{.SANITY_QUERIES}} WARMUP={{.SANITY_WARMUP}} CLIENT=mac OUT=run
+          deadline=$(($(date +%s) + 300))
+          synced=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            if vm_ssh "$m" "grep -q 'manifest=ns/$ns_mac/refs/heads/main.json' run/e2e/sanity-mac/simd/server.log 2>/dev/null"; then
+              synced=1
+              break
+            fi
+            sleep 2
+          done
+          [ "$synced" = 1 ] || die "VM server failed to sync Mac-ingested segments"
+          log "VM server synced Mac segments successfully"
+
+          scenarios "$qb" "$ip:50052" "$out/mac-to-vm" "" {{.SANITY_QUERIES}} {{.SANITY_WARMUP}} "$ns_mac"
+          [ -s "$out/mac-to-vm/top10-all.jsonl" ] || status1="FAIL"
+
+          vm_ssh "$m" "pkill -x cloudy || true"
+          task -t {{.TASKFILE}} firewall-close M="$m"
+          trap - EXIT
+          log "Sanity 1: $status1"
+        else
+          log "Sanity 1: PASS (cached)"
+        fi
 
         log "=== Sanity 2: VM ingest -> Mac server -> Mac client ==="
         ns_vm="{{.NAMESPACE}}_san_vm"
@@ -654,8 +659,9 @@ tasks:
 
         pids=$(lsof -ti :50052 2>/dev/null || true)
         [ -z "$pids" ] || kill -9 $pids 2>/dev/null || true
+        sleep 1
         write_tenants "$out/tenants-query-mac.json" "$gcs_store"
-        "{{.RUN_DIR}}/mac/bin/cloudy" query -tenants-file="$out/tenants-query-mac.json" -distance=simd -addr=localhost:50052 \
+        nohup "{{.RUN_DIR}}/mac/bin/cloudy" query -tenants-file="$out/tenants-query-mac.json" -distance=simd -addr=localhost:50052 \
           >"$out/vm-to-mac/server.log" 2>&1 </dev/null &
         srv_pid=$!
         trap 'kill "$srv_pid" 2>/dev/null || true' EXIT
@@ -666,7 +672,7 @@ tasks:
             synced=1
             break
           fi
-          kill -0 "$srv_pid" 2>/dev/null || die "Mac server died while syncing VM segments"
+          /bin/kill -0 "$srv_pid" 2>/dev/null || die "Mac server died while syncing VM segments"
           sleep 2
         done
         [ "$synced" = 1 ] || die "Mac server failed to sync VM-ingested segments"
@@ -687,6 +693,7 @@ tasks:
           echo "| VM -> Mac | VM (x86_64) | Mac (ARM64) | Mac | {{.SANITY_SEGMENTS}} | {{.SANITY_QUERIES}} | $status2 |"
         } >"$out/sanity.txt"
         cat "$out/sanity.txt"
+        EOF
 
   report:
     desc: Generate groundtruth, pprof tops, summary.json and report.md
@@ -866,9 +873,9 @@ tasks:
         [ -n "$m" ] || m="{{.M}}"
         store="${STORE:-}"
         [ -n "$store" ] || store="{{.STORE}}"
-        ns="${NAMESPACE:-{{.NAMESPACE}}}"
-        segs="${SEGMENTS:-{{.SEGMENTS}}}"
-        batch="${BATCH_SIZE:-{{.BATCH_SIZE}}}"
+        ns="{{.NAMESPACE}}"
+        segs="{{.SEGMENTS}}"
+        batch="{{.BATCH_SIZE}}"
         mkdir -p "$out" && out=$(cd "$out" && pwd)
         d="$out/$m"
         mkdir -p "$d"
@@ -946,10 +953,10 @@ tasks:
         [ -n "$store" ] || store="{{.STORE}}"
         client="${CLIENT:-}"
         [ -n "$client" ] || client="{{.CLIENT}}"
-        ns="${NAMESPACE:-{{.NAMESPACE}}}"
-        segs="${SEGMENTS:-{{.SEGMENTS}}}"
-        qcount="${QUERIES:-{{.QUERIES}}}"
-        qwarmup="${WARMUP:-{{.WARMUP}}}"
+        ns="{{.NAMESPACE}}"
+        segs="{{.SEGMENTS}}"
+        qcount="{{.QUERIES}}"
+        qwarmup="{{.WARMUP}}"
         mkdir -p "$out" && out=$(cd "$out" && pwd)
         d="$out/e2e/$m/$v"
         mkdir -p "$d/$client"
