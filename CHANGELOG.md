@@ -2,6 +2,7 @@
 
 ### Added
 
+- Brainstorm log for point lookup, postings, ranges, vector clusters, commits, and compaction in `docs/brainstorms/2026-11-10-read-path-and-indexes.md`.
 - Antigravity configuration rules in CLAUDE.md to mandate local repository settings. [#174]
 - Hermetic benchmark automation: `benchstat`, `status`, `segcount`, `vm-tail`, and `clean-scratch` tasks in `benchmark/Taskfile.yaml`. Standalone scripts removed from `bench/`. [#173]
 - Retrieval benchmark reports: p99 latency metrics, summary tables, and two-tier verification documented in `docs/benchmarks/distance.md`. [#173]
