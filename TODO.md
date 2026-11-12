@@ -19,6 +19,9 @@
 - [X] Draft [garbage collection and point-in-time branch design](docs/design/garbage-collection.md). Metadata publication and reader cleanup remain open decisions. [#169]
 - [ ] Garbage collection worker to prune unreferenced flat segments and dead branch manifests.
 - [ ] Expose branch deletion RPC in IngestService to remove branch pointers and update `branches.json`.
+- [X] Brainstorm the read path and the missing indexes: point lookup, postings, ranges, vectors, commits, and compaction. [#175]
+- [ ] Move the brainstorm decisions into `docs/design/`: segment format and resident metadata, commits and compaction, vector index.
+- [ ] Run the experiment that picks vector option B or C. Compare p99 read latency at equal recall, then cost and write throughput.
 - [ ] Ingestion and flusher cleanups.
   - [ ] Remove `shutdownFlush` drain after context cancellation (`ingest/flusher.go:241-306`). WAL is durable, and restarting resumes from checkpoints.
   - [ ] Remove redundant mutex and cancel map from `Flusher` (`ingest/flusher.go:31-36, 195-201`). Stream dispatch runs on a single goroutine.
