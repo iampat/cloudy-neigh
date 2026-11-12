@@ -213,6 +213,10 @@ not trust memory over the help output.
   before writing. Never read this file in the main agent to avoid context
   pollution. Delegate all searches and retrievals to a research subagent using
   the `ideate` skill.
+- Design brainstorm sessions: keep a log in `docs/brainstorms/<date>-<topic>.md`
+  from the first round. Update it every round with decisions, open questions,
+  and parked items. Ask why, what, and how questions without options. Refine
+  after the user answers.
 
 Skills to use:
 
