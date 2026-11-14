@@ -10,3 +10,4 @@ bazel-*
 .playwright-mcp/
 bench
 scratch
+.worktree
